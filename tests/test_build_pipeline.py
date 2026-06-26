@@ -1,4 +1,4 @@
-"""build_pipeline assembly (the parts reachable without playwright/sslyze).
+"""build_pipeline assembly (the parts reachable without playwright/sslscan).
 
 The audit-phase factories import heavy deps lazily, so here we exercise the
 discovery-only path (no audit) plus selection validation and coverage
@@ -104,7 +104,7 @@ def test_nuclei_severity_subtoken_configures_stage():
     assert nuclei is not None
     assert nuclei.severities == ["critical", "high"]
     # tls/supply-chain not selected → not assembled
-    assert _stage(stages, "audit.sslyze") is None
+    assert _stage(stages, "audit.sslscan") is None
 
 
 def test_ai_triage_subtoken_configures_stage():

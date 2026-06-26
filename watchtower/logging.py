@@ -91,7 +91,7 @@ def _summary_lines(s: "RunSummary") -> list[str]:
         + (f"   ({', '.join(f'{k}:{v}' for k, v in s.errors_by_stage.items())})" if s.errors_by_stage else ""),
     ]
     notable = {k: v for k, v in s.events.items() if v and k in (
-        "tool_timeout", "tool_nonzero", "rate_limit_signal", "sslyze_no_output")}
+        "tool_timeout", "tool_nonzero", "rate_limit_signal", "sslscan_no_output")}
     if notable:
         lines.append(f"  events:   {', '.join(f'{k}:{v}' for k, v in notable.items())}")
     lines.append("─" * 60)

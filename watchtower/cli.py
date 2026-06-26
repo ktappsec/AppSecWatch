@@ -9,7 +9,7 @@ from pathlib import Path
 from watchtower import __version__
 from watchtower.example_config import EXAMPLE_CONFIG_YAML
 
-# NOTE: heavy modules (runner → playwright, sslyze, etc.) are imported lazily
+# NOTE: heavy modules (runner → playwright, etc.) are imported lazily
 # inside the subcommand handlers so that `verify-deps` can run and *report*
 # missing dependencies rather than crashing on import.
 

@@ -14,7 +14,7 @@ def F(**kw) -> Finding:
 def test_finding_key_variants():
     assert finding_key(F(check_id="hsts.missing")) == "hsts.missing"
     assert finding_key(F(source="nuclei", check_id=None, evidence={"template_id": "CVE-x"})) == "CVE-x"
-    assert finding_key(F(source="sslyze", evidence={"check": "weak-cipher"})) == "weak-cipher"
+    assert finding_key(F(source="sslscan", evidence={"check": "weak-cipher"})) == "weak-cipher"
     assert finding_key(F(source="js_lib", evidence={"library": "jquery", "version": "3.4.1"})) == "jquery@3.4.1"
 
 

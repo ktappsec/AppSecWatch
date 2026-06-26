@@ -8,7 +8,7 @@ Bucket = Literal["in_scope", "shadow_it", "dead"]
 Severity = Literal["info", "low", "medium", "high", "critical"]
 Confidence = Literal["low", "medium", "high"]
 FindingSource = Literal[
-    "nuclei", "takeover", "sslyze",
+    "nuclei", "takeover", "sslscan",
     "headers", "csp",                       # deterministic security-header checks
     "js_lib",                               # vulnerable JS library (retire.js-style)
     "ai_headers", "ai_supply_chain",
@@ -85,7 +85,7 @@ class Finding(BaseModel):
         ev = self.evidence
         if self.source in ("nuclei", "takeover"):
             rows = [("template", ev.get("template_id")), ("matched", ev.get("matched_at"))]
-        elif self.source == "sslyze":
+        elif self.source == "sslscan":
             rows = [("check", ev.get("check")), ("detail", ev.get("detail"))]
         else:  # headers / csp / ai_headers / ai_supply_chain — "type"/"check_id" internal
             rows = [(k, v) for k, v in ev.items() if k not in ("type", "check_id")]

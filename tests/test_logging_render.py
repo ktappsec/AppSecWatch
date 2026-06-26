@@ -28,9 +28,9 @@ def test_plain_shows_info_quiet_hides_it(capsys):
 
 
 def test_plain_includes_stage_and_tool_context(capsys):
-    PlainRenderer().event("warn", "slow", {"tool": "sslyze", "host": "h.example.com"})
+    PlainRenderer().event("warn", "slow", {"tool": "sslscan", "host": "h.example.com"})
     err = capsys.readouterr().err
-    assert "[sslyze]" in err and "(h.example.com)" in err
+    assert "[sslscan]" in err and "(h.example.com)" in err
 
 
 def test_debug_only_when_verbose(capsys):
@@ -48,7 +48,7 @@ def test_jsonl_identical_across_modes(tmp_path):
         d.mkdir()
         lg = RunLogger(d, mode=mode)
         lg.info("hi", event="x")
-        lg.warn("w", event="tool_timeout", tool="sslyze")
+        lg.warn("w", event="tool_timeout", tool="sslscan")
         lg.stage_start("s")
         lg.stage_end("s", elapsed_s=1.0, errors=0)
         lg.summary(RunSummary(duration_s=1.0))

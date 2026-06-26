@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 from watchtower.audit.nuclei_runner import run_nuclei
-from watchtower.audit.sslyze_runner import run_sslyze
+from watchtower.audit.sslscan_runner import run_sslscan
 from watchtower.audit.takeover_fingerprints import scan_cname_takeovers
 from watchtower.audit.takeovers import run_takeovers
 from watchtower.stages.base import Stage, StageResult
@@ -34,19 +34,19 @@ class TakeoversStage(Stage):
         return StageResult([(None, error)]) if error else None
 
 
-class SslyzeStage(Stage):
-    name = "audit.sslyze"
+class SslscanStage(Stage):
+    name = "audit.sslscan"
 
     def _dir(self, run_dir: Path) -> Path:
-        return run_dir / "02_audit" / "sslyze"
+        return run_dir / "02_audit" / "sslscan"
 
     async def run(self, state, run_dir, cfg, ipinfo, log):
-        reports, findings = await run_sslyze(
-            state.live_servers, self._dir(run_dir), cfg.tools.sslyze, log,
-            concurrency=cfg.concurrency.sslyze,
+        reports, findings = await run_sslscan(
+            state.live_servers, self._dir(run_dir), cfg.tools.sslscan, log,
+            concurrency=cfg.concurrency.tls,
         )
         state.tls_reports = reports
-        state.sslyze_findings = findings
+        state.tls_findings = findings
         # Per-host TLS scan failures (timeouts, no output, parse errors).
         return StageResult([(r.host, r.error) for r in reports if r.error])
 

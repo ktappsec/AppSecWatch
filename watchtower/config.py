@@ -13,7 +13,7 @@ class ConcurrencyConfig(BaseModel):
     default: int = 10
     llm: int = 4
     playwright: int = 5
-    sslyze: int = 5          # parallel sslyze host scans (each opens many connections)
+    tls: int = 5             # parallel sslscan host scans
 
 
 class LLMConfig(BaseModel):
@@ -115,8 +115,9 @@ class TlsxConfig(ToolBlock):
     concurrency: int = 100
 
 
-class SslyzeConfig(ToolBlock):
-    slow_connection: bool = False   # --slow_connection: 1 connection at a time (anti-WAF)
+class SslscanConfig(ToolBlock):
+    # sslscan is sequential per host; the cross-host pacing knob is
+    # `concurrency.tls` (throttle-controlled). No anti-WAF "slow" flag needed.
     timeout: int = 300              # per-host outer timeout (seconds)
 
 
@@ -256,7 +257,7 @@ class ToolsConfig(BaseModel):
     httpx: HttpxConfig = Field(default_factory=HttpxConfig)
     nuclei: NucleiConfig = Field(default_factory=NucleiConfig)
     takeovers: TakeoversConfig = Field(default_factory=TakeoversConfig)
-    sslyze: SslyzeConfig = Field(default_factory=SslyzeConfig)
+    sslscan: SslscanConfig = Field(default_factory=SslscanConfig)
     playwright: PlaywrightConfig = Field(default_factory=PlaywrightConfig)
 
 
@@ -270,32 +271,32 @@ _PROFILES: dict[str, dict[str, Any]] = {
     "paranoid": {  # T0 — max stealth: ~serial, tiny rates, long waits
         "httpx_rl": 2, "httpx_threads": 1, "nuclei_rl": 2, "takeovers_rl": 2,
         "dnsx_rl": 50, "tlsx_conc": 5,
-        "sslyze_slow": True, "sslyze_timeout": 900,
-        "conc_default": 1, "conc_sslyze": 1, "conc_playwright": 1,
+        "tls_timeout": 900,
+        "conc_default": 1, "conc_tls": 1, "conc_playwright": 1,
     },
     "gentle": {
         "httpx_rl": 10, "httpx_threads": 2, "nuclei_rl": 10, "takeovers_rl": 10,
         "dnsx_rl": 100, "tlsx_conc": 20,
-        "sslyze_slow": True, "sslyze_timeout": 600,
-        "conc_default": 3, "conc_sslyze": 2, "conc_playwright": 2,
+        "tls_timeout": 600,
+        "conc_default": 3, "conc_tls": 2, "conc_playwright": 2,
     },
     "normal": {
         "httpx_rl": 100, "httpx_threads": 10, "nuclei_rl": 100, "takeovers_rl": 50,
         "dnsx_rl": 1000, "tlsx_conc": 100,
-        "sslyze_slow": False, "sslyze_timeout": 300,
-        "conc_default": 10, "conc_sslyze": 5, "conc_playwright": 5,
+        "tls_timeout": 300,
+        "conc_default": 10, "conc_tls": 5, "conc_playwright": 5,
     },
     "aggressive": {
         "httpx_rl": 500, "httpx_threads": 50, "nuclei_rl": 500, "takeovers_rl": 150,
         "dnsx_rl": 5000, "tlsx_conc": 300,
-        "sslyze_slow": False, "sslyze_timeout": 180,
-        "conc_default": 20, "conc_sslyze": 10, "conc_playwright": 8,
+        "tls_timeout": 180,
+        "conc_default": 20, "conc_tls": 10, "conc_playwright": 8,
     },
     "insane": {  # T5 — fastest, loud: will trip WAFs (httpx default 50 already did)
         "httpx_rl": 1000, "httpx_threads": 200, "nuclei_rl": 1000, "takeovers_rl": 300,
         "dnsx_rl": 10000, "tlsx_conc": 500,
-        "sslyze_slow": False, "sslyze_timeout": 120,
-        "conc_default": 40, "conc_sslyze": 20, "conc_playwright": 15,
+        "tls_timeout": 120,
+        "conc_default": 40, "conc_tls": 20, "conc_playwright": 15,
     },
 }
 
@@ -341,10 +342,9 @@ class WatchTowerConfig(BaseModel):
         fill(self.tools.takeovers, "rate_limit", prof["takeovers_rl"])
         fill(self.tools.dnsx, "rate_limit", prof["dnsx_rl"])
         fill(self.tools.tlsx, "concurrency", prof["tlsx_conc"])
-        fill(self.tools.sslyze, "slow_connection", prof["sslyze_slow"])
-        fill(self.tools.sslyze, "timeout", prof["sslyze_timeout"])
+        fill(self.tools.sslscan, "timeout", prof["tls_timeout"])
         fill(self.concurrency, "default", prof["conc_default"])
-        fill(self.concurrency, "sslyze", prof["conc_sslyze"])
+        fill(self.concurrency, "tls", prof["conc_tls"])
         fill(self.concurrency, "playwright", prof["conc_playwright"])
         return self
 

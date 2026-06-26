@@ -28,7 +28,7 @@ class AIStage(Stage):
         # Finding objects live in state, so a suppression verdict attaches in place.
         findings_map: dict[str, list] = {}
         for f in (
-            state.nuclei_findings + state.takeover_findings + state.sslyze_findings
+            state.nuclei_findings + state.takeover_findings + state.tls_findings
             + state.header_findings + state.js_lib_findings
         ):
             if f.host:

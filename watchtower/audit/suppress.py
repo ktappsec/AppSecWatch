@@ -1,7 +1,7 @@
 """Finding fingerprinting + manual-suppression application (engine-side).
 
 A suppression is keyed by a stable fingerprint `source|host|key`. `key` is the
-deterministic identifier for the finding's class (check_id / template_id / sslyze
+deterministic identifier for the finding's class (check_id / template_id / sslscan
 check / js_lib library@version), falling back to the title. A finding matches a
 suppression set if its host-specific fingerprint OR its global (`source|*|key`)
 fingerprint is present. Matching marks the finding via the verdict path
@@ -19,7 +19,7 @@ def finding_key(f: Finding) -> str:
     ev = f.evidence or {}
     if f.source in ("nuclei", "takeover"):
         return ev.get("template_id") or f.title
-    if f.source == "sslyze":
+    if f.source == "sslscan":
         return ev.get("check") or f.title
     if f.source == "js_lib":
         lib = ev.get("library")

@@ -34,7 +34,7 @@ class ScanState(BaseModel):
 
     # Audit
     takeover_findings: list[Finding] = Field(default_factory=list)
-    sslyze_findings: list[Finding] = Field(default_factory=list)
+    tls_findings: list[Finding] = Field(default_factory=list)
     nuclei_findings: list[Finding] = Field(default_factory=list)
     tls_reports: list[TLSHostReport] = Field(default_factory=list)
     crawler_artifacts: list[CrawlerArtifact] = Field(default_factory=list)
@@ -62,7 +62,7 @@ class ScanState(BaseModel):
         return (
             list(self.nuclei_findings)
             + list(self.takeover_findings)
-            + list(self.sslyze_findings)
+            + list(self.tls_findings)
             + list(self.header_findings)
             + list(self.js_lib_findings)
             + list(self.ai_headers_findings)

@@ -62,7 +62,7 @@ export const CAPABILITY_TOKENS: CapabilityToken[] = [
     ],
   },
   { token: "takeovers", label: "Takeovers", description: "nuclei takeover templates vs dead assets" },
-  { token: "tls", label: "TLS", description: "sslyze per-host pass/fail scorecard" },
+  { token: "tls", label: "TLS", description: "sslscan per-host pass/fail scorecard" },
   {
     token: "nuclei",
     label: "Web CVEs",

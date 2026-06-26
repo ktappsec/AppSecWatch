@@ -287,7 +287,7 @@ class GenerateResponse(BaseModel):
 class SuppressionCreate(BaseModel):
     source: str
     host: str | None = None               # ignored when scope='global'
-    key: str                              # check_id | template_id | sslyze check | lib@ver | title
+    key: str                              # check_id | template_id | sslscan check | lib@ver | title
     scope: Literal["host", "global"] = "host"
     reason: str = ""
 

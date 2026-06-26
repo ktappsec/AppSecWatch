@@ -15,7 +15,7 @@ export type Bucket = "in_scope" | "shadow_it" | "dead";
 export type FindingSource =
   | "nuclei"
   | "takeover"
-  | "sslyze"
+  | "sslscan"
   | "headers"
   | "csp"
   | "js_lib"

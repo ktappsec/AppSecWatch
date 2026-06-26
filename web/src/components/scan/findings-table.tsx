@@ -19,7 +19,7 @@ import type { Finding, Severity } from "@/lib/types";
 const SOURCE_LABEL: Record<string, string> = {
   nuclei: "nuclei",
   takeover: "takeover",
-  sslyze: "sslyze",
+  sslscan: "TLS",
   headers: "headers",
   csp: "csp",
   js_lib: "JS library",
@@ -33,7 +33,7 @@ export function findingKey(f: Finding): string {
   const ev = (f.evidence ?? {}) as Record<string, unknown>;
   if (f.source === "nuclei" || f.source === "takeover")
     return String(ev.template_id ?? f.title);
-  if (f.source === "sslyze") return String(ev.check ?? f.title);
+  if (f.source === "sslscan") return String(ev.check ?? f.title);
   if (f.source === "js_lib" && ev.library)
     return `${ev.library}@${ev.version ?? ""}`;
   return f.title;

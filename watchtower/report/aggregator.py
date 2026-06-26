@@ -61,7 +61,7 @@ def build_run_summary(
     """
     all_findings = (
         list(state.nuclei_findings) + list(state.takeover_findings)
-        + list(state.sslyze_findings) + list(state.header_findings)
+        + list(state.tls_findings) + list(state.header_findings)
         + list(state.ai_headers_findings) + list(state.ai_supply_findings)
     )
     # Soft-suppressed findings are excluded from the severity rollup (but kept on
@@ -82,7 +82,7 @@ def build_run_summary(
     levels = log_counts.get("levels", {})
     events = log_counts.get("events", {})
     ev: dict[str, int] = {}
-    for k in ("tool_timeout", "tool_nonzero", "rate_limit_signal", "sslyze_no_output"):
+    for k in ("tool_timeout", "tool_nonzero", "rate_limit_signal", "sslscan_no_output"):
         if events.get(k):
             ev[k] = events[k]
     for lvl in ("warn", "error"):
@@ -156,7 +156,7 @@ def build_report_context(
     live_servers: list[LiveWebServer],
     nuclei_findings: list[Finding],
     takeover_findings: list[Finding],
-    sslyze_findings: list[Finding],
+    tls_findings: list[Finding],
     tls_reports: list[TLSHostReport],
     ai_headers_findings: list[Finding],
     ai_supply_findings: list[Finding],
@@ -180,7 +180,7 @@ def build_report_context(
     all_findings: list[Finding] = (
         list(nuclei_findings)
         + list(takeover_findings)
-        + list(sslyze_findings)
+        + list(tls_findings)
         + header_findings
         + js_lib_findings
         + list(ai_headers_findings)
@@ -246,7 +246,7 @@ def build_report_context(
             # section and out of the per-source tables + histogram.
             "nuclei": [f for f in nuclei_findings if not f.suppressed],
             "takeovers": [f for f in takeover_findings if not f.suppressed],
-            "sslyze": [f for f in sslyze_findings if not f.suppressed],
+            "tls": [f for f in tls_findings if not f.suppressed],
             "headers": [f for f in header_visible if f.source == "headers"],
             "csp": [f for f in header_visible if f.source == "csp"],
             "js_lib": [f for f in js_lib_findings if not f.suppressed],

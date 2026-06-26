@@ -43,7 +43,7 @@ class ReportStage(Stage):
             live_servers=state.live_servers,
             nuclei_findings=state.nuclei_findings,
             takeover_findings=state.takeover_findings,
-            sslyze_findings=state.sslyze_findings,
+            tls_findings=state.tls_findings,
             tls_reports=state.tls_reports,
             ai_headers_findings=state.ai_headers_findings,
             ai_supply_findings=state.ai_supply_findings,

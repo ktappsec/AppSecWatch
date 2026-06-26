@@ -46,7 +46,7 @@ def _slug(roots: list[str]) -> str:
 
 _RUN_SUBDIRS = (
     "01_recon",
-    "02_audit/takeovers", "02_audit/sslyze",
+    "02_audit/takeovers", "02_audit/sslscan",
     "02_audit/nuclei", "02_audit/playwright",
     "03_ai/profile", "03_ai/triage", "03_ai/supply_chain",
 )
@@ -98,8 +98,8 @@ def _log_throttle(cfg: WatchTowerConfig, log: RunLogger) -> None:
         f"(httpx_rl={cfg.tools.httpx.rate_limit}, httpx_threads={cfg.tools.httpx.threads}, "
         f"nuclei_rl={cfg.tools.nuclei.rate_limit}, "
         f"tlsx_conc={cfg.tools.tlsx.concurrency}, dnsx_rl={cfg.tools.dnsx.rate_limit}, "
-        f"sslyze_slow={cfg.tools.sslyze.slow_connection}, sslyze_timeout={cfg.tools.sslyze.timeout}s, "
-        f"conc default/sslyze/playwright={cfg.concurrency.default}/{cfg.concurrency.sslyze}/{cfg.concurrency.playwright})",
+        f"sslscan_timeout={cfg.tools.sslscan.timeout}s, "
+        f"conc default/tls/playwright={cfg.concurrency.default}/{cfg.concurrency.tls}/{cfg.concurrency.playwright})",
         event="throttle",
         throttle=cfg.throttle,
         httpx_rl=cfg.tools.httpx.rate_limit,
@@ -108,10 +108,9 @@ def _log_throttle(cfg: WatchTowerConfig, log: RunLogger) -> None:
         takeovers_rl=cfg.tools.takeovers.rate_limit,
         tlsx_concurrency=cfg.tools.tlsx.concurrency,
         dnsx_rl=cfg.tools.dnsx.rate_limit,
-        sslyze_slow_connection=cfg.tools.sslyze.slow_connection,
-        sslyze_timeout=cfg.tools.sslyze.timeout,
+        sslscan_timeout=cfg.tools.sslscan.timeout,
         conc_default=cfg.concurrency.default,
-        conc_sslyze=cfg.concurrency.sslyze,
+        conc_tls=cfg.concurrency.tls,
         conc_playwright=cfg.concurrency.playwright,
     )
 

@@ -4,32 +4,23 @@ init-config` works without relying on package_data discovery quirks."""
 EXAMPLE_CONFIG_YAML = """\
 # WatchTower configuration example
 #
-# Required top-level keys: roots, sanctioned_cidrs, sanctioned_asns, mmdb_path, llm
-# Everything else has sensible defaults.
+# Required top-level keys: roots, llm. Everything else has sensible defaults.
+# Scope is your roots: every host UNDER these that resolves gets the full scan,
+# regardless of where it's hosted (no IP/ASN ownership gate).
 
 roots:
   - example.com
   - example-corp.io
 
-# Sanctioned IPv4 CIDRs you OWN. Assets resolving entirely inside these are In-Scope.
-# Anything else becomes Shadow IT.
-sanctioned_cidrs:
-  - 203.0.113.0/24
-  - 198.51.100.0/22
-
-# Sanctioned Autonomous System numbers. Used in addition to sanctioned_cidrs.
-sanctioned_asns:
-  - 64500
-  - 64501
-
-# Path to the MaxMind GeoLite2-ASN MMDB inside the container.
-# Bind-mount your local copy at /data/mmdb/.
+# Optional: MaxMind GeoLite2-ASN MMDB for ASN/org enrichment. This is DISPLAY
+# ONLY now — it no longer gates scanning. Omit it and assets simply show no
+# ASN/org. Bind-mount your local copy at /data/mmdb/.
 mmdb_path: /data/mmdb/GeoLite2-ASN.mmdb
 
 # Global politeness tier applied across ALL tools at once. One of:
-#   gentle     - low rates, sslyze --slow_connection, small concurrency (avoid tripping WAFs)
-#   normal     - the default; equals the per-tool defaults below
-#   aggressive - high rates / concurrency for lab targets you fully control
+#   paranoid / gentle  - low rates + small concurrency (avoid tripping WAFs)
+#   normal             - the default; equals the per-tool defaults below
+#   aggressive / insane - high rates / concurrency for lab targets you control
 # Any explicit per-tool / concurrency value below OVERRIDES the profile.
 throttle: normal
 
@@ -38,7 +29,7 @@ concurrency:
   default: 10        # generic fan-out
   llm: 4             # AI calls (LLMs are heavier; keep this lower)
   playwright: 5      # one browser context per slot — RAM-bound
-  sslyze: 5          # parallel sslyze host scans (each opens MANY connections)
+  tls: 5             # parallel sslscan host scans
 
 # Paths visited per live host during the Playwright crawl.
 # Add more for deeper supply-chain coverage (each adds a navigation per host).
@@ -89,13 +80,13 @@ tools:
     extra_flags: []
 
   takeovers:
-    # Subset run against Array 3 (Dead) using nuclei http/takeovers/ templates only.
+    # nuclei http/takeovers/ templates run against LIVE hosts with a third-party
+    # CNAME; the dangling/NXDOMAIN class is matched deterministically (offline).
     severities: [high, critical]
     rate_limit: 50
     extra_flags: []
 
-  sslyze:
-    slow_connection: false  # true => 1 connection at a time (--slow_connection); avoids WAFs
+  sslscan:
     timeout: 300            # per-host outer timeout in seconds
     extra_flags: []
 

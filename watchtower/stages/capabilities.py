@@ -19,7 +19,7 @@ Both the CLI and the runner route through `resolve_selection`, so selection logi
 lives in exactly one place.
 
 Stage factories import their (heavy) stage classes lazily, so importing this
-module — and calling `resolve_selection` — stays free of playwright/sslyze.
+module — and calling `resolve_selection` — stays free of playwright/sslscan.
 """
 from __future__ import annotations
 
@@ -104,8 +104,8 @@ def _takeovers(cfg: WatchTowerConfig, plan: SelectionPlan) -> Stage:
 
 
 def _tls(cfg: WatchTowerConfig, plan: SelectionPlan) -> Stage:
-    from watchtower.stages.audit import SslyzeStage
-    return SslyzeStage()
+    from watchtower.stages.audit import SslscanStage
+    return SslscanStage()
 
 
 def _nuclei(cfg: WatchTowerConfig, plan: SelectionPlan) -> Stage:
