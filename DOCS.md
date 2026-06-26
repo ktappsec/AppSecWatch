@@ -26,17 +26,17 @@ other capability.
 
 - **subfinder** — passive subdomain discovery over the configured root domains.
 - **dnsx** — resolves every discovered name (A + CNAME; IPv4 only).
-- **Triage router** — sorts each asset into exactly one bucket:
-  - **Array 1 — In-Scope:** all A records fall inside `sanctioned_cidrs` / `sanctioned_asns`, and no CNAME hop leaves the configured roots.
-  - **Array 2 — Shadow IT:** resolves, but an IP/ASN is outside the sanctioned lists, or a CNAME points to a non-root zone.
-  - **Array 3 — Dead:** NXDOMAIN / no A record.
-- **tlsx re-feed loop** — pulls SANs from In-Scope certs, filters to the configured roots, and feeds new names back through dnsx + triage (bounded to 3 iterations; `*.` wildcards are recorded but never iterated). The same handshake also captures a passive **cert inventory** (expiry, issuer, self-signed/wildcard, fingerprint) — surfaced in the report + UI, inventory only.
-- **httpx** — isolates live web servers from the final In-Scope set. Run with `-include-response`, it also yields per-host **PageSignals** (title, meta/OpenGraph, a pre-JS body snippet, form/password-field signals, detected tech) used by the AI profiler.
+- **Triage router** — records each asset's **liveness** (the configured roots are the only scope; WatchTower is an L7 tool, so where an IP is hosted is irrelevant):
+  - **live:** resolves to ≥1 A record → fully scanned.
+  - **dead:** NXDOMAIN / no A record (e.g. a dangling CNAME) → takeover-watch only.
+  ASN / org is attached as display-only enrichment when an optional MMDB is configured.
+- **tlsx re-feed loop** — pulls SANs from live certs, filters to the configured roots, and feeds new names back through dnsx + triage (bounded to 3 iterations; `*.` wildcards are recorded but never iterated). The same handshake also captures a passive **cert inventory** (expiry, issuer, self-signed/wildcard, fingerprint) — surfaced in the report + UI, inventory only.
+- **httpx** — isolates live web servers from the resolving (live) set. Run with `-include-response`, it also yields per-host **PageSignals** (title, meta/OpenGraph, a pre-JS body snippet, form/password-field signals, detected tech) used by the AI profiler.
 
 ### 2. Audit nodes (run in parallel)
 
-- **Takeovers** — `nuclei -t http/takeovers/` against Array 3 (Dead), severity floor `high`. (Replaces the original `subjack`, whose fingerprints went stale.)
-- **TLS** — `sslyze` against live HTTPS servers, projected to a per-host **pass/fail scorecard** (TLS 1.0/1.1 disabled, no weak ciphers, cert validity + ≥30d, full chain trusted, HSTS, OCSP stapling). Raw JSON kept per host.
+- **Takeovers** — two halves: live hosts whose CNAME chain leaves the roots are checked with `nuclei -t http/takeovers/` (severity floor `high`); the dead/dangling set is matched **offline** against a bundled provider-fingerprint DB. (Replaces the original `subjack`, whose fingerprints went stale.)
+- **TLS** — `sslscan` against live HTTPS servers, projected to a per-host **pass/fail scorecard** (insecure protocols disabled, no weak ciphers, cert validity + ≥30d, key strength, signature algorithm, secure renegotiation). Passive — no attack-signature probes, so it doesn't trip WAFs. Raw XML kept per host. HSTS lives under `headers`.
 - **Web CVEs** — `nuclei` (auto-scan) against live web servers.
 - **Security headers** (`headers`) — a deterministic, passive analysis of the response headers httpx already captured: the OWASP best-practice catalog (HSTS, clickjacking, `nosniff`, Referrer-/Permissions-Policy, cookie flags, info-disclosure, deprecated `X-XSS-Protection`, cross-origin isolation) plus a structured **CSP** weakness pass. Emits first-class findings (sources `headers`/`csp`), each with a stable `check_id`. No new requests; full-scan only.
 - **Supply chain** — a Playwright/Chromium crawler visits each live host (root path by default), captures all `script`-typed responses and the document's response headers, one JSON artifact per host.
@@ -54,9 +54,9 @@ The AI layer's distinguishing value is **per-application context awareness**.
 
 A single self-contained **`report.html`** (CSS/JS inlined, survives email). It includes:
 
-- **Executive summary** — a **severity histogram** with source provenance (e.g. `high: 8 nuclei, 4 sslyze`). No aggregate score, no letter grade.
+- **Executive summary** — a **severity histogram** with source provenance (e.g. `high: 8 nuclei, 4 sslscan`). No aggregate score, no letter grade.
 - **Run health** — duration, error counts by stage, AI-degraded and TLS-errored counts, notable rate-limit/timeout events.
-- **Recon & scope** — the three arrays, with Shadow IT grouped by CNAME target eTLD+1 (falling back to AS org).
+- **Recon** — two liveness groups: Live (scanned) and Dead / dangling (takeover-watch).
 - **Findings** — separate "lens" tables per tool (nuclei, takeovers) — no cross-tool dedup.
 - **TLS scorecard** — per-host pass/fail badges + a fleet rollup.
 - **AI** — profile cards plus header and supply-chain findings.
@@ -75,10 +75,10 @@ A single self-contained **`report.html`** (CSS/JS inlined, survives email). It i
 ## Deployment
 
 Docker-only. The image pins the Go binaries (subfinder, dnsx, tlsx, httpx,
-nuclei), sslyze, Playwright + Chromium, and the Python deps. The MaxMind
-GeoLite2-ASN MMDB is **bind-mounted** (the container refuses to start without
-it). `watchtower verify-deps` checks the toolchain, Python modules, and
-(optionally) the MMDB + LLM endpoint before a run.
+nuclei), sslscan, Playwright + Chromium, and the Python deps. A MaxMind
+GeoLite2-ASN MMDB can be **bind-mounted** to enable ASN / org enrichment, but it
+is **optional** — scans run without it. `watchtower verify-deps` checks the
+toolchain, Python modules, and (optionally) the MMDB + LLM endpoint before a run.
 
 See **`API.md`** for the full CLI (`scan`, `init-config`, `verify-deps`),
 the YAML config schema, the run-directory layout, and the Python API.

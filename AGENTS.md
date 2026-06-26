@@ -31,7 +31,7 @@ watchtower/              Python package (the engine)
 ├── config.py          WatchTowerConfig (Pydantic) + throttle profiles
 ├── models.py          Finding, TLSHostReport, AppProfile, TriagedAsset, RunSummary, …
 ├── stages/            Stage protocol, pipeline assembly, capability registry, ScanState
-├── recon/ audit/ ai/  tool wrappers (subfinder/dnsx/tlsx/httpx, sslyze/nuclei/crawler, LLM).
+├── recon/ audit/ ai/  tool wrappers (subfinder/dnsx/tlsx/httpx, sslscan/nuclei/crawler, LLM).
 │                      audit/ also: header_checks, js_libs (retire.js-style),
 │                      suppress (manual fingerprints), tech (httpx+AI merge)
 ├── report/            aggregator + Jinja renderer (single self-contained report.html)
@@ -78,6 +78,28 @@ docker run --rm -p 8080:8080 -e WATCHTOWER_API_KEYS=key \
 
 **Engine**
 - `runs/` is the source of truth; runs are self-describing. No DB, no cross-run state.
+- **Liveness, not ownership.** WatchTower is a Layer-7 AppSec tool, so assets are
+  NOT classified by where their IP is hosted. There is **no** `in_scope`/
+  `shadow_it`/`dead` bucket model and **no** `sanctioned_cidrs`/`sanctioned_asns`
+  (both removed). `TriagedAsset.status` is a single liveness axis: `live` (≥1 A
+  record → fully scanned; cert SANs feed the DNS→TLS re-feed loop) vs `dead`
+  (NXDOMAIN/no A → takeover-watch only). The configured **`roots` are the only
+  scope** (`under_any_root`); every name resolving under a root is scanned
+  regardless of hosting. ASN/org is **display-only** enrichment via an **optional**
+  `mmdb_path` (`IPInfoLookup(mmdb_path=None)` degrades to no ASN, never errors) —
+  it does **not** gate scans. `ScanState` exposes `live()`/`dead()`. Old stored
+  configs with the removed keys still load (`WatchTowerConfig` uses
+  `ConfigDict(extra="ignore")`).
+- **TLS = sslscan** (`audit/sslscan_runner.py`, stage `audit.sslscan`, leaf token
+  `tls`). `build_sslscan_cmd` → `sslscan --no-failed --xml=<path> … host:port`,
+  parsed with stdlib `xml.etree.ElementTree` into `TLSCheck`/`TLSHostReport`/
+  `Finding` (`source='sslscan'`); raw XML kept under `runs/<id>/02_audit/sslscan/`.
+  Scorecard: insecure protocols disabled, no weak ciphers (RC4/3DES/DES/EXPORT/
+  NULL/MD5/anon or `<112`-bit), cert valid + `>30d`, key strength (RSA≥2048/
+  EC≥256), sig-algo not SHA1/MD5, secure renegotiation. HSTS lives under `headers`,
+  not here. sslscan is **passive** (no ROBOT/CCS/attack probes) → doesn't trip the
+  WAFs that blocked sslyze. Config `tools.sslscan` (`timeout`+`extra_flags`),
+  concurrency `concurrency.tls`. There is **no sslyze** anymore.
 - Every subprocess goes through `util/subproc.run_tool` (timing/timeout/cancel events,
   process-group kill via `start_new_session=True`). Don't spawn tools directly.
   NB tool flags must match the **pinned** binary versions (Dockerfile) — e.g. tlsx
@@ -123,13 +145,14 @@ docker run --rm -p 8080:8080 -e WATCHTOWER_API_KEYS=key \
   shape-hints + user assembly stay in code so an override can't break JSON.
 - **`takeovers` has two halves** (`stages/audit.py` `TakeoversStage`): nuclei
   `http/takeovers/` templates all `GET {{BaseURL}}` + match a live unclaimed-page
-  body fingerprint, so they need a **resolving** host → fed the `shadow_it` hosts
-  with a third-party CNAME (NOT `dead`, which has no A records). The dangling/
-  NXDOMAIN class (`dead` bucket) is matched **deterministically/offline** against
-  a bundled provider DB (`audit/takeover_fingerprints.py` + `data/
-  takeover_fingerprints.json`, from can-i-take-over-xyz) over the stored
-  `cname_chain` — the class nuclei structurally can't reach. Both emit
-  `source='takeover'`; deterministic findings carry `check_id=takeover.<service>`.
+  body fingerprint, so they need a **resolving** host → fed the **live** hosts
+  whose `cname_chain` has a hop NOT `under_any_root(cfg.roots)` (a third-party
+  CNAME, NOT `dead` which has no A records). The dangling/NXDOMAIN class (the
+  `dead` set) is matched **deterministically/offline** against a bundled provider
+  DB (`audit/takeover_fingerprints.py` + `data/takeover_fingerprints.json`, from
+  can-i-take-over-xyz) over the stored `cname_chain` — the class nuclei
+  structurally can't reach. Both emit `source='takeover'`; deterministic findings
+  carry `check_id=takeover.<service>`.
 - A completed scan exits `0` even with recorded errors; `--strict` → exit `3`.
 - **subfinder is OPTIONAL** (`RECON_REQUIRED=(dns,httpx)`, `RECON_OPTIONAL=(subfinder,tlsx)`).
   `DnsxAndTriageStage` always seeds `cfg.roots` as candidates, so `--skip recon.subfinder`
@@ -169,7 +192,8 @@ docker run --rm -p 8080:8080 -e WATCHTOWER_API_KEYS=key \
   (`WATCHTOWER_API_KEYS`) + webhook secret stay env-only.
 - **No scan-target allowlist** (ZAP-like): the per-request `roots` is the only
   scope. The server boots even fully unconfigured; a scan is gated at submit on a
-  *valid* base config (llm + mmdb) → `409 not_configured` until set via the UI,
+  *valid* base config (**llm endpoint only**; `mmdb` is optional — display-only
+  ASN/org enrichment, not a gate) → `409 not_configured` until set via the UI,
   not on boot. NB this **removes** the earlier invariants ("secrets only from
   env", "`allowed_roots` 403 guardrail"). With auth OPEN there is now NO
   server-side scope ceiling — keep `WATCHTOWER_API_KEYS` set before exposing it.
@@ -181,14 +205,17 @@ docker run --rm -p 8080:8080 -e WATCHTOWER_API_KEYS=key \
   FQDN-keyed (imported via CSV `domain,group` upsert; discovered subdomains synced
   at recon end, inheriting their root's group, imported group/notes never
   clobbered). Scan targeting is a selector: `roots | group | assets | all_assets`
-  → resolved to roots before the run. Assets also store `cname_chain` (for re-eval).
-- **Asset bulk + re-eval**: `POST /assets/bulk {action: delete|set_group, fqdns[] |
-  filter{...}}` (empty selection matches nothing — never wipes the table).
-  `POST /assets/reevaluate` recomputes buckets OFFLINE via `AssetManager.reevaluate`
-  (`IPInfoLookup(mmdb, ranges)` + reused `triage.triage_records` over stored
-  a_records/cname_chain) — also auto-fires from `PUT /config` when sanctioned
-  ranges change. UI: bulk bar + Re-evaluate button on the Assets page; assets "Scan"
-  buttons **deep-link** to `/scans/new?group=…`/`?assets=…` (one scan form).
+  → resolved to roots before the run. Assets also store `cname_chain` + a
+  liveness `status` (`live`/`dead`), both synced from recon.
+- **Asset bulk**: `POST /assets/bulk {action: delete|set_group, fqdns[] |
+  filter{...}}` (empty selection matches nothing — never wipes the table). The
+  filter keys on `status` (was `bucket`). NB there is **no re-evaluation** step:
+  `status` is a pure DNS-liveness fact recorded at recon time, not an
+  ownership classification recomputed against config — so the old
+  `POST /assets/reevaluate` route, `AssetManager.reevaluate`, and the
+  `PUT /config` auto-reevaluate are **gone**. UI: bulk bar on the Assets page;
+  assets "Scan" buttons **deep-link** to `/scans/new?group=…`/`?assets=…` (one
+  scan form), and finding rows **deep-link** to `/assets?q=<fqdn>`.
 - **Asset enrichment**: `_sync_assets` also writes per-host `profile` (AppProfile JSON
   when ai.profile ran) + `finding_counts` (per-severity, visible-only, seeded at 0 so
   re-scans clear stale counts). `GET /assets/{fqdn}/findings` returns the asset's

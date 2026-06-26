@@ -14,12 +14,12 @@ WatchTower is a **point-in-time, single-run** external AppSec audit orchestrator
 ```
                         ┌───────────────────────────────────────────────────┐
  roots.yaml             │                Phase 1: Recon                     │
- sanctioned_cidrs/asns  │                                                   │
-        │               │  subfinder ──► dnsx ──► triage ──► tlsx ──► httpx │
-        ▼               │                  │                                │
-   config.yaml          │                  ├─► Array 1 (In-Scope)           │
-                        │                  ├─► Array 2 (Shadow IT)          │
-                        │                  └─► Array 3 (Dead)               │
+        │               │                                                   │
+        ▼               │  subfinder ──► dnsx ──► triage ──► tlsx ──► httpx │
+   config.yaml          │                  │                                │
+                        │                  ├─► Live  (resolved, scanned)    │
+                        │                  └─► Dead  (no A record, watched) │
+                        │                                                   │
                         └─────────┬─────────────────────────────────────────┘
                                   │
                 ┌─────────────────┼─────────────────┐
@@ -27,8 +27,8 @@ WatchTower is a **point-in-time, single-run** external AppSec audit orchestrator
         ┌──────────────┐  ┌──────────────┐  ┌──────────────┐
         │ Phase 2A     │  │ Phase 2B/C/D │  │ Phase 3      │
         │ Takeovers    │  │ TLS / CVEs / │  │ AI analysis  │
-        │ (nuclei)     │  │ Supply chain │  │ (per host)   │
-        │ on Array 3   │  │ on Array 1   │  │              │
+        │ nuclei(Live)+│  │ Supply chain │  │ (per host)   │
+        │ offline(Dead)│  │ on Live      │  │              │
         └──────┬───────┘  └──────┬───────┘  └──────┬───────┘
                │                 │                 │
                └────────┬────────┴─────────────────┘
@@ -52,29 +52,33 @@ Each stage **always** emits its artifact, possibly empty. `errors.json` at the r
 
 | Decision | Value |
 |---|---|
-| IP → ASN lookup | Local MaxMind **GeoLite2-ASN MMDB** via `maxminddb` Python lib. No `asnmap` binary. |
+| IP → ASN lookup | Local MaxMind **GeoLite2-ASN MMDB** via `maxminddb` Python lib (no `asnmap` binary). **Display-only enrichment** — optional, and never gates a scan: a missing/None mmdb just yields `asn`/`as_org` = `None`. |
 | Triage scope | **IPv4 only** — AAAA records ignored. |
-| CNAME handling | **CNAME-aware**. Any CNAME to a non-sanctioned zone → Array 2 (Shadow IT). |
-| Mixed-A semantics | **Strictest-wins** — if any resolved A is outside sanctioned CIDRs/ASNs → Shadow IT. |
+| CNAME handling | **CNAME-aware**. The full `cname_chain` is preserved for takeover evaluation — a hop pointing to an eTLD+1 not under any configured root flags a live host for the nuclei takeover pass. |
+| Liveness axis | A host that resolves to ≥1 A record is `live`; NXDOMAIN / no A record (e.g. a dangling CNAME) is `dead`. |
 | `tlsx` re-feed loop | **Seen-set FQDN dedup + max 3 iterations + SAN filter to configured root domains**. Wildcards (`*.foo.com`) recorded but never iterated. The same single handshake/IP also captures a passive **cert dossier** → `CertInfo` (expiry, issuer, serial, sha256, self-signed/wildcard) into `state.tls_certs` — inventory only, no findings. Command: `tlsx -silent -json -c <concurrency>` (tlsx 1.1.7 has **no `-rl`**; `-json` returns the full dossier). |
 
 #### 2.1.1 Triage classification rules (executed in order)
 
-For each subdomain after `dnsx` resolution:
+WatchTower is a **Layer-7 AppSec tool**: assets are *not* classified by where their
+IP is hosted. The configured `roots` are the **only** scope — `under_any_root` is the
+sole scope boundary, and every name resolving under a root is scanned regardless of
+hosting. Within that scope, triage assigns a single **liveness** status. For each
+subdomain after `dnsx` resolution:
 
-1. **NXDOMAIN / no A record** → Array 3 (Dead).
-2. **Any A record IP not in `sanctioned_cidrs`** *and* **its ASN not in `sanctioned_asns`** → Array 2 (Shadow IT).
-3. **Any CNAME in the chain points to an eTLD+1 that is not one of the configured `roots`** → Array 2 (Shadow IT).
-4. Otherwise → Array 1 (In-Scope).
+1. **NXDOMAIN / no A record** (e.g. a dangling CNAME) → status `dead`. **Not actively
+   scanned** — only watched for takeover (offline against the bundled provider DB).
+2. **Otherwise** (resolves to ≥1 A record) → status `live`. **Fully scanned**, and its
+   cert SANs feed the DNS→TLS re-discovery loop.
 
-Each triaged asset records the reason its bucket was chosen, surfaced in the report.
+Each triaged asset records the reason its status was chosen, surfaced in the report.
 
 ### 2.2 Audit nodes
 
 | Node | Tool | Target | Notes |
 |---|---|---|---|
-| A — Takeovers | **`nuclei -t http/takeovers/`** (resolving `shadow_it` CNAME candidates) **+ deterministic CNAME check** (`audit/takeover_fingerprints.py` over the `dead` bucket) | per-class targeting | Two halves: nuclei's HTTP body-fingerprint templates need a *resolving* host, so they run on `shadow_it` hosts with a third-party CNAME; the dangling/NXDOMAIN class (no A records) is matched offline against a bundled provider DB (`data/takeover_fingerprints.json`, from can-i-take-over-xyz) — the class nuclei structurally can't reach. Replaces `subjack`. Severity floor `high` (claimable) / `medium` (edge case). |
-| B — TLS | `sslyze --json_out` | Live web servers (httpx output) | Per-host pass/fail checklist (§2.5). |
+| A — Takeovers | **`nuclei -t http/takeovers/`** (live hosts with a third-party CNAME) **+ deterministic CNAME check** (`audit/takeover_fingerprints.py` over the `dead` set) | per-class targeting | Two halves: nuclei's HTTP body-fingerprint templates need a *resolving* host, so they run on `live` hosts whose `cname_chain` has a hop **not** under any configured root; the dangling/NXDOMAIN class (the `dead` set, no A records) is matched offline against a bundled provider DB (`data/takeover_fingerprints.json`, from can-i-take-over-xyz) — the class nuclei structurally can't reach. Replaces `subjack`. Severity floor `high` (claimable) / `medium` (edge case). |
+| B — TLS | `sslscan --no-failed --xml=<path>` | Live web servers (httpx output) | Per-host pass/fail checklist (§2.5), parsed from sslscan XML via stdlib `xml.etree.ElementTree`. |
 | C — Web CVEs | `nuclei -as` | Live web servers | `severity: low,medium,high,critical`, `-rl 100`, templates **always latest** (not pinned — fresh CVEs > reproducibility). |
 | D — Supply chain | Playwright (Chromium) | Live web servers | Root path only, `networkidle` 30s cap, 5 parallel browsers. Captures all `script`-typed responses. |
 | E — Security headers | `audit/header_checks.py` (pure Python) | httpx `PageSignals.headers` | **Deterministic + passive** (no new requests). OWASP best-practice catalog + structured CSP. See §2.2.1. |
@@ -119,7 +123,7 @@ downstream header and supply-chain prompts consume as context.
 | Decision | Value |
 |---|---|
 | Toggle | `ai.profiling: true` by default (the headline capability ships enabled). When `false`, header/supply prompts revert to their **default, context-light prompts verbatim**, no profile artifact is written, and the pipeline makes 2 LLM calls/host instead of 3. |
-| Placement | Early stage after `httpx`, before the audit fan-out. The profile is therefore architecturally available pipeline-wide. **In v1 it influences only the AI prompts.** Deterministic scanners (nuclei/sslyze/crawler) always run at full coverage regardless of profile — an LLM guess must never *gate* a security scan. |
+| Placement | Early stage after `httpx`, before the audit fan-out. The profile is therefore architecturally available pipeline-wide. **In v1 it influences only the AI prompts.** Deterministic scanners (nuclei/sslscan/crawler) always run at full coverage regardless of profile — an LLM guess must never *gate* a security scan. |
 | Inputs (signals) | Built **entirely from `httpx` output** — no new crawler work. `httpx -include-response` returns the raw (pre-JS) HTML, from which the httpx stage parses `PageSignals`: response headers, `<title>`, `<meta name=description>`, OpenGraph tags, a stripped `≤2 KB` visible-text snippet, `form_count`, and `has_password_input`. Plus the already-captured detected `tech`. |
 | SPA caveat | The body is **pre-JavaScript**. `<title>`/meta/OG live in the static `<head>` so they survive; visible body text is thin for SPAs. The profiler is explicitly told the HTML is pre-render so it does not over-read emptiness. |
 | Output contract | Same machinery as the other calls: Pydantic-validated JSON, **retry once**, then graceful degrade. |
@@ -163,7 +167,7 @@ needs the crawler's scripts.
 | Decision | Value |
 |---|---|
 | Runtime | Single-process `asyncio`. Stages execute **sequentially**; intra-stage fan-out via `asyncio.gather`. |
-| Concurrency cap | `asyncio.Semaphore` per stage, default **10** for HTTP-ish workloads, **4** for LLM, **5** for Playwright (one browser context each), **5** for sslyze. All scaled down by the `gentle` throttle profile (§2.9). |
+| Concurrency cap | `asyncio.Semaphore` per stage, default **10** for HTTP-ish workloads, **4** for LLM, **5** for Playwright (one browser context each), **5** for sslscan (`concurrency.tls`). All scaled down by the `gentle` throttle profile (§2.9). |
 | Failure semantics | Per-asset errors caught at the coroutine boundary are kept in the artifact **and** returned by the stage as `StageResult.asset_errors`; `execute_stages` (and `ParallelStage`, per child) folds them into the single error sink (`ScanState.errors` → `errors.json` + the report's Run Errors panel + the summary). That fold is the **one place** a `(target, message)` pair becomes an attributed `StageError`, so no stage touches the sink directly. Stage crashes are caught in `execute_stages` and recorded with their exception type (+ a truncated traceback under `--verbose`). **Stage always completes.** |
 | Empty inputs | Every stage **always emits its artifact**, possibly empty. Downstream stages run-but-produce-empty. Report always renders every section. |
 | Subprocess invocation | `asyncio.create_subprocess_exec`. Each tool writes raw output to its stage directory; the wrapper reads + parses post-completion. |
@@ -173,9 +177,9 @@ needs the crawler's scripts.
 | Decision | Value |
 |---|---|
 | Form factor | **Single self-contained HTML** (CSS, JS, SVG inlined). Must survive being emailed. |
-| Executive Summary | **Severity histogram only**. No aggregate score, no letter grade. Counts include source provenance (`high: 8 nuclei, 4 sslyze`). |
-| TLS scorecard | **Per-host pass/fail badges** on a fixed checklist: TLS 1.0 disabled, TLS 1.1 disabled, no RC4/3DES/EXPORT ciphers, cert valid + not expiring <30d, full chain trusted, HSTS present, OCSP stapling. Fleet rollup at top. No letter grade. |
-| Shadow IT view | **Grouped by CNAME target eTLD+1** (e.g., `vercel.app` — 14 assets). Assets without CNAME grouped by AS organization. Each row shows FQDN + IP + AS. |
+| Executive Summary | **Severity histogram only**. No aggregate score, no letter grade. Counts include source provenance (`high: 8 nuclei, 4 sslscan`). |
+| TLS scorecard | **Per-host pass/fail badges** on a fixed checklist: insecure protocols disabled (SSLv2/SSLv3/TLS 1.0/TLS 1.1), no weak ciphers (RC4/3DES/DES/EXPORT/NULL/MD5/anonymous, or bits < 112), cert valid + not expiring <30d, key strength (RSA ≥ 2048 / EC ≥ 256), signature algorithm not SHA-1/MD5, secure renegotiation supported. Fleet rollup at top. No letter grade. (Chain-trust and HSTS are *not* graded here — the recon cert dossier already carries issuer/expiry/self-signed, and HSTS is covered by the `headers` capability.) |
+| Recon / triage view | Two groups — **Live (scanned)** and **Dead / dangling (watch)**. Each row shows FQDN + IP + AS (ASN/org from the optional MMDB, when present). |
 | Cross-tool dedup | **None**. Each tool gets its own section ("lenses"). Overlap reads as corroboration. |
 | Interactivity | **Inlined vanilla JS** (~3-5 KB): severity filter, free-text search, column sort, section collapse. No external libs. |
 | Provenance footer | Collapsible block with `versions.json` contents (tool versions, model name, run timestamps, config hash). |
@@ -186,7 +190,7 @@ needs the crawler's scripts.
 |---|---|
 | CLI | `watchtower scan --config <path> [--output-dir runs/] [--progress plain\|rich\|quiet] [--verbose] [--only \| --skip <tokens>] [--strict]` |
 | Stage selection | `--only`/`--skip` take a comma-separated list of **capability tokens** (§2.8). Mutually exclusive. |
-| Config format | **YAML**. Sections: `roots`, `sanctioned_cidrs`, `sanctioned_asns`, `mmdb_path`, `llm`, `ai`, `headers`, `concurrency`, `paths_per_host`, plus per-tool config blocks. |
+| Config format | **YAML**. Sections: `roots`, `mmdb_path` (optional), `llm`, `ai`, `headers`, `concurrency`, `paths_per_host`, plus per-tool config blocks. |
 | Run dir | `runs/<UTC-ISO-timestamp>-<slug>/` |
 | Run dir layout | See §3. |
 | Logging | `--progress plain` (default, timestamped stderr) / `rich` (live stage tree + warning panel + summary, auto-falls back to plain on a non-TTY) / `quiet` (warnings/errors + final summary only). `run.log.jsonl` **always written**, and tallied into an end-of-run `RunSummary` (logged + `summary.json`). |
@@ -196,8 +200,8 @@ needs the crawler's scripts.
 
 | Decision | Value |
 |---|---|
-| Form factor | **Docker-only.** Image pins all Go binaries (subfinder, dnsx, tlsx, httpx, nuclei), `sslyze`, Playwright + Chromium, Python deps. |
-| MMDB delivery | **Bind-mount only.** Container expects `GeoLite2-ASN.mmdb` at `/data/mmdb/GeoLite2-ASN.mmdb`. Container **refuses to start** if missing. User owns refresh. |
+| Form factor | **Docker-only.** Image pins all Go binaries (subfinder, dnsx, tlsx, httpx, nuclei), `sslscan` (Debian package), Playwright + Chromium, Python deps. |
+| MMDB delivery | **Bind-mount, optional.** If `GeoLite2-ASN.mmdb` is present at `/data/mmdb/GeoLite2-ASN.mmdb` it supplies ASN/org display enrichment; if absent the scan runs normally with `asn`/`as_org` left `None`. User owns refresh. |
 | Authorization preflight | **None.** Tool runs on whatever YAML it's pointed at. Operator trust. |
 
 ### 2.8 Selective stage invocation
@@ -213,9 +217,9 @@ stage names:
 
 | Token | Maps to | Notes |
 |---|---|---|
-| `recon` | the discovery spine (subfinder → dnsx → triage → tlsx → httpx) | Always runs as a **prerequisite** for every other capability. As a standalone `--only recon` it means *discovery-only*: emit the asset inventory + triage graph + shadow-IT, then stop. |
-| `takeovers` | `nuclei` takeover templates (resolving `shadow_it` CNAME candidates) + deterministic dangling-CNAME check (`dead` bucket) | Two halves — see §2.2. |
-| `tls` | `sslyze` per-host TLS scorecard | |
+| `recon` | the discovery spine (subfinder → dnsx → triage → tlsx → httpx) | Always runs as a **prerequisite** for every other capability. As a standalone `--only recon` it means *discovery-only*: emit the asset inventory + triage graph (live/dead), then stop. |
+| `takeovers` | `nuclei` takeover templates (live hosts with a third-party CNAME) + deterministic dangling-CNAME check (`dead` set) | Two halves — see §2.2. |
+| `tls` | `sslscan` per-host TLS scorecard | |
 | `nuclei` | main `nuclei` web-CVE scan | |
 | `headers` | deterministic header + CSP analysis (§2.2.1) | Passive over httpx headers; sub-tokens `headers.csp`, `headers.best-practice`. Full-scan only. |
 | `supply-chain` | the Playwright crawler | |
@@ -265,9 +269,10 @@ stage list (bypassing token logic entirely). See API.md §5.
 
 ### 2.9 Rate limiting & observability
 
-External audits hit live, often production, targets — and aggressive probing (sslyze in
-particular opens many parallel connections testing every cipher/protocol) can trip a
-target's WAF / rate-limiter. Two mechanisms address this.
+External audits hit live, often production, targets — and aggressive probing (a burst of
+httpx/nuclei requests in particular) can trip a target's WAF / rate-limiter. (`sslscan` is
+passive — no ROBOT/CCS/attack-signature probes — so it doesn't trip WAFs the way the old
+active TLS prober did.) Two mechanisms address this.
 
 #### 2.9.1 Throttle profiles
 
@@ -280,17 +285,16 @@ across *all* network-touching tools at once:
 | takeovers `-rl` | 10 | 50 | 150 |
 | dnsx `-rl` | 100 | 1000 | 5000 |
 | tlsx `-c` (concurrency) | 20 | 100 | 300 |
-| sslyze `--slow_connection` | **on** | off | off |
-| sslyze per-host timeout | 600s | 300s | 180s |
-| concurrency default / sslyze / playwright | 3 / 2 / 2 | 10 / 5 / 5 | 20 / 10 / 8 |
+| sslscan per-host timeout | 600s | 300s | 180s |
+| concurrency default / tls / playwright | 3 / 2 / 2 | 10 / 5 / 5 | 20 / 10 / 8 |
 
 Resolution rule: the profile fills only fields the operator did **not** explicitly set
 (decided via Pydantic's `model_fields_set` in a `model_validator`), so **any per-tool or
 per-concurrency value in the YAML overrides the profile**. `normal` equals every field's own
 default, so an unset `throttle` reproduces prior behavior exactly. The closed gaps:
-sslyze gained `slow_connection` + `timeout` + its own `concurrency.sslyze` (previously it
-shared `concurrency.default` *and* had no per-host throttle — the combination that floods a
-target). dnsx gained `rate_limit`; tlsx uses `concurrency` (`-c`) — it has no rate-limit flag.
+sslscan gained a per-host `timeout` + its own `concurrency.tls` (previously it shared
+`concurrency.default` and had no per-host throttle). dnsx gained `rate_limit`; tlsx uses
+`concurrency` (`-c`) — it has no rate-limit flag.
 
 #### 2.9.2 Rate-limit observability
 
@@ -303,7 +307,7 @@ So an operator can answer *"where did we hit the limit?"*, every subprocess flow
   with elapsed time.
 * **`rate_limit_signal`** — emitted by httpx when a burst of `403/429/503` responses appears
   on the probe pass (a direct WAF/rate-limit tell), listing the affected hosts.
-* **`sslyze_host_done`** / **`sslyze_summary`** — per-host pass/total + elapsed, and a run
+* **`sslscan_host_done`** / **`sslscan_summary`** — per-host pass/total + elapsed, and a run
   rollup of `ok` vs `errored/timed-out` hosts.
 * **`throttle`** — logged once at run start: the resolved profile and the effective per-tool
   rates, so later timeout/limit events can be read against the limits that were in force.
@@ -328,14 +332,14 @@ runs/2026-05-26T10-24-00Z-prod-fleet/
 ├── 01_recon/
 │   ├── subfinder.txt
 │   ├── dnsx.jsonl
-│   ├── triage.json              # {in_scope: [...], shadow_it: [...], dead: [...]}
+│   ├── triage.json              # {live: [...], dead: [...]}
 │   ├── tlsx.jsonl
 │   └── httpx.jsonl              # final live web servers
 ├── 02_audit/
 │   ├── takeovers/
 │   │   └── nuclei-takeovers.jsonl
-│   ├── sslyze/
-│   │   └── <host>.json          # one per host
+│   ├── sslscan/
+│   │   └── <host>.xml           # raw sslscan XML, one per host
 │   ├── nuclei/
 │   │   └── findings.jsonl
 │   ├── headers/
@@ -358,6 +362,10 @@ runs/2026-05-26T10-24-00Z-prod-fleet/
 
 > The example below is illustrative. The canonical, always-current example is
 > produced by `watchtower init-config` (see API.md §1).
+>
+> `WatchTowerConfig` sets `model_config = ConfigDict(extra="ignore")`, so older stored
+> configs that still carry the removed `sanctioned_cidrs` / `sanctioned_asns` keys load
+> without error (the keys are simply dropped).
 
 ```yaml
 # config.yaml
@@ -365,15 +373,7 @@ roots:
   - example.com
   - example-corp.io
 
-sanctioned_cidrs:
-  - 203.0.113.0/24
-  - 198.51.100.0/22
-
-sanctioned_asns:
-  - 64500
-  - 64501
-
-mmdb_path: /data/mmdb/GeoLite2-ASN.mmdb
+mmdb_path: /data/mmdb/GeoLite2-ASN.mmdb   # optional: ASN/org display enrichment only
 
 concurrency:
   default: 10
@@ -418,7 +418,8 @@ tools:
     severities: [high, critical]
     rate_limit: 50
     extra_flags: []
-  sslyze:
+  sslscan:
+    timeout: 300
     extra_flags: []
   playwright:
     wait_until: networkidle
@@ -437,9 +438,9 @@ class TriagedAsset(BaseModel):
     fqdn: str
     a_records: list[str]
     cname_chain: list[str]
-    asn: int | None
-    as_org: str | None
-    bucket: Literal["in_scope", "shadow_it", "dead"]
+    asn: int | None                 # display-only enrichment (optional MMDB; None if absent)
+    as_org: str | None              # display-only enrichment (optional MMDB; None if absent)
+    status: Literal["live", "dead"]
     reason: str  # human-readable explanation
 ```
 
@@ -447,7 +448,7 @@ class TriagedAsset(BaseModel):
 
 ```python
 class Finding(BaseModel):
-    source: Literal["nuclei", "takeover", "sslyze",
+    source: Literal["nuclei", "takeover", "sslscan",
                     "headers", "csp",                 # deterministic header checks
                     "ai_headers", "ai_supply_chain"]
     host: str | None
@@ -563,7 +564,7 @@ class RunSummary(BaseModel):            # end-of-run rollup → summary.json + r
     duration_s: float = 0.0
     findings_total: int = 0
     findings_by_severity: dict[str, int] = {}
-    assets: dict[str, int] = {}         # in_scope / shadow_it / dead / live_servers / wildcards
+    assets: dict[str, int] = {}         # live / dead / live_servers / wildcards
     errors_total: int = 0
     errors_by_stage: dict[str, int] = {}
     stages: list[StageOutcome] = []
@@ -572,7 +573,7 @@ class RunSummary(BaseModel):            # end-of-run rollup → summary.json + r
     events: dict[str, int] = {}         # tool_timeout / tool_nonzero / rate_limit_signal / warn / error
 ```
 
-Per-asset failures (sslyze timeouts, crawler nav errors, AI degradations) are
+Per-asset failures (sslscan timeouts, crawler nav errors, AI degradations) are
 returned by their stage as `StageResult.asset_errors` and folded by
 `execute_stages` into the single `StageError` sink (`ScanState.errors`), so
 `errors.json`, the report's Run Errors panel, and the `RunSummary` all agree.
@@ -596,9 +597,9 @@ watchtower/
 ├── util/
 │   ├── subproc.py         # async subprocess helper (run_tool: structured tool events)
 │   ├── domains.py         # tldextract wrappers, eTLD+1 + host_to_filename helpers
-│   └── ipinfo.py          # CIDR matching + MMDB lookup
+│   └── ipinfo.py          # optional GeoLite2-ASN MMDB lookup (asn/as_org; tolerates a missing/None mmdb)
 ├── recon/                 # raw recon tool wrappers (subfinder, dnsx+triage, tlsx loop, httpx)
-├── audit/                 # sslyze / nuclei / takeovers / crawler / header_checks + nuclei_parse (shared JSONL→Finding)
+├── audit/                 # sslscan / nuclei / takeovers / crawler / header_checks + nuclei_parse (shared JSONL→Finding)
 ├── ai/
 │   ├── client.py          # OpenAI-compat httpx client
 │   ├── schemas.py         # AIFinding + AISuppression + AIResponse (AppProfile lives in models.py)
@@ -609,7 +610,7 @@ watchtower/
 │   ├── base.py            # Stage ABC + StageResult, ParallelStage, execute_stages()
 │   ├── recon.py           # Subfinder/Dnsx+Triage/TlsxLoop/Httpx (parses PageSignals)
 │   ├── profile.py         # AIProfileStage (after httpx, before audit)
-│   ├── audit.py           # Takeovers/Sslyze/Nuclei/Crawler/Headers stages
+│   ├── audit.py           # Takeovers/Sslscan/Nuclei/Crawler/Headers stages
 │   ├── ai.py              # AIStage (cross-source triage + supply analysis + soft-suppression)
 │   ├── report_stage.py    # ReportStage, CompressStage
 │   ├── capabilities.py    # CAPABILITIES registry + token→stage resolution
@@ -625,8 +626,8 @@ watchtower/
 ## 7. Operational notes
 
 * **Tool versions** captured in `versions.json` at run start: each tool's `-version`, nuclei templates SHA, MMDB build epoch, Python and key library versions, WatchTower git SHA, LLM `model` and `base_url`.
-* **Timeouts** — every tool invocation has a default outer timeout (subfinder/dnsx: 5 min; nuclei: 60 min; sslyze: 5 min/host; playwright: 30 s/host; LLM: 120 s/host).
-* **Resource limits** — each `asyncio.Semaphore` is configurable. Sslyze and nuclei each have their own internal concurrency; WatchTower only bounds *parallel invocations*, not the parallelism inside each tool.
+* **Timeouts** — every tool invocation has a default outer timeout (subfinder/dnsx: 5 min; nuclei: 60 min; sslscan: 5 min/host; playwright: 30 s/host; LLM: 120 s/host).
+* **Resource limits** — each `asyncio.Semaphore` is configurable. sslscan and nuclei each have their own internal concurrency; WatchTower only bounds *parallel invocations*, not the parallelism inside each tool.
 * **Rate-limit at the target** — `httpx` and `nuclei` both honor `-rl` from their config blocks. Playwright is gated by the parallel-context cap.
 * **Empty pipeline behavior** — even with zero subdomains found, the pipeline runs to completion and emits a report with "No assets discovered" across every section.
 
@@ -660,7 +661,6 @@ watchtower/
 | Nuclei templates always-latest = runs not comparable across days | Each run records template SHA in `versions.json` for after-the-fact attribution. |
 | No authz preflight | Operator-trust model; recommended only for internal use. |
 | Docker-only excludes Docker-averse Debian users | Documented; not addressed in v1. |
-| MMDB bind-mount: scan fails without operator action | Container startup check yields a clear error message pointing at the README. |
 | AI mis-profiles an app and skews finding severity | Influence is confined to **AI findings only** — deterministic scanners run full coverage regardless. `confidence: low` profiles suppress escalation; hard failures fall back to default prompts. The profile + its reasoning are shown in the report for operator override. |
 | httpx pre-JS body is thin for SPAs | `<title>`/meta/OG come from the static `<head>` and survive; the profiler is told the HTML is pre-render so it does not over-read an empty body. Post-render profiling is a documented future hook. |
 | Selective scans imply false coverage | Three-state coverage manifest + "Not run in this scan" placeholders ensure a skipped capability never reads as scanned-and-clean (§2.8.4). |

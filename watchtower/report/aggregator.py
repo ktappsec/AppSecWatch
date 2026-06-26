@@ -54,8 +54,8 @@ def build_run_summary(
     """Roll the final ScanState + logger counters into a RunSummary.
 
     Written to summary.json, logged at run end, and shown in the report. Reuses
-    `severity_histogram` and the `ScanState` bucket helpers; the per-asset failures
-    harvested into `state.errors` give truthful error counts.
+    `severity_histogram` and the `ScanState` liveness helpers (live/dead); the
+    per-asset failures harvested into `state.errors` give truthful error counts.
     """
     all_findings = (
         list(state.nuclei_findings) + list(state.takeover_findings)

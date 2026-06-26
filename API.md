@@ -78,9 +78,9 @@ docker run --rm \
 
 | Token | Runs | Notes |
 |---|---|---|
-| `recon` | discovery spine (subfinder → dnsx → triage → tlsx → httpx) | Always runs as a prerequisite. `--only recon` = **discovery-only**: asset inventory + triage graph + shadow IT, then stop. |
-| `takeovers` | nuclei takeover templates (resolving CNAME candidates) + deterministic dangling-CNAME check (dead bucket) | Two complementary halves — see `tools.takeovers`. |
-| `tls` | sslyze per-host TLS scorecard | |
+| `recon` | discovery spine (subfinder → dnsx → triage → tlsx → httpx) | Always runs as a prerequisite. `--only recon` = **discovery-only**: asset inventory + live/dead liveness graph, then stop. |
+| `takeovers` | nuclei takeover templates (resolving CNAME candidates) + deterministic dangling-CNAME check (dead hosts) | Two complementary halves — see `tools.takeovers`. |
+| `tls` | sslscan per-host TLS scorecard | |
 | `nuclei` | main nuclei web-CVE scan | |
 | `headers` | deterministic OWASP header + CSP analysis | Passive — evaluates the headers httpx already captured (no new requests). |
 | `supply-chain` | Playwright crawler | |
@@ -206,8 +206,8 @@ default `<output_root>/.config/server-config.json`, `0600`) is the source of tru
 and is edited at runtime via `GET`/`PUT /config`. The full scan config is editable;
 `llm.api_key` is UI-managed and persists in the store (`WATCHTOWER_LLM_API_KEY` only
 *seeds* it; masked `********` on read, blank/masked on write keeps it). The server
-boots even unconfigured — a scan is refused with `409 not_configured` until llm/mmdb
-are set. Edits apply to the next scan with no restart.
+boots even unconfigured — a scan is refused with `409 not_configured` until a valid
+LLM config is set (the MMDB is optional). Edits apply to the next scan with no restart.
 
 **Endpoints** (full contract + payloads in `WEB_API_PLAN.md` §5): `POST /scans`,
 `GET /scans[/{id}]`, `GET /scans/{id}/{result,report,log}`,
@@ -244,16 +244,16 @@ The config file is parsed with PyYAML and validated against `watchtower.config.W
 
 | Key | Type | Required | Default | Notes |
 |---|---|---|---|---|
-| `roots` | `list[str]` | ✓ | — | At least one root domain. Trailing dots stripped, lower-cased. |
-| `sanctioned_cidrs` | `list[str]` | ✗ | `[]` | IPv4 CIDR notation. Validated as `IPv4Network` at load time. |
-| `sanctioned_asns` | `list[int]` | ✗ | `[]` | AS numbers. Used with MMDB lookups. |
-| `mmdb_path` | `str` | ✓ | — | Path to `GeoLite2-ASN.mmdb` inside the container. Load fails fast if missing. |
+| `roots` | `list[str]` | ✓ | — | At least one root domain. Trailing dots stripped, lower-cased. The configured `roots` are the **only** scope — every name resolving under a root is scanned regardless of where it's hosted. |
+| `mmdb_path` | `str` | ✗ | `null` | Optional path to `GeoLite2-ASN.mmdb`. **Display-only** ASN/org enrichment; it does **not** gate scans. With no MMDB, scans run identically minus the ASN/org column. |
 | `throttle` | enum | ✗ | `normal` | Global politeness tier (`gentle`/`normal`/`aggressive`) applied across all tools; per-tool fields override it. See [`throttle`](#throttle). |
 | `concurrency` | object | ✗ | see below | Per-stage parallelism caps. |
 | `paths_per_host` | `list[str]` | ✗ | `["/"]` | URL paths visited by the Playwright crawler per host. |
 | `llm` | object | ✓ | — | OpenAI-compatible LLM endpoint. |
 | `ai` | object | ✗ | see below | AI behavior, incl. context-aware profiling. |
 | `tools` | object | ✗ | defaults | Per-tool config blocks. |
+
+> **Removed keys (back-compat).** The old ownership model is gone: `sanctioned_cidrs` and `sanctioned_asns` no longer exist, and there is no `in_scope`/`shadow_it`/`dead` bucketing — assets now carry a single `status` of `live` (resolves to ≥1 A record) or `dead` (NXDOMAIN / no A records). Config files (or JSON) that still contain `sanctioned_*` keys load cleanly; unknown keys are ignored.
 
 <a id="throttle"></a>
 ### `throttle`
@@ -270,9 +270,8 @@ throttle: normal        # gentle | normal | aggressive
 | `tools.takeovers.rate_limit` | 10 | 50 | 150 |
 | `tools.dnsx.rate_limit` | 100 | 1000 | 5000 |
 | `tools.tlsx.concurrency` (`-c`; tlsx has no rate-limit flag) | 20 | 100 | 300 |
-| `tools.sslyze.slow_connection` | `true` | `false` | `false` |
-| `tools.sslyze.timeout` | 600 | 300 | 180 |
-| `concurrency.default` / `.sslyze` / `.playwright` | 3 / 2 / 2 | 10 / 5 / 5 | 20 / 10 / 8 |
+| `tools.sslscan.timeout` | 600 | 300 | 180 |
+| `concurrency.default` / `.tls` / `.playwright` | 3 / 2 / 2 | 10 / 5 / 5 | 20 / 10 / 8 |
 
 **Precedence:** the profile only fills fields you did **not** set explicitly. Any per-tool / per-concurrency value in the YAML overrides it — e.g. `throttle: gentle` with `tools: {nuclei: {rate_limit: 200}}` runs everything gently except nuclei at 200. `normal` equals every field's own default, so omitting `throttle` reproduces prior behavior exactly.
 
@@ -283,7 +282,7 @@ concurrency:
   default: 10        # int — generic fan-out cap
   llm: 4             # int — LLM call cap
   playwright: 5      # int — parallel browser contexts
-  sslyze: 5          # int — parallel sslyze host scans (each opens many connections)
+  tls: 5             # int — parallel sslscan host scans
 ```
 
 ### `llm`
@@ -327,7 +326,7 @@ ai:
 | `suppression.require_profile` | bool | `false` | When `true`, only hosts with a usable, non-low-confidence `AppProfile` get suppression (legacy gate). Default `false`: the profile is calibration, not a precondition. An AI degrade hides nothing either way. |
 | `prompts.*` | str \| null | `null` | Override a built-in AI **system** prompt (slot ids mirror `watchtower/ai/prompts.py` `PROMPT_SLOTS`). `null`/blank = built-in default. Shape-hints + user-message assembly stay in code, so an override can change judgment but never break JSON validation. Usually edited via the UI's **AI Tuning** page. |
 
-Profiling adds one LLM call per host. Hard failures degrade to the default prompts for that host; a profile that self-reports `confidence: low` is still used but does not drive aggressive severity escalation. The profiling stage runs **early** (after httpx, before the audit fan-out) and never gates the deterministic scanners — nuclei/sslyze/crawler always run at full coverage regardless of the profile.
+Profiling adds one LLM call per host. Hard failures degrade to the default prompts for that host; a profile that self-reports `confidence: low` is still used but does not drive aggressive severity escalation. The profiling stage runs **early** (after httpx, before the audit fan-out) and never gates the deterministic scanners — nuclei/sslscan/crawler always run at full coverage regardless of the profile.
 
 ### `headers`
 
@@ -362,17 +361,16 @@ tools:
     extra_flags: []
 ```
 
-### `tools.sslyze`
+### `tools.sslscan`
 
 ```yaml
 tools:
-  sslyze:
-    slow_connection: false   # bool — true adds `--slow_connection` (1 connection at a time; avoids WAFs)
+  sslscan:
     timeout: 300             # int seconds — per-host outer timeout
     extra_flags: []          # appended after the host:port target
 ```
 
-sslyze opens many connections per host probing every cipher/protocol; this is the tool most likely to trip a target's WAF. Use `slow_connection: true` (or `throttle: gentle`) against sensitive targets, and note that slow connections take longer — pair with a higher `timeout`. Parallel host scans are bounded by `concurrency.sslyze`, not `concurrency.default`.
+sslscan opens connections per host probing every cipher/protocol; it runs sequentially per host, so the cross-host pacing knob is `concurrency.tls` (not `concurrency.default`), which the throttle profile lowers for sensitive targets (`throttle: gentle`). The per-host scorecard grades: insecure protocols disabled (SSLv2/SSLv3/TLS1.0/TLS1.1), no weak ciphers (RC4/3DES/DES/EXPORT/NULL/MD5/anon or <112-bit), certificate valid >30 days, key strength (RSA ≥ 2048 / EC ≥ 256), signature algorithm not SHA-1/MD5, and secure renegotiation. (HSTS is **not** graded here — it's covered by the `headers` capability.)
 
 ### `tools.httpx`
 
@@ -399,7 +397,7 @@ tools:
 
 ### `tools.takeovers`
 
-Used by Node A's nuclei half — `-t http/takeovers/` against the **resolving** `shadow_it` CNAME candidates (the HTTP body-fingerprint templates need a host that resolves). The dangling/NXDOMAIN class (the `dead` bucket) is covered by a deterministic, offline CNAME→provider match (`audit/takeover_fingerprints.py`, bundled `data/takeover_fingerprints.json`) — no flags, always on with the `takeovers` capability.
+Used by the nuclei half — `-t http/takeovers/` against **live** hosts with a third-party CNAME (the HTTP body-fingerprint templates need a host that resolves). The dangling/NXDOMAIN class (the `dead` hosts) is covered by a deterministic, offline CNAME→provider match (`audit/takeover_fingerprints.py`, bundled `data/takeover_fingerprints.json`) — no flags, always on with the `takeovers` capability.
 
 ```yaml
 tools:
@@ -455,7 +453,7 @@ runs/<UTC-ISO-timestamp>-<root-slug>/
 │   └── httpx.jsonl
 ├── 02_audit/
 │   ├── takeovers/nuclei-takeovers.jsonl
-│   ├── sslyze/<host>.json                    # one per host
+│   ├── sslscan/<host>.xml                    # raw sslscan XML, one per host
 │   ├── nuclei/findings.jsonl
 │   └── playwright/<host>.json                # crawler artifact per host
 └── 03_ai/
@@ -505,7 +503,7 @@ All JSONL files are line-delimited JSON; one record per line. All single-JSON fi
 
 ```json
 [
-  {"stage": "audit.sslyze", "target": "api.example.com", "message": "..."},
+  {"stage": "audit.sslscan", "target": "api.example.com", "message": "..."},
   {"stage": "recon.httpx",  "target": null,              "message": "..."}
 ]
 ```
@@ -534,14 +532,13 @@ Records which capabilities ran vs. were skipped, and why — the source of the r
 
 ```json
 {
-  "in_scope":   [TriagedAsset, …],
-  "shadow_it":  [TriagedAsset, …],
-  "dead":       [TriagedAsset, …],
-  "wildcards":  ["*.example.com", …]
+  "live":      [TriagedAsset, …],
+  "dead":      [TriagedAsset, …],
+  "wildcards": ["*.example.com", …]
 }
 ```
 
-Each `TriagedAsset` is the Pydantic model dump described in §6.
+`live` assets resolve to ≥1 A record (fully scanned); `dead` assets are NXDOMAIN / have no A records (takeover-watch only). Each `TriagedAsset` is the Pydantic model dump described in §6.
 
 ### `01_recon/dnsx.jsonl`
 
@@ -555,9 +552,9 @@ Raw stdout from `httpx -json` (invoked with `-include-response` so the raw, pre-
 
 Raw `nuclei -jsonl` output. WatchTower parses into `Finding` objects but persists the raw form for forensics.
 
-### `02_audit/sslyze/<host>.json`
+### `02_audit/sslscan/<host>.xml`
 
-Raw sslyze JSON. Top-level keys include `server_scan_results` (list); WatchTower evaluates the checklist from this structure.
+Raw `sslscan --xml` output, one file per host. WatchTower parses each `<ssltest>` element into the per-host TLS scorecard (`TLSHostReport`): insecure protocols disabled, no weak ciphers, certificate valid >30 days, key strength, signature algorithm, and secure renegotiation (see `tools.sslscan`).
 
 ### `02_audit/playwright/<host>.json`
 
@@ -663,7 +660,7 @@ report_path = asyncio.run(
 )
 ```
 
-Returns the absolute path to the rendered `report.html`. Raises on bootstrap failures (e.g., MMDB missing). `only`/`skip` are mutually exclusive (passing both raises `ValueError`); unknown tokens raise `ValueError` listing the valid set.
+Returns the absolute path to the rendered `report.html`. Raises on bootstrap failures (e.g., an unwritable output dir or invalid config). `only`/`skip` are mutually exclusive (passing both raises `ValueError`); unknown tokens raise `ValueError` listing the valid set.
 
 `run_dir` and `state` exist for embedders that need to observe a scan as it runs (the Web API uses them): pass a `ScanState()` you keep a reference to and poll its `current_stage` / `completed_stages` / findings live, and pass a `run_dir` (e.g. from `make_run_dir`) to reserve the id up front. Both default to internal creation, so existing callers are unaffected.
 
@@ -700,9 +697,9 @@ from watchtower.recon.tls_san    import tlsx_refeed_loop
 from watchtower.recon.web_probe  import run_httpx
 
 # Audit
-from watchtower.audit.takeovers      import run_takeovers
-from watchtower.audit.sslyze_runner  import run_sslyze
-from watchtower.audit.nuclei_runner  import run_nuclei
+from watchtower.audit.takeovers       import run_takeovers
+from watchtower.audit.sslscan_runner  import run_sslscan
+from watchtower.audit.nuclei_runner   import run_nuclei
 from watchtower.audit.crawler        import run_crawler
 
 # AI
@@ -713,7 +710,7 @@ from watchtower.ai.prompts  import (
 )
 
 # Report
-from watchtower.report.aggregator import build_report_context, group_shadow_it
+from watchtower.report.aggregator import build_report_context
 from watchtower.report.renderer   import render_report
 
 # Stage plugin API
@@ -774,14 +771,10 @@ res: ProcResult = await run_tool(
 from watchtower.util.ipinfo import IPInfoLookup
 
 ipinfo = IPInfoLookup(
-    mmdb_path="/data/mmdb/GeoLite2-ASN.mmdb",
-    sanctioned_cidrs=["203.0.113.0/24"],
-    sanctioned_asns=[64500],
+    mmdb_path="/data/mmdb/GeoLite2-ASN.mmdb",   # optional; None = no ASN/org enrichment
 )
 ipinfo.is_ipv4("1.2.3.4")               # bool
-ipinfo.in_sanctioned_cidr("1.2.3.4")    # bool
-ipinfo.asn_info("1.2.3.4")              # ASNInfo(asn=15169, organization="...")
-ipinfo.asn_is_sanctioned(15169)         # bool
+ipinfo.asn_info("1.2.3.4")              # ASNInfo(asn=15169, organization="...") — display-only
 ipinfo.close()
 ```
 
@@ -813,7 +806,7 @@ context = build_report_context(
     live_servers=[...],     # list[LiveWebServer]
     nuclei_findings=[],     # list[Finding]
     takeover_findings=[],
-    sslyze_findings=[],
+    tls_findings=[],        # list[Finding] — from sslscan
     tls_reports=[],         # list[TLSHostReport]
     ai_headers_findings=[],
     ai_supply_findings=[],
@@ -839,10 +832,10 @@ class TriagedAsset(BaseModel):
     fqdn: str
     a_records: list[str]            # IPv4 only
     cname_chain: list[str]
-    asn: int | None
-    as_org: str | None
-    bucket: Literal["in_scope", "shadow_it", "dead"]
-    reason: str                     # human-readable classification reason
+    asn: int | None                 # display-only ASN (None when no MMDB)
+    as_org: str | None              # display-only AS org (None when no MMDB)
+    status: Literal["live", "dead"] # live = resolves to ≥1 A record; dead = NXDOMAIN / no A records
+    reason: str                     # human-readable liveness reason
 ```
 
 ### `LiveWebServer`
@@ -860,8 +853,9 @@ class LiveWebServer(BaseModel):
 
 ```python
 class Finding(BaseModel):
-    source: Literal["nuclei", "takeover", "sslyze",
+    source: Literal["nuclei", "takeover", "sslscan",
                     "headers", "csp",            # deterministic header checks
+                    "js_lib",                    # vulnerable JS library (retire.js-style)
                     "ai_headers", "ai_supply_chain"]
     host: str | None
     severity: Literal["info", "low", "medium", "high", "critical"]
@@ -899,15 +893,6 @@ class CrawlerArtifact(BaseModel):
     headers: dict[str, str]         # lower-cased keys
     scripts: list[dict[str, Any]]   # {url, status, initiator_url, method}
     errors: list[str]
-```
-
-### `ShadowITGroup`
-
-```python
-class ShadowITGroup(BaseModel):
-    key: str                        # eTLD+1 of CNAME target, or "AS<n> <org>"
-    grouping: Literal["cname", "asn"]
-    assets: list[TriagedAsset]
 ```
 
 ### `AIFinding` / `AIResponse`
@@ -1066,7 +1051,7 @@ Pass an instance into `_validated_call` (currently constructed inside `analyze_a
 
 ### Replacing the MMDB
 
-Anything implementing the `IPInfoLookup` shape (`is_ipv4`, `in_sanctioned_cidr`, `asn_info`, `asn_is_sanctioned`, `close`) can be substituted. The triage router calls only these methods.
+Anything implementing the `IPInfoLookup` shape (`is_ipv4`, `asn_info`, `close`) can be substituted. The triage router calls only these methods, and the MMDB is optional (display-only ASN/org enrichment) — with no MMDB, `asn_info` simply returns empty ASN/org.
 
 ---
 
@@ -1079,7 +1064,7 @@ Anything implementing the `IPInfoLookup` shape (`is_ipv4`, `in_sanctioned_cidr`,
 | `2` | Unknown command, argparse failure, or invalid stage selection (`--only` + `--skip` together, or an unknown capability token). |
 | `3` | `--strict` only: the scan completed and emitted a full report, but at least one stage crash or per-host failure was recorded. |
 | `130` | Interrupted (Ctrl-C). |
-| *(other non-zero)* | Bootstrap failure: MMDB missing/invalid, YAML parse/validation error, etc. The traceback prints to stderr. |
+| *(other non-zero)* | Bootstrap failure: YAML parse/validation error, unwritable output dir, etc. (the MMDB is optional and no longer gates a run). The traceback prints to stderr. |
 
 By default a completed scan exits 0 even if individual tools or hosts failed — partial failures are captured in `errors.json` / `summary.json` and surfaced in the report. The pipeline philosophy is "always emit a complete artifact set" (DESIGN.md §2.4). Pass `--strict` to turn any recorded failure into a non-zero exit (code `3`) for CI / programmatic callers; the report is still written.
 
@@ -1089,7 +1074,7 @@ By default a completed scan exits 0 even if individual tools or hosts failed —
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `WATCHTOWER_MMDB_PATH` | `/data/mmdb/GeoLite2-ASN.mmdb` | Set in the Docker image as a hint; WatchTower itself reads `mmdb_path` from the YAML. |
+| `WATCHTOWER_MMDB_PATH` | `/data/mmdb/GeoLite2-ASN.mmdb` | Set in the Docker image as a hint; WatchTower itself reads the **optional** `mmdb_path` from the YAML (display-only ASN/org enrichment — it does not gate a run). |
 | `PATH` | `/opt/tools/bin:…` | The Docker image installs all Go binaries here. |
 | `PYTHONUNBUFFERED` | `1` | Set in the image so logs flush in real time. |
 | `WATCHTOWER_API_KEYS` | *(unset)* | **`serve` only.** Comma-separated API keys for `Authorization: Bearer`. **If unset the API runs OPEN.** |
@@ -1114,7 +1099,7 @@ For the CLI (`scan`) no secrets flow through env vars: the LLM API key lives in 
 4.  recon.httpx              (-include-response; parses PageSignals from the body)
 5.  ai.profile               (per host; only when ai.profiling: true)
 6.  audit.takeovers
-7.  audit.parallel           (sslyze + nuclei + crawler + headers concurrently)
+7.  audit.parallel           (sslscan + nuclei + crawler + headers concurrently)
 8.  ai.analyze               (header + supply analysis; consumes AppProfile + the
                               deterministic header findings, soft-suppresses FPs)
 9.  report
@@ -1150,7 +1135,7 @@ Each stage's top-level error handler in `runner.py` catches exceptions, records 
 
 | Stage | Source of cap | Default |
 |---|---|---|
-| sslyze fan-out | `cfg.concurrency.sslyze` | 5 |
+| sslscan fan-out | `cfg.concurrency.tls` | 5 |
 | Playwright | `cfg.concurrency.playwright` | 5 |
 | AI analysis | `cfg.concurrency.llm` | 4 |
 | nuclei / nuclei-takeovers | nuclei's own `-rl` | per-tool |
@@ -1171,7 +1156,7 @@ Every subprocess flows through `run_tool`, which writes structured events to `ru
 | `tool_nonzero` | a tool exits non-zero | `tool`, `returncode`, `stderr_tail` |
 | `tool_done` | a tool completes (debug level) | `tool`, `elapsed_s`, `returncode` |
 | `rate_limit_signal` | httpx sees a burst of `403/429/503` | `tool`, `hosts` |
-| `sslyze_host_done` / `sslyze_summary` | per-host result / run rollup | `passed`, `total`, `ok`, `errored` |
+| `sslscan_host_done` / `sslscan_summary` | per-host result / run rollup | `passed`, `total`, `ok`, `errored` |
 
 ```sh
 # What got throttled, and against what limits?
@@ -1188,14 +1173,12 @@ jq -r 'select(.event=="throttle" or .event=="tool_timeout" or .event=="rate_limi
 
 ### Triage rules (DESIGN.md §2.1.1)
 
-For each subdomain, evaluated in order:
+For each subdomain, liveness is the only classification:
 
-1. **No A record** → `dead`.
-2. **Any A record IP outside both `sanctioned_cidrs` AND `sanctioned_asns`** → `shadow_it`.
-3. **Any CNAME hop with eTLD+1 not under `roots`** → `shadow_it`.
-4. Otherwise → `in_scope`.
+1. **No A record** (NXDOMAIN / dangling CNAME) → `dead` — takeover-watch only, not actively scanned.
+2. **≥1 A record** → `live` — fully scanned, and its certificate SANs feed the DNS→TLS re-discovery loop.
 
-IPv4 only. AAAA records are ignored entirely.
+The configured `roots` are the **only** scope — every name resolving under a root is scanned regardless of where it's hosted (there is no sanctioned-ownership gate). When an MMDB is configured, each live asset is additionally annotated with display-only ASN/org. IPv4 only; AAAA records are ignored entirely.
 
 ### Compression
 

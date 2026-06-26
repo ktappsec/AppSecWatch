@@ -23,14 +23,14 @@ change the scan engine.
 | 1 | Framework | **FastAPI + uvicorn** | Async-native (awaits `run_scan` directly), Pydantic v2-native (existing models become schemas), free OpenAPI/Swagger at `/docs`. |
 | 2 | Execution model | **In-process asyncio tasks**, semaphore-bounded; `runs/` is the durable record; in-memory job index rebuilt from disk on startup. | No new infra; reuses the async runner. Limitation: in-flight scans die on process restart (documented; a worker queue is the upgrade path). |
 | 3 | Job state | **`job.json` per run dir** + in-memory index. On startup, glob `runs/*/job.json`; a record left `running` with no live task → `interrupted`. | Keeps the "no DB, `runs/` is truth" ethos; each run is self-describing. |
-| 4 | Config delivery | **Server-side base config + minimal per-request params** (mode, target/roots, only/skip, throttle, compress). | Secrets (LLM api_key, MMDB path, sanctioned lists) stay server-side; callers send tiny payloads. |
+| 4 | Config delivery | **Server-side base config + minimal per-request params** (mode, target/roots, only/skip, throttle, compress). | Secrets (LLM api_key) and the optional MMDB path stay server-side; callers send tiny payloads. |
 | 5 | Auth | **Static API key(s)** via `Authorization: Bearer <key>` (also accept `X-API-Key`); constant-time compare; multiple keys for per-caller revocation; 401 on missing/invalid. | Simple, sufficient for service-to-service; no identity provider. |
-| 6 | Scan scope | **No scan-target allowlist (REVISED).** The per-request `roots` is the only scope (the UI specifies the domain per scan). A scan is gated only on a *valid* base config (llm + mmdb) → `409 not_configured`, not on a target allowlist. | Operator chose ZAP-like UX (UI-only, scope = the domain you enter). Trade-off: with auth OPEN there is no server-side scope ceiling — keep `WATCHTOWER_API_KEYS` set. |
+| 6 | Scan scope | **No scan-target allowlist (REVISED).** The per-request `roots` is the only scope (the UI specifies the domain per scan). A scan is gated only on a *valid* base config (the llm endpoint set; mmdb is optional and not part of the gate) → `409 not_configured`, not on a target allowlist. | Operator chose ZAP-like UX (UI-only, scope = the domain you enter). Trade-off: with auth OPEN there is no server-side scope ceiling — keep `WATCHTOWER_API_KEYS` set. |
 | 7 | Endpoints | Standard REST + **machine-readable JSON result**. | Callers consume findings as JSON, not by scraping HTML. |
 | 8 | Progress | **Polling** — rich status (state, current stage, completed_stages, elapsed, finding count); `GET /scans/{id}/log?tail=N`. | Most robust/proxy-friendly; no long-lived connections. SSE is a documented follow-on. |
 | 9 | Callbacks | **Optional HMAC-signed webhook** on terminal state + SSRF guards (callback-host allowlist, short timeout, no redirect-following, failures logged not retried forever); callers without `callback_url` just poll. | Fire-and-forget for long scans without an SSRF foot-gun. |
 | 10 | Backpressure | **Bounded concurrency (`max_concurrent_scans`, default 2) + bounded queue (`max_queue_depth`)**; 429 + `Retry-After` only when **both** are full. | Each scan is itself highly parallel; smooth backpressure without callers babysitting retries. |
-| 11 | Cancel | `POST /scans/{id}/cancel`: queued → dropped; running → **cancel task + kill child process group** (so nuclei/sslyze actually stop), then render a **partial** report + manifest. | Kill-switch for a scan that starts tripping a target's WAF; keeps what ran. |
+| 11 | Cancel | `POST /scans/{id}/cancel`: queued → dropped; running → **cancel task + kill child process group** (so nuclei/sslscan actually stop), then render a **partial** report + manifest. | Kill-switch for a scan that starts tripping a target's WAF; keeps what ran. |
 | 12 | Packaging | **`watchtower serve` subcommand, same image** (+ `fastapi`, `uvicorn[standard]` deps). | Server runs scans in-process, so it needs the full toolchain the image already bundles. |
 | 13 | Server config | **UI-managed, store-primary** (REVISED — see §4). `serve -c` is optional; `server.yaml` only *seeds* first boot; a writable JSON store (`WATCHTOWER_CONFIG_STORE`) is the source of truth, editable at runtime via `GET`/`PUT /config`. The full scan config is UI-editable; `llm.api_key` is UI-managed and persists in the store (masked on read). Only `WATCHTOWER_API_KEYS` + `WATCHTOWER_WEBHOOK_SECRET` stay env-only. | Operator chose the UI as the primary manager; the YAML is a bootstrap seed that may later be dropped. Trade-off: the LLM secret sits at rest in the store. |
 | 14 | Idempotency | **`Idempotency-Key` header** → repeat returns the same job (200, not a new 202); plus **in-flight dedupe** by (target + params) for identical queued/running scans. | Retry-safe; prevents a retry storm becoming N concurrent scans of the same target. |
@@ -47,7 +47,7 @@ POST /scans  (Authorization: Bearer <key>, optional Idempotency-Key, optional ca
   ├─ 401 if key missing/invalid
   ├─ Idempotency-Key seen?  → 200 existing job
   ├─ identical (roots+params) in-flight?  → 200 existing job
-  ├─ base config invalid (llm/mmdb unset)?  → 409 not_configured
+  ├─ base config invalid (llm endpoint unset)?  → 409 not_configured
   ├─ running == max_concurrent AND queue full?  → 429 Retry-After
   │
   └─ create job:
@@ -112,7 +112,7 @@ running ─(process restart mid-scan)───▶ interrupted   (set at next sta
   "only": ["tls"], "skip": null,
   "throttle": "gentle",
   "submitted_at": "...", "started_at": "...", "finished_at": null,
-  "current_stage": "audit.sslyze",
+  "current_stage": "audit.sslscan",
   "completed_stages": ["recon.httpx"],
   "coverage": { ... manifest ... },
   "finding_count": 0,
@@ -157,8 +157,9 @@ Secrets / paths via env:
 | `WATCHTOWER_CONFIG_STORE` | path to the writable runtime store (default `<output_root>/.config/server-config.json`) |
 
 No scan-target allowlist. The server boots even fully unconfigured (no file,
-empty base config); a scan is gated at submit on a valid `WatchTowerConfig` (llm +
-mmdb) → `409 not_configured` until the operator sets it via `PUT /config`.
+empty base config); a scan is gated at submit on a valid `WatchTowerConfig` (the
+llm endpoint set — mmdb is optional and not part of the gate) → `409
+not_configured` until the operator sets it via `PUT /config`.
 
 **Runtime store (UI-managed, primary — REVISED).** `server.yaml` is a bootstrap
 seed; the writable JSON store overlays it on boot and is the source of truth
@@ -194,14 +195,13 @@ All endpoints require auth except `GET /healthz`. Errors use a consistent
 | `GET` | `/prompts` | — (editable AI system-prompt registry) | `200 {slots:[{id,label,description,default_text,override,modified,effective}]}` | 401 |
 | `PUT` | `/prompts/{slot_id}` | `{text}` (null/blank reverts to built-in default) | `200 {slots:[…]}` | 401, 404 |
 | `POST` | `/prompts/{slot_id}/preview` | `{text}` (candidate system text) | `200 {system,user}` (assembled from a fixture; no LLM call) | 401, 404 |
-| `GET` | `/assets` | `?group=&bucket=&source=&q=` | `200 [Asset]` | 401 |
+| `GET` | `/assets` | `?group=&status=&source=&q=` | `200 [Asset]` | 401 |
 | `GET` | `/assets/groups` | — | `200 [{group,count,last_scan_id}]` | 401 |
 | `POST` | `/assets` | `{fqdn, group?, notes?}` | `201 Asset` | 401, 422 (invalid domain) |
 | `PUT` | `/assets/{fqdn}` | `{group?, notes?}` | `200 Asset` | 401, 404 |
 | `DELETE` | `/assets/{fqdn}` | — | `200 {deleted}` | 401, 404 |
 | `POST` | `/assets/import` | `{csv}` (`domain,group`) | `200 {added,updated,skipped}` | 401 |
-| `POST` | `/assets/bulk` | `{action: delete\|set_group, fqdns[] \| filter{group,bucket,source}, group?}` | `200 {affected}` | 401 |
-| `POST` | `/assets/reevaluate` | — (re-bucket vs current sanctioned ranges, offline) | `200 {total,changed}` | 401, 409 (no mmdb) |
+| `POST` | `/assets/bulk` | `{action: delete\|set_group, fqdns[] \| filter{group,status,source}, group?}` | `200 {affected}` | 401 |
 | `GET` | `/assets/{fqdn}/findings` | — (visible findings from the asset's last scan) | `200 [Finding]` | 401 |
 | `GET` | `/scan-templates` | — | `200 [ScanTemplate]` | 401 |
 | `POST` | `/scan-templates` | `{name, only?, skip?, throttle?, compress?}` (option preset, no target) | `201 ScanTemplate` | 401 |
@@ -257,7 +257,7 @@ After the scan, discovered (triaged) FQDNs are synced back into `assets`
   "roots": ["example.com"],
   "only": ["tls"], "skip": null, "throttle": "gentle",
   "submitted_at": "...", "started_at": "...", "finished_at": null,
-  "current_stage": "audit.sslyze",
+  "current_stage": "audit.sslscan",
   "completed_stages": ["recon.httpx"],
   "elapsed_s": 42, "finding_count": 0,
   "coverage": { ...manifest... },
@@ -274,7 +274,7 @@ Assembled from the run dir (`result.py`):
   "id": "...", "state": "completed",
   "coverage": { ...manifest... },
   "histogram": { "critical": {...}, "high": {...}, ... },
-  "findings": [ { "source": "sslyze", "host": "...", "severity": "high", "title": "...", "evidence": {...} } ],
+  "findings": [ { "source": "sslscan", "host": "...", "severity": "high", "title": "...", "evidence": {...} } ],
   "tls": [ { "host": "...", "checks": [ {"name":"...","passed":true} ], "error": null } ],
   "tls_certs": [ { "ip": "...", "subject_cn": "...", "issuer": "...", "not_after": "...", "days_remaining": 60, "expired": false, "self_signed": false, "wildcard": true, "sha256": "...", "sans": ["..."] } ],
   "app_profiles": { "host": { ...AppProfile... } },
