@@ -1,7 +1,8 @@
 "use client";
 
 import * as React from "react";
-import { EyeOff, Trash2, RefreshCw } from "lucide-react";
+import Link from "next/link";
+import { EyeOff, Trash2, RefreshCw, Info, Globe, Server } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
@@ -11,6 +12,7 @@ import { toast } from "@/components/ui/sonner";
 import { api, ApiError } from "@/lib/api";
 import { useMounted } from "@/lib/hooks";
 import { relativeTime } from "@/lib/format";
+import { SOURCE_LABEL } from "@/components/scan/findings-table";
 import type { Suppression } from "@/lib/types";
 
 export default function SuppressionsPage() {
@@ -49,6 +51,27 @@ export default function SuppressionsPage() {
         </Button>
       </div>
 
+      <Card className="flex gap-3 border-accent/30 bg-accent/5 p-4 text-sm">
+        <Info className="mt-0.5 h-4 w-4 shrink-0 text-accent" />
+        <div className="space-y-1 text-muted-foreground">
+          <p>
+            These are <span className="font-medium text-foreground">manual</span> suppressions —
+            cross-run rules you created with the eye-off button on a finding. A finding is matched
+            by <span className="font-mono text-xs">source · host · key</span>; it is hidden and
+            excluded from severity counts but never deleted (it stays in{" "}
+            <span className="font-mono text-xs">findings.json</span>).
+          </p>
+          <p>
+            Distinct from <span className="font-medium text-foreground">AI false-positive</span>{" "}
+            suppression, which is judged fresh each scan and shown inline in the findings table.{" "}
+            <Link href="/docs#suppression" className="text-accent hover:underline">
+              Learn more
+            </Link>
+            .
+          </p>
+        </div>
+      </Card>
+
       {!loaded ? (
         <Card className="p-6 text-sm text-muted-foreground">
           {err ? <>Couldn&apos;t load — <span className="text-destructive">{err}</span>.</> : "Loading…"}
@@ -74,12 +97,33 @@ export default function SuppressionsPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {items.map((s) => (
+              {items.map((s) => {
+                const isGlobal = s.scope === "global" || s.host === "*";
+                return (
                 <TableRow key={s.fingerprint}>
                   <TableCell>
-                    <span className="rounded bg-secondary px-1.5 py-0.5 text-[11px] text-muted-foreground">{s.source}</span>
+                    <span
+                      className="rounded bg-secondary px-1.5 py-0.5 text-[11px] text-muted-foreground"
+                      title={`finding source: ${s.source}`}
+                    >
+                      {SOURCE_LABEL[s.source] ?? s.source}
+                    </span>
                   </TableCell>
-                  <TableCell className="text-sm">{s.host === "*" ? "all hosts (global)" : s.host}</TableCell>
+                  <TableCell className="text-sm">
+                    <span className="inline-flex items-center gap-1.5">
+                      {isGlobal ? (
+                        <>
+                          <Globe className="h-3.5 w-3.5 text-[#ff8a3d]" />
+                          <span>Everywhere</span>
+                        </>
+                      ) : (
+                        <>
+                          <Server className="h-3.5 w-3.5 text-muted-foreground" />
+                          <span className="font-mono text-xs">{s.host}</span>
+                        </>
+                      )}
+                    </span>
+                  </TableCell>
                   <TableCell className="font-mono text-xs">{s.key}</TableCell>
                   <TableCell className="hidden md:table-cell text-xs text-muted-foreground">{s.reason}</TableCell>
                   <TableCell className="hidden md:table-cell text-xs text-muted-foreground">
@@ -92,7 +136,8 @@ export default function SuppressionsPage() {
                     </Button>
                   </TableCell>
                 </TableRow>
-              ))}
+                );
+              })}
             </TableBody>
           </Table>
         </Card>

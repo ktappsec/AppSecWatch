@@ -88,15 +88,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
       {/* Admin + footer */}
       <div className="space-y-1 border-t border-sidebar-border px-3 py-3">
         {ADMIN.map(item)}
-        <a
-          href="https://github.com/"
-          target="_blank"
-          rel="noreferrer"
-          className="flex items-center gap-3 rounded-lg px-4 py-2.5 text-sm text-muted-foreground transition-smooth hover:bg-accent/10 hover:text-foreground"
-        >
-          <BookOpen className="h-5 w-5 shrink-0" />
-          <span>Docs</span>
-        </a>
+        {item({ href: "/docs", label: "Docs", icon: BookOpen })}
       </div>
     </aside>
   );

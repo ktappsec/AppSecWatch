@@ -69,6 +69,19 @@ export default function AssetsPage() {
     }
   }, [q, status]);
 
+  // Seed the search box + status filter from the URL (?q=…&status=…) so a
+  // finding → asset cross-link lands pre-filtered. Runs once on mount;
+  // window.location keeps this static-export-safe (no useSearchParams Suspense).
+  React.useEffect(() => {
+    if (!mounted) return;
+    const sp = new URLSearchParams(window.location.search);
+    const qp = sp.get("q");
+    const st = sp.get("status");
+    if (qp) setQ(qp);
+    if (st) setStatus(st);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mounted]);
+
   React.useEffect(() => {
     if (mounted) load();
   }, [mounted, load]);

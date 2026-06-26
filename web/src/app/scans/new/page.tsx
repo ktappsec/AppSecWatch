@@ -2,7 +2,8 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { Rocket } from "lucide-react";
+import Link from "next/link";
+import { Rocket, Info } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,6 +21,24 @@ import type { AssetGroup, Capabilities, ScanRequest, ScanTemplate } from "@/lib/
 
 type TargetMode = "roots" | "group" | "assets" | "all";
 const split = (s: string) => s.split(/[,\s]+/).map((x) => x.trim()).filter(Boolean);
+
+// Built-in presets → capability selections. "Custom" is implicit (shown when the
+// current selection matches none of these). Quick mirrors the roots-only shortcut.
+type Selection = "all" | "only" | "skip";
+const SCAN_PRESETS: {
+  id: string;
+  label: string;
+  hint: string;
+  selection: Selection;
+  tokens: string[];
+}[] = [
+  { id: "full", label: "Full audit", hint: "Every capability — deepest coverage", selection: "all", tokens: [] },
+  { id: "quick", label: "Quick (roots only)", hint: "Skip subdomain enumeration; scan exactly your targets", selection: "skip", tokens: ["recon.subfinder"] },
+  { id: "recon", label: "Recon only", hint: "Discover + resolve assets; no active audit", selection: "only", tokens: ["recon"] },
+  { id: "tls-headers", label: "TLS + headers", hint: "Passive transport + header hygiene only", selection: "only", tokens: ["tls", "headers"] },
+];
+const sameSet = (a: string[], b: string[]) =>
+  a.length === b.length && a.every((x) => b.includes(x));
 
 export default function NewScanPage() {
   const router = useRouter();
@@ -58,6 +77,13 @@ export default function NewScanPage() {
 
   // One-click quick scan: skip subfinder → scan exactly the targets given.
   const quickScan = () => { setSelection("skip"); setTokens(["recon.subfinder"]); };
+
+  const applyPreset = (p: (typeof SCAN_PRESETS)[number]) => {
+    setSelection(p.selection);
+    setTokens(p.tokens);
+  };
+  const activePreset =
+    SCAN_PRESETS.find((p) => p.selection === selection && sameSet(p.tokens, tokens))?.id ?? "custom";
 
   const applyTemplate = (id: string) => {
     const t = templates.find((x) => x.id === id);
@@ -172,10 +198,43 @@ export default function NewScanPage() {
           )}
         </Card>
 
+        {/* Preset */}
+        <Card className="gap-4 p-6">
+          <div className="flex items-center gap-2">
+            <h3 className="text-lg font-bold">Preset</h3>
+            <InfoHint href="/docs#capabilities" label="What each capability does" />
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Pick a starting point — it sets the capabilities below, which you can then fine-tune.
+          </p>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {SCAN_PRESETS.map((p) => (
+              <button key={p.id} type="button" onClick={() => applyPreset(p)}
+                className={cn("rounded-lg border p-3 text-left transition-smooth",
+                  activePreset === p.id
+                    ? "border-accent/50 bg-accent/10"
+                    : "border-border hover:bg-accent/5")}>
+                <span className="block text-sm font-medium">{p.label}</span>
+                <span className="block text-xs text-muted-foreground">{p.hint}</span>
+              </button>
+            ))}
+            <div className={cn("rounded-lg border p-3",
+              activePreset === "custom" ? "border-accent/50 bg-accent/10" : "border-dashed border-border")}>
+              <span className="block text-sm font-medium">Custom</span>
+              <span className="block text-xs text-muted-foreground">
+                {activePreset === "custom" ? "Hand-picked below" : "Edit the capabilities below"}
+              </span>
+            </div>
+          </div>
+        </Card>
+
         {/* Capabilities */}
         <Card className="gap-4 p-6">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <h3 className="text-lg font-bold">Capabilities</h3>
+            <h3 className="flex items-center gap-2 text-lg font-bold">
+              Capabilities
+              <InfoHint href="/docs#capabilities" label="Capability tokens & sub-tokens" />
+            </h3>
             <div className="flex flex-row flex-wrap items-center gap-2">
               <Button type="button" variant="outline" size="sm" onClick={quickScan}
                 title="Skip subfinder — scan exactly the targets above">
@@ -242,7 +301,7 @@ export default function NewScanPage() {
         <Card className="gap-4 p-6">
           <h3 className="text-lg font-bold">Options</h3>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Field label="Throttle" hint="Blank = server default">
+            <Field label="Throttle" hint="Blank = server default" info="/docs#throttle">
               <Select value={throttle} onValueChange={setThrottle}>
                 <SelectTrigger><SelectValue placeholder="Server default" /></SelectTrigger>
                 <SelectContent>
@@ -292,11 +351,23 @@ function Chip({ active, onClick, children }: { active: boolean; onClick: () => v
   );
 }
 
-function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+function InfoHint({ href, label }: { href: string; label?: string }) {
+  return (
+    <Link href={href} title={label ?? "Learn more"} aria-label={label ?? "Learn more"}
+      className="text-muted-foreground transition-smooth hover:text-accent">
+      <Info className="h-3.5 w-3.5" />
+    </Link>
+  );
+}
+
+function Field({ label, hint, info, children }: { label: string; hint?: string; info?: string; children: React.ReactNode }) {
   return (
     <div className="space-y-1.5">
       <div className="flex items-center justify-between">
-        <Label>{label}</Label>
+        <span className="flex items-center gap-1.5">
+          <Label>{label}</Label>
+          {info && <InfoHint href={info} />}
+        </span>
         {hint && <span className="text-xs text-muted-foreground">{hint}</span>}
       </div>
       {children}
