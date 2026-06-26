@@ -69,11 +69,8 @@ class ScanState(BaseModel):
             + list(self.ai_supply_findings)
         )
 
-    def in_scope(self) -> list[TriagedAsset]:
-        return [a for a in self.triaged if a.bucket == "in_scope"]
-
-    def shadow_it(self) -> list[TriagedAsset]:
-        return [a for a in self.triaged if a.bucket == "shadow_it"]
+    def live(self) -> list[TriagedAsset]:
+        return [a for a in self.triaged if a.status == "live"]
 
     def dead(self) -> list[TriagedAsset]:
-        return [a for a in self.triaged if a.bucket == "dead"]
+        return [a for a in self.triaged if a.status == "dead"]

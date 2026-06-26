@@ -150,7 +150,7 @@ async def _run(
 
     ipinfo: IPInfoLookup | None = None
     try:
-        ipinfo = IPInfoLookup(cfg.mmdb_path, cfg.sanctioned_cidrs, cfg.sanctioned_asns)
+        ipinfo = IPInfoLookup(cfg.mmdb_path)
     except Exception as e:
         log.error(f"MMDB load failed: {e}")
         (run_dir / "errors.json").write_text(

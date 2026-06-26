@@ -85,8 +85,8 @@ def _summary_lines(s: "RunSummary") -> list[str]:
         "─" * 60,
         f"Run summary — {s.duration_s}s",
         f"  findings: {s.findings_total}   ({sev_str})",
-        f"  assets:   live={s.assets.get('live_servers', 0)} in_scope={s.assets.get('in_scope', 0)} "
-        f"shadow_it={s.assets.get('shadow_it', 0)} dead={s.assets.get('dead', 0)}",
+        f"  assets:   live={s.assets.get('live', 0)} dead={s.assets.get('dead', 0)} "
+        f"web={s.assets.get('live_servers', 0)}",
         f"  errors:   {s.errors_total}"
         + (f"   ({', '.join(f'{k}:{v}' for k, v in s.errors_by_stage.items())})" if s.errors_by_stage else ""),
     ]

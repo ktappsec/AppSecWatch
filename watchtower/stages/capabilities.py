@@ -39,7 +39,7 @@ PHASE_ORDER = ("takeovers", "audit", "ai-analyze")
 # chain whenever any audit/AI capability runs; tlsx (cert-SAN re-feed) is the one
 # optional enrichment you may drop with `--skip recon.tlsx`.
 RECON_STEPS = ("subfinder", "dns", "tlsx", "httpx")
-# httpx needs triaged targets (it probes state.in_scope()), so dns+httpx are the
+# httpx needs triaged targets (it probes state.live()), so dns+httpx are the
 # floor. subfinder (enumeration) + tlsx are optional → skipping subfinder = a quick
 # scan of exactly the roots/assets given.
 RECON_REQUIRED = ("dns", "httpx")

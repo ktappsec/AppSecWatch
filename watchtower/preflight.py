@@ -110,7 +110,10 @@ async def run_preflight(cfg: WatchTowerConfig | None = None) -> PreflightReport:
         report.add("python:playwright", False, f"import failed: {e}")
 
     if cfg is not None:
-        report.checks.append(await _check_mmdb(cfg.mmdb_path))
+        if cfg.mmdb_path:
+            report.checks.append(await _check_mmdb(cfg.mmdb_path))
+        else:
+            report.add("mmdb", True, "not configured (optional — ASN enrichment disabled)")
         report.checks.append(
             await _check_llm(cfg.llm.base_url, cfg.llm.api_key, cfg.llm.model)
         )

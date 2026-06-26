@@ -6,9 +6,10 @@ broader set of providers.
 
 NB the nuclei templates all `GET {{BaseURL}}` and match a live "unclaimed-service"
 body fingerprint — so they only fire on a **resolving** host. They therefore run
-against the `shadow_it` CNAME candidates (resolving + third-party CNAME), NOT the
-`dead` bucket (no A records → nothing to fetch). The dangling/NXDOMAIN class is
-handled deterministically by `takeover_fingerprints.scan_cname_takeovers`.
+against LIVE hosts whose CNAME chain points to a third-party zone (resolving +
+third-party CNAME), NOT dead records (no A records → nothing to fetch). The
+dangling/NXDOMAIN class is handled deterministically by
+`takeover_fingerprints.scan_cname_takeovers`.
 """
 from __future__ import annotations
 

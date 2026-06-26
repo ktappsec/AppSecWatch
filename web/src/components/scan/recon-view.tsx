@@ -1,4 +1,4 @@
-import { Globe2, ServerCog, Ghost, Skull } from "lucide-react";
+import { Globe2, ServerCog, Skull } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import {
   Table,
@@ -9,12 +9,11 @@ import {
   TableCell,
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
-import type { LiveWebServer, TriagedAsset } from "@/lib/types";
+import type { AssetStatus, LiveWebServer, TriagedAsset } from "@/lib/types";
 
-const BUCKET_META = {
-  in_scope: { label: "In-Scope", icon: Globe2, cls: "text-[#00c853]" },
-  shadow_it: { label: "Shadow IT", icon: Ghost, cls: "text-[#ffd600]" },
-  dead: { label: "Dead", icon: Skull, cls: "text-muted-foreground" },
+const STATUS_META = {
+  live: { label: "Live (scanned)", icon: Globe2, cls: "text-[#00c853]" },
+  dead: { label: "Dead / dangling", icon: Skull, cls: "text-muted-foreground" },
 } as const;
 
 export function ReconView({
@@ -26,10 +25,10 @@ export function ReconView({
   liveServers: LiveWebServer[];
   wildcards: string[];
 }) {
-  const buckets: Array<keyof typeof BUCKET_META> = ["in_scope", "shadow_it", "dead"];
+  const statuses: AssetStatus[] = ["live", "dead"];
   const grouped = Object.fromEntries(
-    buckets.map((b) => [b, assets.filter((a) => a.bucket === b)])
-  ) as Record<keyof typeof BUCKET_META, TriagedAsset[]>;
+    statuses.map((s) => [s, assets.filter((a) => a.status === s)])
+  ) as Record<AssetStatus, TriagedAsset[]>;
 
   if (!assets.length && !liveServers.length) {
     return (
@@ -41,16 +40,16 @@ export function ReconView({
 
   return (
     <div className="space-y-6">
-      {/* Bucket counts */}
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        {buckets.map((b) => {
-          const meta = BUCKET_META[b];
+      {/* Liveness counts */}
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
+        {statuses.map((s) => {
+          const meta = STATUS_META[s];
           const Icon = meta.icon;
           return (
-            <Card key={b} className="flex-row items-center gap-3 p-4">
+            <Card key={s} className="flex-row items-center gap-3 p-4">
               <Icon className={cn("h-5 w-5", meta.cls)} />
               <div>
-                <p className="text-xl font-bold">{grouped[b].length}</p>
+                <p className="text-xl font-bold">{grouped[s].length}</p>
                 <p className="text-xs text-muted-foreground">{meta.label}</p>
               </div>
             </Card>
@@ -60,7 +59,7 @@ export function ReconView({
           <ServerCog className="h-5 w-5 text-accent" />
           <div>
             <p className="text-xl font-bold">{liveServers.length}</p>
-            <p className="text-xs text-muted-foreground">Live servers</p>
+            <p className="text-xs text-muted-foreground">Live web servers</p>
           </div>
         </Card>
       </div>
@@ -107,15 +106,15 @@ export function ReconView({
         </Card>
       )}
 
-      {/* Asset buckets */}
-      {buckets
-        .filter((b) => grouped[b].length > 0)
-        .map((b) => (
-          <Card key={b} className="p-6">
+      {/* Assets by liveness */}
+      {statuses
+        .filter((s) => grouped[s].length > 0)
+        .map((s) => (
+          <Card key={s} className="p-6">
             <h3 className="mb-4 flex items-center gap-2 text-lg font-bold">
-              {BUCKET_META[b].label}
+              {STATUS_META[s].label}
               <span className="text-sm font-normal text-muted-foreground">
-                ({grouped[b].length})
+                ({grouped[s].length})
               </span>
             </h3>
             <Table>
@@ -123,12 +122,12 @@ export function ReconView({
                 <TableRow>
                   <TableHead>FQDN</TableHead>
                   <TableHead className="hidden sm:table-cell">A records</TableHead>
-                  <TableHead className="hidden lg:table-cell">ASN</TableHead>
-                  <TableHead>Reason</TableHead>
+                  <TableHead className="hidden lg:table-cell">ASN / org</TableHead>
+                  <TableHead className="hidden md:table-cell">CNAME chain</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {grouped[b].map((a) => (
+                {grouped[s].map((a) => (
                   <TableRow key={a.fqdn}>
                     <TableCell className="max-w-[220px] truncate font-medium">{a.fqdn}</TableCell>
                     <TableCell className="hidden sm:table-cell text-xs text-muted-foreground">
@@ -137,8 +136,8 @@ export function ReconView({
                     <TableCell className="hidden lg:table-cell text-xs text-muted-foreground">
                       {a.asn ? `AS${a.asn} ${a.as_org ?? ""}` : "—"}
                     </TableCell>
-                    <TableCell className="max-w-[260px] truncate text-xs text-muted-foreground">
-                      {a.reason}
+                    <TableCell className="hidden md:table-cell max-w-[260px] truncate text-xs text-muted-foreground">
+                      {a.cname_chain?.join(" → ") || "—"}
                     </TableCell>
                   </TableRow>
                 ))}

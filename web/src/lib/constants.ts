@@ -61,7 +61,7 @@ export const CAPABILITY_TOKENS: CapabilityToken[] = [
       { token: "recon.httpx", label: "httpx", description: "live-server probe (required by audit)" },
     ],
   },
-  { token: "takeovers", label: "Takeovers", description: "nuclei takeover templates vs dead assets" },
+  { token: "takeovers", label: "Takeovers", description: "Subdomain takeover — dangling CNAMEs + unclaimed third-party pages" },
   { token: "tls", label: "TLS", description: "sslscan per-host pass/fail scorecard" },
   {
     token: "nuclei",

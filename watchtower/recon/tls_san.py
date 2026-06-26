@@ -1,7 +1,7 @@
 """tlsx SAN extraction with bounded re-feed loop (DESIGN.md §2.1).
 
-Run tlsx on Array 1 IPs, extract SANs from served certificates, filter to
-configured root domains, dedup via seen-set, hand new names back to dnsx +
+Run tlsx on the live hosts' IPs, extract SANs from served certificates, filter
+to configured root domains, dedup via seen-set, hand new names back to dnsx +
 triage. Cap iterations at 3. Wildcards (*.foo.com) recorded but not re-fed.
 """
 from __future__ import annotations
@@ -117,14 +117,14 @@ async def tlsx_refeed_loop(
     """Run the bounded tlsx -> dnsx -> triage loop.
 
     Args:
-        initial_assets: Array 1 (in_scope) assets after the first triage pass.
+        initial_assets: the live assets after the first triage pass.
         roots: configured root domains; only SANs under these zones are re-fed.
         resolve_and_triage: callback that takes a list of new subdomains and an
             iteration number, runs dnsx + triage on them, and returns the
             resulting TriagedAsset list.
 
     Returns:
-        (final_in_scope_assets, recorded_wildcards, cert_inventory)
+        (final_live_assets, recorded_wildcards, cert_inventory)
     """
     seen_fqdns: set[str] = {a.fqdn for a in initial_assets}
     wildcards: set[str] = set()
@@ -166,14 +166,14 @@ async def tlsx_refeed_loop(
         log.info(f"tlsx loop iteration {iteration}: discovered {len(new_names)} new SANs in-root")
         seen_fqdns.update(new_names)
         new_triaged = await resolve_and_triage(sorted(new_names), iteration)
-        # Only the in_scope ones drive the next iteration (we keep scanning their certs).
-        next_in_scope: list[TriagedAsset] = []
+        # Only the live ones drive the next iteration (we keep scanning their certs).
+        next_live: list[TriagedAsset] = []
         for a in new_triaged:
             accumulated[a.fqdn] = a
-            if a.bucket == "in_scope":
-                next_in_scope.append(a)
-        current_assets = next_in_scope
+            if a.status == "live":
+                next_live.append(a)
+        current_assets = next_live
 
-    final_in_scope = [a for a in accumulated.values() if a.bucket == "in_scope"]
+    final_live = [a for a in accumulated.values() if a.status == "live"]
     certs = sorted(certs_by_ip.values(), key=lambda c: c.ip)
-    return final_in_scope, sorted(wildcards), certs
+    return final_live, sorted(wildcards), certs

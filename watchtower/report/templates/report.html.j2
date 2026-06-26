@@ -136,10 +136,9 @@
         <div class="stat"><div class="k">Roots scanned</div><div class="v">{{ run.roots|length }}</div>
           <div class="sub">{{ run.roots|join(", ") }}</div></div>
         <div class="stat"><div class="k">Live web servers</div><div class="v">{{ recon.live_servers|length }}</div>
-          <div class="sub">in-scope only</div></div>
-        <div class="stat"><div class="k">In-Scope assets</div><div class="v">{{ recon.in_scope|length }}</div></div>
-        <div class="stat"><div class="k">Shadow IT</div><div class="v">{{ recon.shadow_it|length }}</div></div>
-        <div class="stat"><div class="k">Dead records</div><div class="v">{{ recon.dead|length }}</div></div>
+          <div class="sub">scanned</div></div>
+        <div class="stat"><div class="k">Live assets</div><div class="v">{{ recon.live|length }}</div></div>
+        <div class="stat"><div class="k">Dead / dangling</div><div class="v">{{ recon.dead|length }}</div></div>
       </div>
 
       <h3 style="margin-top:18px;">Findings by severity</h3>
@@ -189,13 +188,12 @@
     <div class="head" onclick="toggleSection(this)"><h2>Recon &amp; Scope</h2><span class="toggle">▾</span></div>
     <div class="body">
       <div class="grid">
-        <div class="stat"><div class="k">Array 1 — In-Scope</div><div class="v">{{ recon.in_scope|length }}</div></div>
-        <div class="stat"><div class="k">Array 2 — Shadow IT</div><div class="v">{{ recon.shadow_it|length }}</div></div>
-        <div class="stat"><div class="k">Array 3 — Dead</div><div class="v">{{ recon.dead|length }}</div></div>
+        <div class="stat"><div class="k">Live (scanned)</div><div class="v">{{ recon.live|length }}</div></div>
+        <div class="stat"><div class="k">Dead / dangling</div><div class="v">{{ recon.dead|length }}</div></div>
         <div class="stat"><div class="k">tlsx Wildcards recorded</div><div class="v">{{ recon.wildcards|length }}</div></div>
       </div>
 
-      <h3 style="margin-top:18px;">In-Scope live web servers</h3>
+      <h3 style="margin-top:18px;">Live web servers (scanned)</h3>
       {% if recon.live_servers %}
       <div class="controls">
         <input type="text" data-search="livesrv" placeholder="filter by host / title / tech…">
@@ -219,7 +217,7 @@
       </table>
       {% else %}<div class="empty">No live web servers discovered.</div>{% endif %}
 
-      <h3 style="margin-top:18px;">Dead records (Array 3)</h3>
+      <h3 style="margin-top:18px;">Dead / dangling records (takeover watch)</h3>
       {% if recon.dead %}
       <table>
         <thead><tr><th>FQDN</th><th>CNAME chain</th></tr></thead>
@@ -232,7 +230,7 @@
       {% else %}<div class="empty">No dead records.</div>{% endif %}
 
       <h3 style="margin-top:18px;">TLS certificates</h3>
-      <p class="empty" style="font-style:normal;">Captured from the recon cert-grab (tlsx) — one handshake per in-scope IP, no extra requests. Inventory only; the TLS scorecard is the <code>tls</code> capability.</p>
+      <p class="empty" style="font-style:normal;">Captured from the recon cert-grab (tlsx) — one handshake per live IP, no extra requests. Inventory only; the TLS scorecard is the <code>tls</code> capability.</p>
       {% if tls_certs %}
       <div class="controls">
         <input type="text" data-search="certs" placeholder="filter by IP / subject / issuer…">
@@ -264,36 +262,7 @@
         {% endfor %}
         </tbody>
       </table>
-      {% else %}<div class="empty">No certificates captured (tlsx skipped or no in-scope IPs).</div>{% endif %}
-    </div>
-  </section>
-
-  <!-- Shadow IT -->
-  <section id="shadow">
-    <div class="head" onclick="toggleSection(this)"><h2>Shadow IT</h2><span class="toggle">▾</span></div>
-    <div class="body">
-      {% if shadow_groups %}
-        {% for g in shadow_groups %}
-          <div class="group" data-group>
-            <div class="grouphead" onclick="toggleGroup(this)">
-              <div>
-                <span class="name">{{ g.key }}</span>
-                <span class="grouping">({{ g.grouping }})</span>
-              </div>
-              <span class="count">{{ g.assets|length }} assets ▾</span>
-            </div>
-            <div class="group-rows">
-              {% for a in g.assets %}
-                <div class="row">
-                  <div>{{ a.fqdn }}</div>
-                  <div class="evidence">{{ a.a_records|join(", ") }}</div>
-                  <div class="evidence">{% if a.cname_chain %}CNAME: {{ a.cname_chain|join(" → ") }}<br>{% endif %}AS{{ a.asn or "?" }} {{ a.as_org or "" }}</div>
-                </div>
-              {% endfor %}
-            </div>
-          </div>
-        {% endfor %}
-      {% else %}<div class="empty">No Shadow IT detected.</div>{% endif %}
+      {% else %}<div class="empty">No certificates captured (tlsx skipped or no live IPs).</div>{% endif %}
     </div>
   </section>
 
@@ -317,7 +286,7 @@
         {% endfor %}
         </tbody>
       </table>
-      {% else %}<div class="empty">No takeover candidates flagged on Array 3.</div>{% endif %}
+      {% else %}<div class="empty">No takeover candidates flagged.</div>{% endif %}
     </div>
   </section>
 

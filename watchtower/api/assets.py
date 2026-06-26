@@ -55,14 +55,14 @@ class AssetManager:
         out["finding_counts"] = json.loads(out["finding_counts"]) if out.get("finding_counts") else {}
         return out
 
-    def list(self, *, group: str | None = None, bucket: str | None = None,
+    def list(self, *, group: str | None = None, status: str | None = None,
              source: str | None = None, q: str | None = None) -> list[dict[str, Any]]:
         sql = "SELECT * FROM assets"
         where, p = [], []
         if group is not None:
             where.append('"group" = ?'); p.append(group)
-        if bucket:
-            where.append("bucket = ?"); p.append(bucket)
+        if status:
+            where.append("status = ?"); p.append(status)
         if source:
             where.append("source = ?"); p.append(source)
         if q:
@@ -168,18 +168,18 @@ class AssetManager:
             a_records = json.dumps(list(getattr(t, "a_records", []) or []))
             cname_chain = json.dumps(list(getattr(t, "cname_chain", []) or []))
             self.db.execute(
-                'INSERT INTO assets (fqdn, "group", source, root, bucket, a_records, '
+                'INSERT INTO assets (fqdn, "group", source, root, status, a_records, '
                 "cname_chain, asn, as_org, first_seen, last_seen, last_scan_id) "
                 "VALUES (?, ?, 'discovered', ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT(fqdn) DO UPDATE SET "
-                "  bucket=excluded.bucket, a_records=excluded.a_records, "
+                "  status=excluded.status, a_records=excluded.a_records, "
                 "  cname_chain=excluded.cname_chain, "
                 "  asn=excluded.asn, as_org=excluded.as_org, "
                 "  last_seen=excluded.last_seen, last_scan_id=excluded.last_scan_id, "
                 "  root=COALESCE(assets.root, excluded.root), "
                 '  "group"=CASE WHEN assets.source=\'imported\' THEN assets."group" '
                 '             ELSE COALESCE(excluded."group", assets."group") END',
-                (fqdn, inherited, root, getattr(t, "bucket", None), a_records,
+                (fqdn, inherited, root, getattr(t, "status", None), a_records,
                  cname_chain, getattr(t, "asn", None), getattr(t, "as_org", None),
                  now, now, scan_id),
             )
@@ -199,43 +199,6 @@ class AssetManager:
                             (json.dumps(fc), _norm(host)))
         return n
 
-    # ----- re-evaluate buckets on sanctioned-range change ----------------- #
-    def reevaluate(self, *, mmdb_path: str, sanctioned_cidrs: list[str],
-                   sanctioned_asns: list[int], roots: list[str] | None = None) -> dict[str, int]:
-        """Recompute every asset's bucket OFFLINE from its stored a_records +
-        cname_chain against the NEW sanctioned ranges (per-IP ASN via the MMDB).
-        Reuses the engine triage. Only bucket/asn/as_org change; group/notes kept.
-        `roots` (for the CNAME-leaves-scope rule) defaults to the inventory's own
-        roots (imported fqdns + each asset's root)."""
-        from watchtower.recon.triage import triage_records
-        from watchtower.util.ipinfo import IPInfoLookup
-
-        assets = self.list()
-        if roots is None:
-            roots = sorted(
-                {a["root"] for a in assets if a.get("root")}
-                | {a["fqdn"] for a in assets if a.get("source") == "imported"}
-            )
-        ipinfo = IPInfoLookup(mmdb_path, sanctioned_cidrs, sanctioned_asns)
-        total = changed = 0
-        try:
-            for a in assets:
-                total += 1
-                rec = {"host": a["fqdn"], "a": a["a_records"], "cname": a["cname_chain"]}
-                t = triage_records([rec], list(roots), ipinfo)[0]
-                if t.bucket != a.get("bucket"):
-                    self.db.execute(
-                        "UPDATE assets SET bucket=?, asn=?, as_org=? WHERE fqdn=?",
-                        (t.bucket, t.asn, t.as_org, a["fqdn"]),
-                    )
-                    changed += 1
-        finally:
-            try:
-                ipinfo.close()
-            except Exception:  # noqa: BLE001
-                pass
-        return {"total": total, "changed": changed}
-
     # ----- bulk ops ------------------------------------------------------- #
     def _bulk_where(self, fqdns: list[str] | None, filt: dict | None) -> tuple[str, list]:
         if fqdns:
@@ -245,8 +208,8 @@ class AssetManager:
         where, p = [], []
         if filt.get("group") is not None:
             where.append('"group" = ?'); p.append(filt["group"])
-        if filt.get("bucket"):
-            where.append("bucket = ?"); p.append(filt["bucket"])
+        if filt.get("status"):
+            where.append("status = ?"); p.append(filt["status"])
         if filt.get("source"):
             where.append("source = ?"); p.append(filt["source"])
         # Empty selection matches NOTHING (never delete/update the whole table).

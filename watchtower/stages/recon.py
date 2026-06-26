@@ -35,7 +35,7 @@ async def _dnsx_and_triage(
     suffix = f"-iter{iter_idx}" if iter_idx else ""
     out = run_dir / "01_recon" / f"dnsx{suffix}.jsonl"
     records = await run_dnsx(names, out, cfg.tools.dnsx, log)
-    return triage_records(records, cfg.roots, ipinfo)
+    return triage_records(records, ipinfo)
 
 
 class DnsxAndTriageStage(Stage):
@@ -53,26 +53,27 @@ class DnsxAndTriageStage(Stage):
 
 
 class TlsxLoopStage(Stage):
-    """The bounded re-feed loop. Replaces in-scope assets with the final set."""
+    """The bounded SAN re-feed loop. Replaces the live set with the post-loop
+    (expanded) set; dead records from the first pass are kept."""
     name = "recon.tlsx-loop"
 
     async def run(self, state, run_dir, cfg, ipinfo, log):
         async def resolve(names: list[str], iteration: int) -> list[TriagedAsset]:
             return await _dnsx_and_triage(names, iteration, run_dir, cfg, ipinfo, log)
 
-        initial_in_scope = state.in_scope()
-        final_in_scope, wildcards, certs = await tlsx_refeed_loop(
-            initial_in_scope, cfg.roots, cfg.tools.tlsx,
+        initial_live = state.live()
+        final_live, wildcards, certs = await tlsx_refeed_loop(
+            initial_live, cfg.roots, cfg.tools.tlsx,
             run_dir / "01_recon", log, resolve,
         )
         state.tls_certs = certs
 
-        # Merge: post-loop in_scope set replaces initial; shadow_it + dead from
-        # the initial pass are kept.
-        seen = {a.fqdn for a in final_in_scope}
-        merged: list[TriagedAsset] = list(final_in_scope)
+        # Merge: the post-loop live set replaces the initial live set; dead
+        # records from the first pass are kept (deduped by FQDN).
+        seen = {a.fqdn for a in final_live}
+        merged: list[TriagedAsset] = list(final_live)
         for a in state.triaged:
-            if a.fqdn not in seen and a.bucket != "in_scope":
+            if a.fqdn not in seen and a.status != "live":
                 merged.append(a)
                 seen.add(a.fqdn)
         state.triaged = merged
@@ -81,9 +82,8 @@ class TlsxLoopStage(Stage):
         # Persist combined triage.json (overwrites the first-pass version).
         out = run_dir / "01_recon" / "triage.json"
         out.write_text(json.dumps({
-            "in_scope":  [a.model_dump() for a in state.in_scope()],
-            "shadow_it": [a.model_dump() for a in state.shadow_it()],
-            "dead":      [a.model_dump() for a in state.dead()],
+            "live": [a.model_dump() for a in state.live()],
+            "dead": [a.model_dump() for a in state.dead()],
             "wildcards": state.wildcards,
         }, indent=2))
 
@@ -96,7 +96,7 @@ class HttpxStage(Stage):
 
     async def run(self, state, run_dir, cfg, ipinfo, log):
         hx = cfg.tools.httpx
-        fqdns = [a.fqdn for a in state.in_scope()]
+        fqdns = [a.fqdn for a in state.live()]
         # Outer subprocess timeout scaled to work ÷ concurrency, so slow profiles
         # (paranoid = 1 thread) aren't killed mid-pass. Floor 600s. Without this,
         # a low-thread profile on a large host set hits the 600s kill → 0 live.

@@ -141,16 +141,16 @@ def test_any_root_accepted_no_allowlist(tmp_path, monkeypatch):
         assert client.post("/scans", json={"roots": ["a.org", "b.net"]}, headers=H).status_code == 202
 
 
-def test_unconfigured_boot_blocks_scan_until_configured(tmp_path, monkeypatch):
-    # UI-only boot: empty base_config → scans refused (409) until llm/mmdb are set.
+def test_unconfigured_boot_blocks_scan_until_llm_set(tmp_path, monkeypatch):
+    # UI-only boot: empty base_config → scans refused (409) until the llm endpoint
+    # is set. mmdb is optional now (display-only ASN enrichment), NOT a scan gate.
     cfg = _server_config(tmp_path, base_config={})
     with _client(tmp_path, monkeypatch, config=cfg) as client:
         r = client.post("/scans", json={"roots": ["app.example.com"]}, headers=H)
         assert r.status_code == 409
         assert r.json()["error"]["code"] == "not_configured"
-        # configure via the UI-managed endpoint, then the same scan runs
+        # configure ONLY the llm endpoint (no mmdb) → the same scan now runs
         client.put("/config", json={"base_config": {
-            "mmdb_path": "/dev/null",
             "llm": {"base_url": "http://llm.local", "model": "m"},
         }}, headers=H)
         assert client.post("/scans", json={"roots": ["app.example.com"]}, headers=H).status_code == 202
@@ -356,22 +356,6 @@ def test_capabilities_throttle_details(tmp_path, monkeypatch):
         assert c["throttle_profiles"] == ["paranoid", "gentle", "normal", "aggressive", "insane"]
         assert c["throttle_details"]["paranoid"]["httpx_threads"] == 1
         assert c["throttle_details"]["insane"]["httpx_threads"] == 200
-
-
-def test_reevaluate_endpoint(tmp_path, monkeypatch):
-    from watchtower.models import TriagedAsset
-    monkeypatch.setattr("watchtower.util.ipinfo.IPInfoLookup",
-                        type("F", (), {"__init__": lambda s, *a, **k: None, "close": lambda s: None}))
-    monkeypatch.setattr(
-        "watchtower.recon.triage.triage_records",
-        lambda recs, roots, ip: [
-            TriagedAsset(fqdn=r["host"], a_records=r["a"], cname_chain=r["cname"],
-                         asn=1, as_org="X", bucket="in_scope", reason="x") for r in recs],
-    )
-    with _client(tmp_path, monkeypatch) as client:
-        client.post("/assets", json={"fqdn": "a.com", "group": "G"}, headers=H)
-        r = client.post("/assets/reevaluate", headers=H)
-        assert r.status_code == 200 and r.json()["total"] >= 1
 
 
 def test_schedules_crud(tmp_path, monkeypatch):

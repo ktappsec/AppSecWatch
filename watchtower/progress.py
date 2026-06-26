@@ -120,8 +120,8 @@ class RichRenderer:
             t.append(f"{k}:{sev.get(k, 0)}  ", style=color)
         a = summary.assets
         t.append(
-            f"\nassets    live={a.get('live_servers', 0)} in_scope={a.get('in_scope', 0)} "
-            f"shadow_it={a.get('shadow_it', 0)} dead={a.get('dead', 0)}\n"
+            f"\nassets    live={a.get('live', 0)} dead={a.get('dead', 0)} "
+            f"web={a.get('live_servers', 0)}\n"
         )
         err_style = "red" if summary.errors_total else "green"
         t.append(f"errors    {summary.errors_total}", style=err_style)

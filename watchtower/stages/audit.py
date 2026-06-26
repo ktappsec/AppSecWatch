@@ -9,7 +9,7 @@ from watchtower.audit.sslscan_runner import run_sslscan
 from watchtower.audit.takeover_fingerprints import scan_cname_takeovers
 from watchtower.audit.takeovers import run_takeovers
 from watchtower.stages.base import Stage, StageResult
-from watchtower.util.domains import host_to_filename
+from watchtower.util.domains import host_to_filename, under_any_root
 
 
 class TakeoversStage(Stage):
@@ -19,12 +19,16 @@ class TakeoversStage(Stage):
         return run_dir / "02_audit" / "takeovers" / "nuclei-takeovers.jsonl"
 
     async def run(self, state, run_dir, cfg, ipinfo, log):
-        # Deterministic dangling-CNAME check over the dead bucket (no network):
+        # Deterministic dangling-CNAME check over DEAD records (no network):
         # catches NXDOMAIN-target takeovers the HTTP nuclei templates can't reach.
         det = scan_cname_takeovers(state.dead())
-        # nuclei HTTP-fingerprint templates need a RESOLVING host → feed the
-        # shadow_it CNAME candidates (resolving + third-party CNAME), not dead.
-        candidates = [a for a in state.shadow_it() if a.cname_chain]
+        # nuclei HTTP-fingerprint templates need a RESOLVING host → feed the LIVE
+        # hosts whose CNAME chain points outside the configured roots (third-party
+        # CNAME). Scope ceiling is roots; hosting location no longer gates this.
+        candidates = [
+            a for a in state.live()
+            if any(not under_any_root(hop, cfg.roots) for hop in a.cname_chain)
+        ]
         nuclei_findings, error = await run_takeovers(
             candidates, self._path(run_dir), cfg.tools.takeovers, log,
         )

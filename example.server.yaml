@@ -42,10 +42,8 @@ docs_enabled: true   # expose /docs + /openapi.json
 #   base_config: /etc/watchtower/scan.yaml
 # `roots` is supplied per-request, so it is omitted here.
 base_config:
-  mmdb_path: /data/mmdb/GeoLite2-ASN.mmdb
+  mmdb_path: /data/mmdb/GeoLite2-ASN.mmdb   # optional — ASN/org enrichment only
   throttle: gentle
-  sanctioned_cidrs: []
-  sanctioned_asns: []
   llm:
     base_url: https://openrouter.ai/api/v1
     model: minimax/minimax-m3

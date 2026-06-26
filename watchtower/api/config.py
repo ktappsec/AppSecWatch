@@ -58,8 +58,8 @@ class ServerConfig(BaseModel):
     No scope allowlist: the per-request `roots` is the only scan scope (decided
     with the operator — the UI is the manager and specifies the domain per scan).
     The server boots even fully unconfigured (no config file, empty base config);
-    a scan is gated at submit time on a *valid* base config (llm + mmdb), not on
-    boot. With auth OPEN there is therefore NO server-side scope ceiling — keep
+    a scan is gated at submit time on a *valid* base config (llm endpoint; mmdb
+    is optional), not on boot. With auth OPEN there is NO server-side ceiling — keep
     `WATCHTOWER_API_KEYS` set before exposing the API.
     """
 

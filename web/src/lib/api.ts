@@ -171,7 +171,7 @@ export const api = {
     }),
 
   // --- assets inventory ---
-  listAssets: (opts: { group?: string; bucket?: string; source?: string; q?: string } = {}) => {
+  listAssets: (opts: { group?: string; status?: string; source?: string; q?: string } = {}) => {
     const qs = new URLSearchParams();
     for (const [k, v] of Object.entries(opts)) if (v) qs.set(k, v);
     const q = qs.toString();
@@ -191,9 +191,6 @@ export const api = {
 
   bulkAssets: (req: AssetBulkRequest) =>
     request<{ affected: number }>("/assets/bulk", { method: "POST", body: JSON.stringify(req) }),
-
-  reevaluateAssets: () =>
-    request<{ total: number; changed: number }>("/assets/reevaluate", { method: "POST" }),
 
   assetFindings: (fqdn: string) =>
     request<Finding[]>(`/assets/${encodeURIComponent(fqdn)}/findings`),

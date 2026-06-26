@@ -34,7 +34,7 @@ type Dict = Record<string, unknown>;
 // only the long tail: tools, concurrency, anything unrecognized).
 const PROMOTED = [
   "llm", "mmdb_path", "throttle", "ai", "headers", "identity",
-  "paths_per_host", "sanctioned_cidrs", "sanctioned_asns",
+  "paths_per_host",
 ];
 
 const IDENTITY_PRESETS = ["off", "chrome-win", "chrome-mac", "firefox"];
@@ -67,8 +67,6 @@ export function ScanConfigCard() {
   const [mmdbPath, setMmdbPath] = React.useState("");
   const [throttle, setThrottle] = React.useState("normal");
   const [pathsPerHost, setPathsPerHost] = React.useState("");
-  const [sanctionedCidrs, setSanctionedCidrs] = React.useState("");
-  const [sanctionedAsns, setSanctionedAsns] = React.useState("");
   // Stealth identity (UA + decoy headers, applied to httpx/nuclei/crawler).
   const [idPreset, setIdPreset] = React.useState("off");
   const [idUA, setIdUA] = React.useState("");
@@ -105,8 +103,6 @@ export function ScanConfigCard() {
     const h = (base.headers as Dict) || {};
     setHeadersBlock(h);
     setPathsPerHost(((base.paths_per_host as string[]) || []).join(", "));
-    setSanctionedCidrs(((base.sanctioned_cidrs as string[]) || []).join(", "));
-    setSanctionedAsns(((base.sanctioned_asns as (string | number)[]) || []).join(", "));
     const id = (base.identity as Dict) || {};
     setIdBlock(id);
     setIdPreset((id.preset as string) || "off");
@@ -156,8 +152,6 @@ export function ScanConfigCard() {
           locale: idLocale.trim() || null,
         },
         paths_per_host: paths.length ? paths : ["/"],
-        sanctioned_cidrs: splitList(sanctionedCidrs),
-        sanctioned_asns: splitList(sanctionedAsns).map(Number).filter((n) => Number.isFinite(n)),
       },
     };
 
@@ -242,7 +236,7 @@ export function ScanConfigCard() {
 
           {/* Engine */}
           <Section title="Engine">
-            <Field label="MMDB path" hint="GeoLite2-ASN.mmdb (bind-mounted in the container)">
+            <Field label="MMDB path" hint="optional — GeoLite2-ASN.mmdb enables ASN/org enrichment">
               <Input value={mmdbPath} onChange={(e) => setMmdbPath(e.target.value)}
                 placeholder="/data/mmdb/GeoLite2-ASN.mmdb" className="font-mono text-xs" />
             </Field>
@@ -259,22 +253,6 @@ export function ScanConfigCard() {
               </Field>
               <Field label="Paths per host" hint="Crawler paths, comma/space separated">
                 <Input value={pathsPerHost} onChange={(e) => setPathsPerHost(e.target.value)} placeholder="/" />
-              </Field>
-            </div>
-          </Section>
-
-          <Separator />
-
-          {/* Scope / triage */}
-          <Section title="Scope (triage)">
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <Field label="Sanctioned CIDRs" hint="Owned IPv4 ranges → In-Scope">
-                <Textarea value={sanctionedCidrs} onChange={(e) => setSanctionedCidrs(e.target.value)}
-                  placeholder="203.0.113.0/24, 198.51.100.0/22" className="min-h-[56px] font-mono text-xs" />
-              </Field>
-              <Field label="Sanctioned ASNs" hint="Owned AS numbers">
-                <Textarea value={sanctionedAsns} onChange={(e) => setSanctionedAsns(e.target.value)}
-                  placeholder="64500, 64501" className="min-h-[56px] font-mono text-xs" />
               </Field>
             </div>
           </Section>

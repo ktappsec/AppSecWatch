@@ -4,7 +4,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-Bucket = Literal["in_scope", "shadow_it", "dead"]
+Status = Literal["live", "dead"]
 Severity = Literal["info", "low", "medium", "high", "critical"]
 Confidence = Literal["low", "medium", "high"]
 FindingSource = Literal[
@@ -41,7 +41,7 @@ class TriagedAsset(BaseModel):
     cname_chain: list[str] = Field(default_factory=list)
     asn: int | None = None
     as_org: str | None = None
-    bucket: Bucket
+    status: Status
     reason: str
 
 
@@ -95,13 +95,6 @@ class Finding(BaseModel):
     def evidence_summary(self) -> str:
         """Compact one-line evidence for table cells."""
         return " · ".join(v for _, v in self.evidence_rows())
-
-
-class ShadowITGroup(BaseModel):
-    """A cluster of Shadow IT assets sharing a CNAME target or AS org."""
-    key: str                    # eTLD+1 of CNAME target, or "AS<n> <org>"
-    grouping: Literal["cname", "asn"]
-    assets: list[TriagedAsset]
 
 
 class TLSCheck(BaseModel):
@@ -239,7 +232,7 @@ class RunSummary(BaseModel):
     duration_s: float = 0.0
     findings_total: int = 0
     findings_by_severity: dict[str, int] = Field(default_factory=dict)
-    assets: dict[str, int] = Field(default_factory=dict)        # in_scope/shadow_it/dead/live_servers/wildcards
+    assets: dict[str, int] = Field(default_factory=dict)        # live/dead/live_servers/wildcards
     errors_total: int = 0
     errors_by_stage: dict[str, int] = Field(default_factory=dict)
     stages: list[StageOutcome] = Field(default_factory=list)

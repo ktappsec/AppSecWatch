@@ -86,7 +86,7 @@ class QueueFull(Exception):
 
 class NotConfigured(Exception):
     """The base scan config is missing/invalid (e.g. UI-only boot before the
-    operator set llm/mmdb) → 409 with the validation detail."""
+    operator set the llm endpoint) → 409 with the validation detail."""
 
 
 class JobManager:
@@ -182,7 +182,8 @@ class JobManager:
         skip = set(req.skip) if req.skip else None
         resolve_selection(only, skip)
 
-        # Readiness gate: the merged scan config must validate (llm + mmdb set).
+        # Readiness gate: the merged scan config must validate (llm set; mmdb is
+        # optional now — display-only ASN enrichment, no longer a scan gate).
         # On a UI-only boot before the operator configured anything, this is how a
         # scan is refused — there is no scan-target allowlist (roots is the scope).
         try:

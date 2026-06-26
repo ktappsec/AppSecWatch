@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 ThrottleProfile = Literal["paranoid", "gentle", "normal", "aggressive", "insane"]
 
@@ -311,10 +311,14 @@ def throttle_profile_details() -> dict[str, dict[str, Any]]:
 
 
 class WatchTowerConfig(BaseModel):
+    # Unknown keys are ignored so older stored configs (e.g. carrying the removed
+    # sanctioned_cidrs / sanctioned_asns) still load cleanly.
+    model_config = ConfigDict(extra="ignore")
+
     roots: list[str]
-    sanctioned_cidrs: list[str] = Field(default_factory=list)
-    sanctioned_asns: list[int] = Field(default_factory=list)
-    mmdb_path: str
+    # Optional ASN/org enrichment source (MaxMind GeoLite2-ASN). Display-only —
+    # it does NOT gate scanning; omit it and assets simply show no ASN/org.
+    mmdb_path: str | None = None
     # Global politeness tier. Sets conservative rates across all tools at once;
     # any explicit per-tool / concurrency field overrides it.
     throttle: ThrottleProfile = "normal"
@@ -354,14 +358,6 @@ class WatchTowerConfig(BaseModel):
         if not v:
             raise ValueError("roots must contain at least one domain")
         return [d.strip().lower().rstrip(".") for d in v]
-
-    @field_validator("sanctioned_cidrs")
-    @classmethod
-    def _validate_cidrs(cls, v: list[str]) -> list[str]:
-        import ipaddress
-        for c in v:
-            ipaddress.IPv4Network(c, strict=False)
-        return v
 
 
 def load_config(path: str | Path) -> WatchTowerConfig:

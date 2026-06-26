@@ -29,7 +29,7 @@ _SCHEMA: list[str] = [
         "group"      TEXT,                                 -- iştirak
         source       TEXT NOT NULL DEFAULT 'discovered',   -- imported | discovered
         root         TEXT,                                 -- owning root domain
-        bucket       TEXT,                                 -- in_scope | shadow_it | dead
+        status       TEXT,                                 -- live | dead
         a_records    TEXT,                                 -- JSON list[str]
         cname_chain  TEXT,                                 -- JSON list[str] (for re-eval)
         asn          INTEGER,
@@ -143,6 +143,7 @@ _MIGRATIONS: list[tuple[str, str, str]] = [
     ("assets", "cname_chain", "TEXT"),
     ("assets", "profile", "TEXT"),
     ("assets", "finding_counts", "TEXT"),
+    ("assets", "status", "TEXT"),          # buckets → liveness; backfilled in _init_schema
 ]
 
 
@@ -175,6 +176,16 @@ class Database:
                     self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
                 except sqlite3.OperationalError:
                     pass  # column already present
+            # One-time backfill of the new liveness `status` from the legacy
+            # `bucket` (dead→dead; in_scope/shadow_it→live). Guarded: a fresh DB
+            # has no `bucket` column → OperationalError → skipped.
+            try:
+                self._conn.execute(
+                    "UPDATE assets SET status = CASE WHEN bucket='dead' THEN 'dead' "
+                    "ELSE 'live' END WHERE status IS NULL AND bucket IS NOT NULL"
+                )
+            except sqlite3.OperationalError:
+                pass
             self._conn.commit()
 
     def query(self, sql: str, params: tuple = ()) -> list[dict[str, Any]]:

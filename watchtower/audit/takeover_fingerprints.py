@@ -1,9 +1,9 @@
 """Deterministic subdomain-takeover detection over the stored CNAME chain.
 
 Complements the nuclei `http/takeovers/` templates, which require a *resolving*
-host + a live HTTP body fingerprint (so they cover the `shadow_it` class). This
+host + a live HTTP body fingerprint (so they cover the live/resolving class). This
 covers the class nuclei structurally cannot: a **dangling CNAME** — a host with no
-A records (the `dead` bucket, i.e. the CNAME target is NXDOMAIN) that still points
+A records (a `dead` record, i.e. the CNAME target is NXDOMAIN) that still points
 at a claimable SaaS provider. No network: matches `TriagedAsset.cname_chain`
 against a bundled provider DB (`data/takeover_fingerprints.json`, derived from
 can-i-take-over-xyz). Emits `source='takeover'` Findings.

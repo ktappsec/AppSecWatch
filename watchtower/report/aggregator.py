@@ -1,7 +1,7 @@
 """Aggregator: ingest all stage artifacts into a single report context dict."""
 from __future__ import annotations
 
-from collections import Counter, defaultdict
+from collections import Counter
 from typing import TYPE_CHECKING, Any
 
 from watchtower.models import (
@@ -10,12 +10,10 @@ from watchtower.models import (
     Finding,
     LiveWebServer,
     RunSummary,
-    ShadowITGroup,
     StageOutcome,
     TLSHostReport,
     TriagedAsset,
 )
-from watchtower.util.domains import etld_plus_one
 
 if TYPE_CHECKING:
     from watchtower.stages.state import ScanState
@@ -94,8 +92,7 @@ def build_run_summary(
         findings_total=len(visible),
         findings_by_severity=sev_totals,
         assets={
-            "in_scope": len(state.in_scope()),
-            "shadow_it": len(state.shadow_it()),
+            "live": len(state.live()),
             "dead": len(state.dead()),
             "live_servers": len(state.live_servers),
             "wildcards": len(state.wildcards),
@@ -108,30 +105,6 @@ def build_run_summary(
              "errored": tls_errored},
         events=ev,
     )
-
-
-def group_shadow_it(assets: list[TriagedAsset]) -> list[ShadowITGroup]:
-    """Group Shadow IT assets by CNAME target eTLD+1, falling back to AS org."""
-    by_cname: dict[str, list[TriagedAsset]] = defaultdict(list)
-    by_asn: dict[str, list[TriagedAsset]] = defaultdict(list)
-
-    for asset in assets:
-        if asset.bucket != "shadow_it":
-            continue
-        if asset.cname_chain:
-            # Use the last CNAME hop's eTLD+1 as the group key.
-            key = etld_plus_one(asset.cname_chain[-1])
-            by_cname[key].append(asset)
-        else:
-            label = f"AS{asset.asn or '?'} {asset.as_org or 'Unknown'}"
-            by_asn[label].append(asset)
-
-    groups: list[ShadowITGroup] = []
-    for key, items in sorted(by_cname.items(), key=lambda kv: (-len(kv[1]), kv[0])):
-        groups.append(ShadowITGroup(key=key, grouping="cname", assets=items))
-    for key, items in sorted(by_asn.items(), key=lambda kv: (-len(kv[1]), kv[0])):
-        groups.append(ShadowITGroup(key=key, grouping="asn", assets=items))
-    return groups
 
 
 def severity_histogram(findings: list[Finding]) -> dict[str, dict[str, int]]:
@@ -171,9 +144,8 @@ def build_report_context(
     coverage: dict[str, dict] | None = None,
     summary: RunSummary | None = None,
 ) -> dict[str, Any]:
-    in_scope = [a for a in triaged if a.bucket == "in_scope"]
-    shadow = [a for a in triaged if a.bucket == "shadow_it"]
-    dead = [a for a in triaged if a.bucket == "dead"]
+    live = [a for a in triaged if a.status == "live"]
+    dead = [a for a in triaged if a.status == "dead"]
 
     header_findings = list(header_findings or [])
     js_lib_findings = list(js_lib_findings or [])
@@ -193,7 +165,6 @@ def build_report_context(
     header_visible = [f for f in header_findings if not f.suppressed]
 
     histogram = severity_histogram(visible)
-    shadow_groups = group_shadow_it(shadow)
 
     # TLS fleet rollup
     tls_total_checks = sum(r.total for r in tls_reports)
@@ -230,13 +201,11 @@ def build_report_context(
         },
         "app_profiles": app_profiles or {},
         "recon": {
-            "in_scope": in_scope,
-            "shadow_it": shadow,
+            "live": live,
             "dead": dead,
             "wildcards": wildcards,
             "live_servers": live_servers,
         },
-        "shadow_groups": shadow_groups,
         "histogram": histogram,
         "histogram_totals": {
             sev: sum(by_src.values()) for sev, by_src in histogram.items()

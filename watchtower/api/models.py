@@ -163,7 +163,7 @@ class Asset(BaseModel):
     group: str | None = None
     source: str = "discovered"           # imported | discovered
     root: str | None = None
-    bucket: str | None = None            # in_scope | shadow_it | dead
+    status: str | None = None            # live | dead
     a_records: list[str] = Field(default_factory=list)
     cname_chain: list[str] = Field(default_factory=list)
     asn: int | None = None
@@ -198,7 +198,7 @@ class AssetImportResult(BaseModel):
 
 class AssetBulkFilter(BaseModel):
     group: str | None = None
-    bucket: str | None = None
+    status: str | None = None
     source: str | None = None
 
 
@@ -208,11 +208,6 @@ class AssetBulkRequest(BaseModel):
     fqdns: list[str] | None = None
     filter: AssetBulkFilter | None = None
     group: str | None = None             # target group for set_group
-
-
-class ReevaluateResult(BaseModel):
-    total: int = 0
-    changed: int = 0
 
 
 # --------------------------------------------------------------------------- #

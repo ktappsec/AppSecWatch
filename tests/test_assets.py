@@ -12,9 +12,9 @@ def _am(tmp_path) -> AssetManager:
     return AssetManager(Database(tmp_path / "t.db"))
 
 
-def _ta(fqdn, ips=("1.2.3.4",), bucket="in_scope", asn=64500):
+def _ta(fqdn, ips=("1.2.3.4",), status="live", asn=64500):
     return TriagedAsset(fqdn=fqdn, a_records=list(ips), cname_chain=[],
-                        asn=asn, as_org="Org", bucket=bucket, reason="t")
+                        asn=asn, as_org="Org", status=status, reason="t")
 
 
 # --- CSV import / CRUD ------------------------------------------------------
@@ -65,19 +65,19 @@ def test_sync_inherits_group_and_keeps_imported(tmp_path):
         _ta("kuveytturk.com.tr"),                                  # the root (imported)
         _ta("app.kuveytturk.com.tr"),                              # discovered → inherit Bank
         _ta("special.kuveytturk.com.tr"),                          # imported → keep Special
-        _ta("ext.zendesk.com", bucket="shadow_it"),               # off-root → no group
+        _ta("ext.zendesk.com"),                                    # off-root → no group
     ]
     n = am.sync_discovered(triaged, ["kuveytturk.com.tr"], "S1", group=None)
     assert n == 4
     root = am.get("kuveytturk.com.tr")
     assert root["source"] == "imported" and root["group"] == "Bank"
-    assert root["bucket"] == "in_scope" and root["last_scan_id"] == "S1"
+    assert root["status"] == "live" and root["last_scan_id"] == "S1"
     disc = am.get("app.kuveytturk.com.tr")
     assert disc["source"] == "discovered" and disc["group"] == "Bank"
     assert disc["root"] == "kuveytturk.com.tr" and disc["a_records"] == ["1.2.3.4"]
     assert am.get("special.kuveytturk.com.tr")["group"] == "Special"  # not clobbered
     off = am.get("ext.zendesk.com")
-    assert off["group"] is None and off["bucket"] == "shadow_it"
+    assert off["group"] is None and off["status"] == "live"
 
 
 def test_sync_preserves_first_seen(tmp_path):
@@ -120,33 +120,9 @@ def test_sync_writes_profile_and_finding_counts(tmp_path):
 def test_sync_stores_cname_chain(tmp_path):
     am = _am(tmp_path)
     t = TriagedAsset(fqdn="www.a.com", a_records=[], cname_chain=["a.cdn.net"],
-                     asn=None, as_org=None, bucket="shadow_it", reason="cdn")
+                     asn=None, as_org=None, status="dead", reason="dangling cdn")
     am.sync_discovered([t], ["a.com"], "S1")
     assert am.get("www.a.com")["cname_chain"] == ["a.cdn.net"]
-
-
-# --- re-evaluate (offline re-triage on range change) -----------------------
-class _FakeIP:
-    def __init__(self, *a, **k): ...
-    def close(self): ...
-
-
-def _fake_triage_inscope(recs, roots, ipinfo):
-    return [TriagedAsset(fqdn=r["host"], a_records=r["a"], cname_chain=r["cname"],
-                         asn=64500, as_org="X", bucket="in_scope", reason="reeval")
-            for r in recs]
-
-
-def test_reevaluate_rebuckets(tmp_path, monkeypatch):
-    am = _am(tmp_path)
-    am.sync_discovered([_ta("a.com", bucket="shadow_it")], ["a.com"], "S1")
-    assert am.get("a.com")["bucket"] == "shadow_it"
-    monkeypatch.setattr("watchtower.util.ipinfo.IPInfoLookup", _FakeIP)
-    monkeypatch.setattr("watchtower.recon.triage.triage_records", _fake_triage_inscope)
-    res = am.reevaluate(mmdb_path="x.mmdb", roots=["a.com"],
-                        sanctioned_cidrs=["1.2.3.0/24"], sanctioned_asns=[64500])
-    assert res == {"total": 1, "changed": 1}
-    assert am.get("a.com")["bucket"] == "in_scope"
 
 
 # --- bulk ops --------------------------------------------------------------

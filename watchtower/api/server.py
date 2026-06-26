@@ -46,7 +46,6 @@ from watchtower.api.models import (
     AssetGroup,
     AssetImportResult,
     AssetUpsert,
-    ReevaluateResult,
     ConfigUpdate,
     ConfigView,
     JobLinks,
@@ -221,10 +220,8 @@ def _install(app: FastAPI, config: ServerConfig) -> None:
     @app.put("/config", dependencies=[Depends(require_api_key)])
     async def put_config(body: ConfigUpdate, request: Request) -> ConfigView:
         cm = config_manager(request)
-        raw = manager(request).server.base_config_raw
-        old_ranges = (raw.get("sanctioned_cidrs"), raw.get("sanctioned_asns"))
         try:
-            view = ConfigView(**cm.update(body.base_config))
+            return ConfigView(**cm.update(body.base_config))
         except ConfigError as e:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -235,19 +232,6 @@ def _install(app: FastAPI, config: ServerConfig) -> None:
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
                 error_response("validation_error", _summarize_pydantic(e)),
             )
-        # Auto re-evaluate asset buckets when the sanctioned ranges changed.
-        new_ranges = (raw.get("sanctioned_cidrs"), raw.get("sanctioned_asns"))
-        if new_ranges != old_ranges and raw.get("mmdb_path"):
-            try:
-                await asyncio.to_thread(
-                    assets_mgr(request).reevaluate,
-                    mmdb_path=raw["mmdb_path"],
-                    sanctioned_cidrs=raw.get("sanctioned_cidrs") or [],
-                    sanctioned_asns=raw.get("sanctioned_asns") or [],
-                )
-            except Exception as e:  # noqa: BLE001 — never fail the config save on re-eval
-                log.warning("auto re-evaluate failed: %r", e)
-        return view
 
     # ----- AI prompts (editable system-prompt registry) ------------------- #
     @app.get("/prompts", dependencies=[Depends(require_api_key)])
@@ -290,12 +274,12 @@ def _install(app: FastAPI, config: ServerConfig) -> None:
     async def list_assets(
         request: Request,
         group: str | None = Query(default=None),
-        bucket: str | None = Query(default=None),
+        status: str | None = Query(default=None),
         source: str | None = Query(default=None),
         q: str | None = Query(default=None),
     ) -> list[Asset]:
         rows = await asyncio.to_thread(
-            assets_mgr(request).list, group=group, bucket=bucket, source=source, q=q
+            assets_mgr(request).list, group=group, status=status, source=source, q=q
         )
         return [Asset(**r) for r in rows]
 
@@ -352,23 +336,6 @@ def _install(app: FastAPI, config: ServerConfig) -> None:
                 am.bulk_set_group, group=body.group, fqdns=body.fqdns, filter=filt
             )
         return {"affected": n}
-
-    @app.post("/assets/reevaluate", dependencies=[Depends(require_api_key)])
-    async def reevaluate_assets(request: Request) -> ReevaluateResult:
-        raw = manager(request).server.base_config_raw
-        mmdb = raw.get("mmdb_path")
-        if not mmdb:
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                error_response("not_configured", "mmdb_path not set (needed to re-evaluate)"),
-            )
-        res = await asyncio.to_thread(
-            assets_mgr(request).reevaluate,
-            mmdb_path=mmdb,
-            sanctioned_cidrs=raw.get("sanctioned_cidrs") or [],
-            sanctioned_asns=raw.get("sanctioned_asns") or [],
-        )
-        return ReevaluateResult(**res)
 
     @app.get("/assets/{fqdn}/findings", dependencies=[Depends(require_api_key)])
     async def asset_findings(fqdn: str, request: Request):

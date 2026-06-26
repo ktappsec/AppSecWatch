@@ -26,7 +26,7 @@ def _asset(fqdn: str, ips: list[str]) -> TriagedAsset:
     return TriagedAsset(
         fqdn=fqdn, a_records=ips, cname_chain=[],
         asn=64500, as_org="Our",
-        bucket="in_scope", reason="test fixture",
+        status="live", reason="test fixture",
     )
 
 

@@ -7,7 +7,7 @@ from watchtower.models import TriagedAsset
 
 def _dead(fqdn: str, cname_chain: list[str]) -> TriagedAsset:
     return TriagedAsset(fqdn=fqdn, a_records=[], cname_chain=cname_chain,
-                        bucket="dead", reason="no A records")
+                        status="dead", reason="no A records")
 
 
 def test_dangling_cname_to_claimable_provider_is_high():

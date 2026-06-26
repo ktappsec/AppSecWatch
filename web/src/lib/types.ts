@@ -11,7 +11,7 @@ export type JobState =
 
 export type Severity = "info" | "low" | "medium" | "high" | "critical";
 export type ThrottleProfile = "paranoid" | "gentle" | "normal" | "aggressive" | "insane";
-export type Bucket = "in_scope" | "shadow_it" | "dead";
+export type AssetStatus = "live" | "dead";
 export type FindingSource =
   | "nuclei"
   | "takeover"
@@ -53,7 +53,7 @@ export interface Asset {
   group?: string | null;
   source: "imported" | "discovered";
   root?: string | null;
-  bucket?: "in_scope" | "shadow_it" | "dead" | null;
+  status?: AssetStatus | null;
   a_records: string[];
   cname_chain?: string[];
   asn?: number | null;
@@ -252,7 +252,7 @@ export interface TriagedAsset {
   cname_chain: string[];
   asn?: number | null;
   as_org?: string | null;
-  bucket: Bucket;
+  status: AssetStatus;
   reason: string;
 }
 
@@ -320,7 +320,7 @@ export interface Capabilities {
 export interface AssetBulkRequest {
   action: "delete" | "set_group";
   fqdns?: string[] | null;
-  filter?: { group?: string | null; bucket?: string | null; source?: string | null } | null;
+  filter?: { group?: string | null; status?: string | null; source?: string | null } | null;
   group?: string | null;
 }
 

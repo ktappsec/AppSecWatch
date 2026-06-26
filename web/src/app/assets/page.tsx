@@ -3,7 +3,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import {
-  Upload, Plus, Trash2, Play, ChevronDown, ChevronRight, RefreshCw, Network, Wand2, Info,
+  Upload, Plus, Trash2, Play, ChevronDown, ChevronRight, RefreshCw, Network, Info,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -19,9 +19,8 @@ import { useMounted } from "@/lib/hooks";
 import { relativeTime } from "@/lib/format";
 import type { Asset, Finding } from "@/lib/types";
 
-const BUCKET_STYLE: Record<string, string> = {
-  in_scope: "text-[#00c853] border-[#00c853]/40",
-  shadow_it: "text-[#ff8a3d] border-[#ff8a3d]/40",
+const STATUS_STYLE: Record<string, string> = {
+  live: "text-[#00c853] border-[#00c853]/40",
   dead: "text-muted-foreground border-border",
 };
 
@@ -54,7 +53,7 @@ export default function AssetsPage() {
   const [loaded, setLoaded] = React.useState(false);
   const [err, setErr] = React.useState<string | null>(null);
   const [q, setQ] = React.useState("");
-  const [bucket, setBucket] = React.useState("");
+  const [status, setStatus] = React.useState("");
   const [collapsed, setCollapsed] = React.useState<Set<string>>(new Set());
   const [newFqdn, setNewFqdn] = React.useState("");
   const [newGroup, setNewGroup] = React.useState("");
@@ -62,13 +61,13 @@ export default function AssetsPage() {
   const load = React.useCallback(async () => {
     setErr(null);
     try {
-      setAssets(await api.listAssets({ q: q || undefined, bucket: bucket || undefined }));
+      setAssets(await api.listAssets({ q: q || undefined, status: status || undefined }));
       setLoaded(true);
     } catch (e) {
       setLoaded(false);
       setErr(e instanceof ApiError ? `${e.code}: ${e.message}` : "Failed to load assets");
     }
-  }, [q, bucket]);
+  }, [q, status]);
 
   React.useEffect(() => {
     if (mounted) load();
@@ -139,13 +138,6 @@ export default function AssetsPage() {
       toast.success(`Regrouped ${r.affected}`); setSelected(new Set()); load();
     } catch (e) { toast.error(e instanceof ApiError ? e.message : "Bulk set-group failed"); }
   };
-  const reevaluate = async () => {
-    try {
-      const r = await api.reevaluateAssets();
-      toast.success(`Re-evaluated ${r.total} assets (${r.changed} re-bucketed)`); load();
-    } catch (e) { toast.error(e instanceof ApiError ? `${e.code}: ${e.message}` : "Re-evaluate failed"); }
-  };
-
   const toggle = (g: string) =>
     setCollapsed((s) => { const n = new Set(s); n.has(g) ? n.delete(g) : n.add(g); return n; });
 
@@ -176,10 +168,6 @@ export default function AssetsPage() {
             onChange={(e) => { const f = e.target.files?.[0]; if (f) onImport(f); e.target.value = ""; }} />
           <Button variant="outline" className="gap-1.5" onClick={() => fileRef.current?.click()}>
             <Upload className="h-4 w-4" /> Import CSV
-          </Button>
-          <Button variant="outline" className="gap-1.5" onClick={reevaluate}
-            title="Re-classify buckets against the current sanctioned CIDRs/ASNs">
-            <Wand2 className="h-4 w-4" /> Re-evaluate
           </Button>
           <Button variant="outline" size="icon-sm" onClick={load} aria-label="Reload">
             <RefreshCw className="h-4 w-4" />
@@ -216,11 +204,10 @@ export default function AssetsPage() {
           <div className="ml-auto flex items-center gap-2">
             <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="search fqdn…"
               className="max-w-[220px]" />
-            <select value={bucket} onChange={(e) => setBucket(e.target.value)}
+            <select value={status} onChange={(e) => setStatus(e.target.value)}
               className="h-9 rounded-md border border-border bg-input px-2 text-sm">
-              <option value="">all buckets</option>
-              <option value="in_scope">in_scope</option>
-              <option value="shadow_it">shadow_it</option>
+              <option value="">all</option>
+              <option value="live">live</option>
               <option value="dead">dead</option>
             </select>
           </div>
@@ -270,7 +257,7 @@ export default function AssetsPage() {
                         <TableHead className="w-8"></TableHead>
                         <TableHead>FQDN</TableHead>
                         <TableHead>Source</TableHead>
-                        <TableHead>Bucket</TableHead>
+                        <TableHead>Status</TableHead>
                         <TableHead>Findings</TableHead>
                         <TableHead className="hidden lg:table-cell">A records</TableHead>
                         <TableHead className="hidden md:table-cell">Last seen</TableHead>
@@ -291,9 +278,9 @@ export default function AssetsPage() {
                             <span className="rounded bg-secondary px-1.5 py-0.5 text-[10px] text-muted-foreground">{a.source}</span>
                           </TableCell>
                           <TableCell>
-                            {a.bucket && (
-                              <span className={cn("rounded border px-1.5 py-0.5 text-[10px]", BUCKET_STYLE[a.bucket] ?? "")}>
-                                {a.bucket}
+                            {a.status && (
+                              <span className={cn("rounded border px-1.5 py-0.5 text-[10px]", STATUS_STYLE[a.status] ?? "")}>
+                                {a.status}
                               </span>
                             )}
                           </TableCell>

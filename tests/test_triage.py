@@ -1,163 +1,92 @@
 """Tests for watchtower.recon.triage.triage_records.
 
-Covers the four-rule classification (DESIGN.md §2.1.1):
-    1. NXDOMAIN / no A record       → dead
-    2. Any A IP outside sanctioned  → shadow_it
-    3. Any CNAME hop not under root → shadow_it
-    4. Otherwise                    → in_scope
+Liveness classification only: `dead` (no A records) vs `live` (resolves). Scope
+is the configured roots; there is NO IP/ASN ownership gate. ASN/org are display
+enrichment taken from the first A record.
 """
 from __future__ import annotations
 
 from watchtower.recon.triage import triage_records
 
 
-ROOTS = ["example.com"]
+def _rec(host: str, a=None, cname=None) -> dict:
+    return {"host": host, "a": list(a or []), "cname": list(cname or [])}
 
 
-def _rec(host: str, a=None, cname=None, status="NOERROR") -> dict:
-    return {
-        "host": host,
-        "a": list(a or []),
-        "cname": list(cname or []),
-        "status_code": status,
-    }
-
-
-# ---------------------- Rule 1: dead ----------------------
+# ---------------------- dead ----------------------
 
 def test_dead_when_no_a_records(make_ipinfo):
     ip = make_ipinfo()
-    assets = triage_records([_rec("missing.example.com", a=[], status="NXDOMAIN")], ROOTS, ip)
+    assets = triage_records([_rec("missing.example.com", a=[])], ip)
     assert len(assets) == 1
     a = assets[0]
-    assert a.bucket == "dead"
+    assert a.status == "dead"
     assert a.a_records == []
     assert "no a records" in a.reason.lower()
 
 
 def test_dead_when_a_field_absent_entirely(make_ipinfo):
     ip = make_ipinfo()
-    assets = triage_records([{"host": "x.example.com"}], ROOTS, ip)
-    assert assets[0].bucket == "dead"
-
-
-# ---------------------- Rule 2: shadow_it via IP ----------------------
-
-def test_shadow_when_ip_outside_sanctioned(make_ipinfo):
-    ip = make_ipinfo(
-        sanctioned_cidrs=["10.0.0.0/8"],
-        asn_map={"203.0.113.5": (64511, "Outside Corp")},
-    )
-    assets = triage_records([_rec("api.example.com", a=["203.0.113.5"])], ROOTS, ip)
-    assert assets[0].bucket == "shadow_it"
-    assert "203.0.113.5" in assets[0].reason
-
-
-def test_inscope_when_ip_inside_cidr(make_ipinfo):
-    ip = make_ipinfo(sanctioned_cidrs=["10.0.0.0/8"])
-    assets = triage_records([_rec("api.example.com", a=["10.1.2.3"])], ROOTS, ip)
-    assert assets[0].bucket == "in_scope"
-
-
-def test_inscope_via_sanctioned_asn_even_if_cidr_misses(make_ipinfo):
-    ip = make_ipinfo(
-        sanctioned_cidrs=["10.0.0.0/8"],         # 1.2.3.4 not in here
-        sanctioned_asns=[64500],
-        asn_map={"1.2.3.4": (64500, "Our ASN")},
-    )
-    assets = triage_records([_rec("a.example.com", a=["1.2.3.4"])], ROOTS, ip)
-    assert assets[0].bucket == "in_scope"
-    assert assets[0].asn == 64500
-
-
-def test_strictest_wins_with_mixed_a_records(make_ipinfo):
-    """If any A record is outside sanctioned, the asset is Shadow IT — DESIGN.md §2.1."""
-    ip = make_ipinfo(
-        sanctioned_cidrs=["10.0.0.0/8"],
-        asn_map={"203.0.113.5": (64511, "Outside Corp")},
-    )
-    rec = _rec("multi.example.com", a=["10.1.2.3", "203.0.113.5"])
-    assets = triage_records([rec], ROOTS, ip)
-    assert assets[0].bucket == "shadow_it"
+    assert triage_records([{"host": "x.example.com"}], ip)[0].status == "dead"
 
 
 def test_ipv6_records_are_ignored(make_ipinfo):
-    """IPv4 only — AAAA records mixed into the `a` array are filtered (DESIGN.md §2.1)."""
+    # IPv4 only — an AAAA-only record has no usable A → dead.
     ip = make_ipinfo()
-    rec = _rec("v6.example.com", a=["2001:db8::1"])     # would be filtered by is_ipv4
-    assets = triage_records([rec], ROOTS, ip)
-    assert assets[0].bucket == "dead"
+    assert triage_records([_rec("v6.example.com", a=["2001:db8::1"])], ip)[0].status == "dead"
 
 
-# ---------------------- Rule 3: shadow_it via CNAME ----------------------
+# ---------------------- live (regardless of hosting) ----------------------
 
-def test_shadow_when_cname_targets_non_root_zone(make_ipinfo):
-    ip = make_ipinfo(sanctioned_cidrs=["10.0.0.0/8"])
-    rec = _rec(
-        "support.example.com",
-        a=["10.1.2.3"],
-        cname=["example.zendesk.com"],
-    )
-    assets = triage_records([rec], ROOTS, ip)
-    assert assets[0].bucket == "shadow_it"
-    assert "non-root zone" in assets[0].reason
-    assert "zendesk.com" in assets[0].reason
+def test_live_when_it_resolves(make_ipinfo):
+    ip = make_ipinfo()
+    assets = triage_records([_rec("api.example.com", a=["203.0.113.5"])], ip)
+    assert assets[0].status == "live"
+    assert "resolves" in assets[0].reason.lower()
 
 
-def test_inscope_when_cname_stays_within_roots(make_ipinfo):
-    ip = make_ipinfo(sanctioned_cidrs=["10.0.0.0/8"])
-    rec = _rec(
-        "www.example.com",
-        a=["10.1.2.3"],
-        cname=["edge.example.com"],
-    )
-    assets = triage_records([rec], ROOTS, ip)
-    assert assets[0].bucket == "in_scope"
+def test_live_regardless_of_hosting(make_ipinfo):
+    # No sanctioned-range gate — an off-prem IP is still live + in play.
+    ip = make_ipinfo(asn_map={"203.0.113.5": (64511, "Outside Corp")})
+    assets = triage_records([_rec("api.example.com", a=["203.0.113.5"])], ip)
+    assert assets[0].status == "live"
+    assert assets[0].asn == 64511 and assets[0].as_org == "Outside Corp"
 
 
-def test_inscope_with_multiple_roots(make_ipinfo):
-    ip = make_ipinfo(sanctioned_cidrs=["10.0.0.0/8"])
-    rec = _rec(
-        "foo.alt-corp.io",
-        a=["10.1.2.3"],
-        cname=["edge.alt-corp.io"],
-    )
-    assets = triage_records([rec], ["example.com", "alt-corp.io"], ip)
-    assert assets[0].bucket == "in_scope"
+def test_live_keeps_third_party_cname(make_ipinfo):
+    # A SaaS-hosted subdomain is live; the third-party CNAME is preserved (the
+    # takeovers stage uses it), not a reason to skip scanning.
+    ip = make_ipinfo()
+    rec = _rec("support.example.com", a=["10.1.2.3"], cname=["example.zendesk.com"])
+    a = triage_records([rec], ip)[0]
+    assert a.status == "live"
+    assert a.cname_chain == ["example.zendesk.com"]
 
 
-# ---------------------- Rule 4: in_scope ----------------------
-
-def test_inscope_no_cname_chain(make_ipinfo):
-    ip = make_ipinfo(sanctioned_cidrs=["10.0.0.0/8"])
-    rec = _rec("svc.example.com", a=["10.0.0.7"])
-    assets = triage_records([rec], ROOTS, ip)
-    assert assets[0].bucket == "in_scope"
-    assert assets[0].cname_chain == []
+def test_cname_chain_lowercased_and_stripped(make_ipinfo):
+    ip = make_ipinfo()
+    rec = _rec("x.example.com", a=["10.0.0.1"], cname=["Edge.Example.COM."])
+    assert triage_records([rec], ip)[0].cname_chain == ["edge.example.com"]
 
 
-# ---------------------- Bulk / metadata ----------------------
+# ---------------------- bulk / metadata ----------------------
 
 def test_triage_records_preserves_order_and_count(make_ipinfo):
-    ip = make_ipinfo(sanctioned_cidrs=["10.0.0.0/8"],
-                    asn_map={"1.1.1.1": (64511, "Cloudflare")})
+    ip = make_ipinfo(asn_map={"1.1.1.1": (64511, "Cloudflare")})
     recs = [
         _rec("dead.example.com", a=[]),
         _rec("ours.example.com", a=["10.0.0.1"]),
         _rec("third.example.com", a=["1.1.1.1"]),
     ]
-    assets = triage_records(recs, ROOTS, ip)
-    assert [a.bucket for a in assets] == ["dead", "in_scope", "shadow_it"]
+    assets = triage_records(recs, ip)
+    assert [a.status for a in assets] == ["dead", "live", "live"]
     assert [a.fqdn for a in assets] == [
         "dead.example.com", "ours.example.com", "third.example.com",
     ]
 
 
 def test_asn_metadata_populated_from_primary_a(make_ipinfo):
-    ip = make_ipinfo(
-        sanctioned_cidrs=["10.0.0.0/8"],
-        asn_map={"10.0.0.1": (64500, "Our ASN")},
-    )
-    assets = triage_records([_rec("a.example.com", a=["10.0.0.1"])], ROOTS, ip)
+    ip = make_ipinfo(asn_map={"10.0.0.1": (64500, "Our ASN")})
+    assets = triage_records([_rec("a.example.com", a=["10.0.0.1"])], ip)
     assert assets[0].asn == 64500
     assert assets[0].as_org == "Our ASN"
