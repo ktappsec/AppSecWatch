@@ -1,0 +1,63 @@
+{
+  "jquery": {
+    "uri": ["jquery[.-]?(\\d+(?:\\.\\d+){1,2})(?:\\.min)?\\.js"],
+    "vulnerabilities": [
+      {"below": "3.5.0", "severity": "medium", "cve": ["CVE-2020-11022", "CVE-2020-11023"],
+       "summary": "jQuery before 3.5.0 — XSS via the htmlPrefilter / DOM manipulation methods."},
+      {"below": "3.4.0", "severity": "medium", "cve": ["CVE-2019-11358"],
+       "summary": "jQuery before 3.4.0 — prototype pollution via jQuery.extend(true, ...)."},
+      {"below": "1.9.0", "severity": "medium", "cve": ["CVE-2012-6708", "CVE-2015-9251"],
+       "summary": "jQuery before 1.9.0 — selector interpreted as HTML; XSS via $(location.hash)."}
+    ]
+  },
+  "bootstrap": {
+    "uri": ["bootstrap[.-]?(\\d+(?:\\.\\d+){1,2})(?:\\.min)?\\.js"],
+    "vulnerabilities": [
+      {"atOrAbove": "3.0.0", "below": "3.4.1", "severity": "medium", "cve": ["CVE-2019-8331"],
+       "summary": "Bootstrap before 3.4.1 — XSS in the tooltip/popover data-template attribute."},
+      {"atOrAbove": "4.0.0", "below": "4.3.1", "severity": "medium", "cve": ["CVE-2019-8331"],
+       "summary": "Bootstrap 4.x before 4.3.1 — XSS in the tooltip/popover data-template attribute."}
+    ]
+  },
+  "angular": {
+    "uri": ["angular[.-]?(\\d+(?:\\.\\d+){1,2})(?:\\.min)?\\.js"],
+    "vulnerabilities": [
+      {"below": "1.8.0", "severity": "medium", "cve": ["CVE-2020-7676"],
+       "summary": "AngularJS before 1.8.0 — XSS via the SVG/usemap sanitizer bypass."},
+      {"below": "1.6.3", "severity": "high", "cve": ["CVE-2019-10768"],
+       "summary": "AngularJS before 1.6.3 — prototype pollution in merge()."}
+    ]
+  },
+  "lodash": {
+    "uri": ["lodash[.-]?(\\d+(?:\\.\\d+){1,2})(?:\\.min)?\\.js"],
+    "vulnerabilities": [
+      {"below": "4.17.21", "severity": "high", "cve": ["CVE-2021-23337"],
+       "summary": "Lodash before 4.17.21 — command injection via template()."},
+      {"below": "4.17.12", "severity": "high", "cve": ["CVE-2019-10744"],
+       "summary": "Lodash before 4.17.12 — prototype pollution in defaultsDeep()."}
+    ]
+  },
+  "moment": {
+    "uri": ["moment[.-]?(\\d+(?:\\.\\d+){1,2})(?:\\.min)?\\.js"],
+    "vulnerabilities": [
+      {"below": "2.29.4", "severity": "high", "cve": ["CVE-2022-31129"],
+       "summary": "Moment.js before 2.29.4 — ReDoS in string-to-date parsing."},
+      {"below": "2.29.2", "severity": "medium", "cve": ["CVE-2022-24785"],
+       "summary": "Moment.js before 2.29.2 — path traversal in the locale loader."}
+    ]
+  },
+  "handlebars": {
+    "uri": ["handlebars[.-]?(\\d+(?:\\.\\d+){1,2})(?:\\.min)?\\.js"],
+    "vulnerabilities": [
+      {"below": "4.7.7", "severity": "high", "cve": ["CVE-2021-23369", "CVE-2021-23383"],
+       "summary": "Handlebars before 4.7.7 — RCE via prototype pollution in the compiler."}
+    ]
+  },
+  "dompurify": {
+    "uri": ["(?:purify|dompurify)[.-]?(\\d+(?:\\.\\d+){1,2})(?:\\.min)?\\.js"],
+    "vulnerabilities": [
+      {"below": "2.0.17", "severity": "medium", "cve": ["CVE-2020-26870"],
+       "summary": "DOMPurify before 2.0.17 — sanitizer bypass (mXSS)."}
+    ]
+  }
+}

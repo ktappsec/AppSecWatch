@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "watchtower"
+version = "0.1.0"
+description = "Point-in-time external AppSec audit orchestrator"
+requires-python = ">=3.11"
+authors = [{name = "WatchTower"}]
+license = {text = "Proprietary"}
+dependencies = [
+    "pydantic>=2.6",
+    "pyyaml>=6.0",
+    "jinja2>=3.1",
+    "tldextract>=5.1",
+    "maxminddb>=2.5",
+    "httpx>=0.27",
+    "playwright>=1.42",
+    "sslyze>=6.0",
+    "rich>=13.7",
+]
+
+[project.optional-dependencies]
+web = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+]
+
+[project.scripts]
+watchtower = "watchtower.cli:main"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.setuptools.packages.find]
+include = ["watchtower*"]
+
+[tool.setuptools.package-data]
+watchtower = ["report/templates/*.j2", "audit/data/*.json"]

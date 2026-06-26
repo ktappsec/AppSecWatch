@@ -1,0 +1,296 @@
+{
+  "id": "2026-06-05T08-00-00Z-app_example_com",
+  "state": "completed",
+  "coverage": {
+    "recon": {
+      "ran": true,
+      "reason": "prerequisite"
+    },
+    "takeovers": {
+      "ran": true,
+      "reason": "default"
+    },
+    "tls": {
+      "ran": true,
+      "reason": "default"
+    },
+    "nuclei": {
+      "ran": true,
+      "reason": "default"
+    },
+    "supply-chain": {
+      "ran": true,
+      "reason": "default"
+    },
+    "ai": {
+      "ran": true,
+      "reason": "default"
+    }
+  },
+  "histogram": {
+    "critical": {
+      "nuclei": 1
+    },
+    "high": {
+      "nuclei": 1,
+      "sslyze": 1
+    },
+    "medium": {
+      "ai_headers": 1
+    },
+    "low": {},
+    "info": {
+      "ai_supply_chain": 1
+    }
+  },
+  "histogram_totals": {
+    "critical": 1,
+    "high": 2,
+    "medium": 1,
+    "low": 0,
+    "info": 1
+  },
+  "findings": [
+    {
+      "source": "nuclei",
+      "host": "app.example.com",
+      "severity": "critical",
+      "title": "Exposed .git directory",
+      "description": "",
+      "evidence": {
+        "template_id": "git-config",
+        "matched_at": "https://app.example.com/.git/config"
+      }
+    },
+    {
+      "source": "nuclei",
+      "host": "api.example.com",
+      "severity": "high",
+      "title": "Spring Boot Actuator exposed",
+      "description": "",
+      "evidence": {
+        "template_id": "springboot-actuator",
+        "matched_at": "https://api.example.com/actuator"
+      }
+    },
+    {
+      "source": "sslyze",
+      "host": "legacy.example.com",
+      "severity": "high",
+      "title": "TLS 1.0 enabled",
+      "description": "",
+      "evidence": {
+        "check": "tls_1_0_disabled",
+        "detail": "TLS 1.0 accepted"
+      }
+    },
+    {
+      "source": "ai_headers",
+      "host": "app.example.com",
+      "severity": "medium",
+      "title": "Missing Content-Security-Policy",
+      "description": "",
+      "evidence": {
+        "finding": "No CSP header on an auth-handling app"
+      }
+    },
+    {
+      "source": "ai_supply_chain",
+      "host": "app.example.com",
+      "severity": "info",
+      "title": "3rd-party analytics script",
+      "description": "",
+      "evidence": {
+        "finding": "googletagmanager.com loaded on login page"
+      }
+    }
+  ],
+  "tls": [
+    {
+      "host": "app.example.com",
+      "error": null,
+      "checks": [
+        {
+          "name": "TLS 1.0/1.1 disabled",
+          "passed": true,
+          "detail": "",
+          "severity": "high"
+        },
+        {
+          "name": "No weak ciphers",
+          "passed": true,
+          "detail": "",
+          "severity": "high"
+        },
+        {
+          "name": "HSTS enabled",
+          "passed": true,
+          "detail": "max-age=31536000",
+          "severity": "medium"
+        },
+        {
+          "name": "OCSP stapling",
+          "passed": false,
+          "detail": "not stapled",
+          "severity": "low"
+        }
+      ]
+    },
+    {
+      "host": "legacy.example.com",
+      "error": null,
+      "checks": [
+        {
+          "name": "TLS 1.0/1.1 disabled",
+          "passed": false,
+          "detail": "TLS 1.0 accepted",
+          "severity": "high"
+        },
+        {
+          "name": "Cert valid >=30d",
+          "passed": true,
+          "detail": "89 days",
+          "severity": "medium"
+        }
+      ]
+    }
+  ],
+  "app_profiles": {
+    "app.example.com": {
+      "host": "app.example.com",
+      "app_type": "customer banking portal",
+      "audience": "public",
+      "confidence": "high",
+      "reasoning": "Login form with password field, references to accounts and transfers.",
+      "handles_auth": true,
+      "handles_pii": true,
+      "handles_payments": true,
+      "has_file_upload": false,
+      "is_api": false,
+      "expected_controls": [
+        "MFA",
+        "CSP",
+        "HSTS",
+        "rate limiting"
+      ],
+      "error": null
+    },
+    "api.example.com": {
+      "host": "api.example.com",
+      "app_type": "REST API",
+      "audience": "partner",
+      "confidence": "medium",
+      "reasoning": "JSON responses, /actuator and /v1 paths.",
+      "handles_auth": true,
+      "handles_pii": false,
+      "handles_payments": false,
+      "has_file_upload": false,
+      "is_api": true,
+      "expected_controls": [
+        "API auth",
+        "rate limiting"
+      ],
+      "error": null
+    }
+  },
+  "assets": [
+    {
+      "fqdn": "app.example.com",
+      "a_records": [
+        "93.184.216.34"
+      ],
+      "cname_chain": [],
+      "asn": 15133,
+      "as_org": "EDGECAST",
+      "bucket": "in_scope",
+      "reason": "A record in sanctioned CIDR"
+    },
+    {
+      "fqdn": "api.example.com",
+      "a_records": [
+        "93.184.216.35"
+      ],
+      "cname_chain": [],
+      "asn": 15133,
+      "as_org": "EDGECAST",
+      "bucket": "in_scope",
+      "reason": "A record in sanctioned CIDR"
+    },
+    {
+      "fqdn": "legacy.example.com",
+      "a_records": [
+        "93.184.216.36"
+      ],
+      "cname_chain": [],
+      "asn": 15133,
+      "as_org": "EDGECAST",
+      "bucket": "in_scope",
+      "reason": "A record in sanctioned CIDR"
+    },
+    {
+      "fqdn": "cdn.example.com",
+      "a_records": [
+        "104.18.2.1"
+      ],
+      "cname_chain": [
+        "example.com.cdn.cloudflare.net"
+      ],
+      "asn": 13335,
+      "as_org": "CLOUDFLARE",
+      "bucket": "shadow_it",
+      "reason": "CNAME leaves configured roots"
+    },
+    {
+      "fqdn": "old.example.com",
+      "a_records": [],
+      "cname_chain": [],
+      "asn": null,
+      "as_org": null,
+      "bucket": "dead",
+      "reason": "NXDOMAIN"
+    }
+  ],
+  "live_servers": [
+    {
+      "url": "https://app.example.com",
+      "host": "app.example.com",
+      "status_code": 200,
+      "title": "Example Bank \u2014 Login",
+      "tech": [
+        "nginx",
+        "React"
+      ]
+    },
+    {
+      "url": "https://api.example.com",
+      "host": "api.example.com",
+      "status_code": 401,
+      "title": null,
+      "tech": [
+        "nginx"
+      ]
+    }
+  ],
+  "wildcards": [
+    "*.dev.example.com"
+  ],
+  "summary": {
+    "duration_s": 252.0,
+    "findings_total": 5,
+    "findings_by_severity": {
+      "critical": 1,
+      "high": 2,
+      "medium": 1,
+      "info": 1
+    },
+    "assets": {
+      "in_scope": 3,
+      "shadow_it": 1,
+      "dead": 1,
+      "live_servers": 2,
+      "wildcards": 1
+    },
+    "errors_total": 0
+  },
+  "report_url": "/scans/2026-06-05T08-00-00Z-app_example_com/report"
+}

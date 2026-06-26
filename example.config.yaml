@@ -1,0 +1,159 @@
+# WatchTower configuration example
+#
+# Required top-level keys: roots, sanctioned_cidrs, sanctioned_asns, mmdb_path, llm
+# Everything else has sensible defaults.
+
+roots:
+  - example.com
+  - example-corp.io
+
+# Sanctioned IPv4 CIDRs you OWN. Assets resolving entirely inside these are In-Scope.
+# Anything else becomes Shadow IT.
+sanctioned_cidrs:
+  - 203.0.113.0/24
+  - 198.51.100.0/22
+
+# Sanctioned Autonomous System numbers. Used in addition to sanctioned_cidrs.
+sanctioned_asns:
+  - 64500
+  - 64501
+
+# Path to the MaxMind GeoLite2-ASN MMDB inside the container.
+# Bind-mount your local copy at /data/mmdb/.
+mmdb_path: /data/mmdb/GeoLite2-ASN.mmdb
+
+# Global politeness tier (nmap-like) applied across ALL tools at once. One of:
+#   paranoid   - ~serial, tiny rates, long waits (max stealth vs hardened/WAF'd)
+#   gentle     - low rates + httpx threads 2, sslyze --slow_connection (avoid tripping WAFs)
+#   normal     - the default; equals the per-tool defaults below (httpx threads 10)
+#   aggressive - high rates / concurrency for targets you fully control
+#   insane     - fastest + loudest (httpx threads 200) — WILL trip WAFs
+# Any explicit per-tool / concurrency value below OVERRIDES the profile.
+throttle: normal
+
+# Per-stage parallelism caps. All work is IO-bound, so high numbers are fine.
+concurrency:
+  default: 10        # generic fan-out
+  llm: 4             # AI calls (LLMs are heavier; keep this lower)
+  playwright: 5      # one browser context per slot — RAM-bound
+  sslyze: 5          # parallel sslyze host scans (each opens MANY connections)
+
+# Paths visited per live host during the Playwright crawl.
+# Add more for deeper supply-chain coverage (each adds a navigation per host).
+paths_per_host:
+  - "/"
+
+# OpenAI-compatible LLM endpoint. Tested with Ollama, llama.cpp server, vLLM, LM Studio.
+llm:
+  base_url: http://host.docker.internal:11434/v1
+  api_key: ollama
+  model: llama3.1:8b-instruct
+  timeout_seconds: 120
+  max_retries: 1
+
+# AI behavior.
+ai:
+  # Context-aware profiling: before analysing headers/scripts, infer what each
+  # app IS (login portal, API, marketing site, ...) and what controls it SHOULD
+  # have, then calibrate findings to that. Adds one LLM call per host.
+  # Set false to use the default context-light prompts (2 calls/host, no profile).
+  profiling: true
+
+  # Cross-source false-positive suppression — the `ai.triage` step. The AI reviews
+  # ALL deterministic findings (nuclei/TLS/js_lib/headers/takeover) for a host and
+  # soft-suppresses the ones it judges false-positive / acceptable (hidden +
+  # uncounted, but kept in findings.json). An AI degrade suppresses nothing.
+  suppression:
+    enabled: true
+    # Minimum AI verdict confidence to actually hide a finding (low|medium|high).
+    min_confidence: medium
+    # Highest severity the AI may auto-hide; above it the verdict is advisory only
+    # (the finding stays visible + counted). info|low|medium|high|critical.
+    max_severity: medium
+    # When true, only hosts with a usable, non-low-confidence profile get
+    # suppression (the legacy gate). Default false: profile is a calibration hint.
+    require_profile: false
+
+  # Optional overrides of the built-in AI *system* prompts. null/blank = built-in
+  # default (improving the default in code is picked up). Usually edited via the
+  # UI (AI Tuning page); shape-hints stay in code so overrides can't break JSON.
+  prompts:
+    profile_system: null
+    triage_system_default: null
+    triage_system_profiled: null
+    supply_system_default: null
+    supply_system_profiled: null
+    low_confidence_nudge: null
+
+# Deterministic security-header analysis (the `headers` capability). Passive —
+# evaluates the response headers httpx already captured (no new requests). The
+# checker always emits first-class findings; AI soft-suppression now spans all
+# sources and lives under ai.suppression (above).
+headers:
+  # Override a check's severity by its check_id, e.g. {hsts.missing: high}.
+  severity_overrides: {}
+  # Skip checks by check_id or dotted prefix, e.g. [permissions-policy, cookie].
+  disabled_checks: []
+
+# Stealth identity applied to httpx, nuclei & the Playwright crawler. For
+# AUTHORIZED testing of your own assets. `preset` bundles a coherent browser
+# UA + headers + locale; user_agent/headers/locale override/extend it (decoys
+# like X-Forwarded-For go in headers). NB: defeats UA/header WAF rules, not
+# TLS/JA3 fingerprinting or IP-reputation — for those, get the scanner IP
+# allowlisted. preset 'off' (default) = each tool's own UA, unchanged behavior.
+identity:
+  preset: "off"          # off | chrome-win | chrome-mac | firefox  (quote: YAML reads bare off as false)
+  user_agent: null       # override the preset's UA (null = use preset)
+  locale: null           # e.g. tr-TR (crawler context locale)
+  headers: {}            # extra/decoy headers, e.g. {X-Forwarded-For: 203.0.113.7}
+
+# Per-tool config. Every tool accepts `extra_flags: []` for unsurfaced flags.
+tools:
+  subfinder:
+    extra_flags: []
+
+  dnsx:
+    rate_limit: 1000    # DNS queries/sec (-rl). DNS is cheap; high default.
+    extra_flags: []
+
+  tlsx:
+    # Recon cert-grab (SAN harvest + cert dossier) against target:443. tlsx has
+    # NO rate-limit flag; `concurrency` maps to -c (parallel threads).
+    concurrency: 100
+    extra_flags: []
+
+  httpx:
+    rate_limit: 100
+    # httpx -threads (concurrent connections). THE dominant block trigger vs
+    # WAF'd targets — 50 (httpx's default) floods a bank's few IPs and trips
+    # temporary source-blocking; ~2-3 enumerates cleanly. Throttle sets it
+    # (gentle=2, normal=10, aggressive=50) unless pinned here. Use `gentle` for
+    # hardened targets.
+    threads: 25
+    timeout: 10
+    extra_flags: []
+
+  nuclei:
+    # Drop `info` for a clean signal floor. Add it back if you want full coverage.
+    severities: [low, medium, high, critical]
+    auto_scan: true       # use wappalyzer detection to limit templates to relevant tech
+    rate_limit: 100
+    timeout: 5
+    user_agent: "WatchTower/0.1"
+    extra_flags: []
+
+  takeovers:
+    # Subset run against Array 3 (Dead) using nuclei http/takeovers/ templates only.
+    severities: [high, critical]
+    rate_limit: 50
+    extra_flags: []
+
+  sslyze:
+    slow_connection: false  # true => 1 connection at a time (--slow_connection); avoids WAFs
+    timeout: 300            # per-host outer timeout in seconds
+    extra_flags: []
+
+  playwright:
+    wait_until: networkidle    # one of: load, domcontentloaded, networkidle, commit
+    timeout_ms: 30000
+    user_agent: null           # null = default Chromium UA

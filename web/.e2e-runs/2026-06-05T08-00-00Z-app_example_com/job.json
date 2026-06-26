@@ -1,0 +1,56 @@
+{
+  "id": "2026-06-05T08-00-00Z-app_example_com",
+  "state": "completed",
+  "mode": "full",
+  "target": null,
+  "roots": [
+    "example.com"
+  ],
+  "only": null,
+  "skip": null,
+  "throttle": "gentle",
+  "compress": true,
+  "submitted_at": "2026-06-05T08:00:00+00:00",
+  "started_at": "2026-06-05T08:00:00+00:00",
+  "finished_at": "2026-06-05T08:04:12+00:00",
+  "current_stage": null,
+  "completed_stages": [
+    "recon.subfinder",
+    "recon.dnsx",
+    "recon.httpx",
+    "audit.parallel",
+    "ai.analyze",
+    "report"
+  ],
+  "coverage": {
+    "recon": {
+      "ran": true,
+      "reason": "prerequisite"
+    },
+    "takeovers": {
+      "ran": true,
+      "reason": "default"
+    },
+    "tls": {
+      "ran": true,
+      "reason": "default"
+    },
+    "nuclei": {
+      "ran": true,
+      "reason": "default"
+    },
+    "supply-chain": {
+      "ran": true,
+      "reason": "default"
+    },
+    "ai": {
+      "ran": true,
+      "reason": "default"
+    }
+  },
+  "finding_count": 5,
+  "error": null,
+  "callback_url": null,
+  "idempotency_key": null,
+  "params_fingerprint": "seed01"
+}

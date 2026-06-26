@@ -1,0 +1,19 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+runs/
+*.local.yaml
+.DS_Store
+
+# build / state / caches
+node_modules/
+web/.next/
+web/out/
+.pytest_cache/
+.tldextract_cache/
+.understand-anything/
+*.db
+mmdb/
+.claude/

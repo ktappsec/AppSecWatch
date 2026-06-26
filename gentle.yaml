@@ -1,0 +1,6 @@
+roots: [efilli.com]
+mmdb_path: /data/mmdb/GeoLite2-ASN.mmdb
+throttle: gentle
+llm:
+  base_url: http://127.0.0.1:1/v1
+  model: none

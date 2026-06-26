@@ -1,0 +1,52 @@
+# WatchTower Web API — example server config.
+#
+# BOOTSTRAP SEED ONLY. The runtime config is UI-managed: this file seeds the very
+# first boot, after which a writable JSON store (WATCHTOWER_CONFIG_STORE, default
+# <output_root>/.config/server-config.json) is the source of truth, edited live
+# via GET/PUT /config (the Settings page). The whole base_config below — including
+# llm.api_key — becomes UI-editable + persisted in that store. (There is no
+# scan-target allowlist; the per-scan roots is the only scope.)
+#
+# Env (the API's own auth secrets stay env-only):
+#   WATCHTOWER_API_KEYS        comma-separated API keys (Authorization: Bearer <key>)
+#   WATCHTOWER_WEBHOOK_SECRET  HMAC-SHA256 signing secret for webhook callbacks
+#   WATCHTOWER_LLM_API_KEY     SEEDS base_config.llm.api_key on first boot only
+#   WATCHTOWER_CONFIG_STORE    path to the writable runtime store (optional override)
+#
+# Run:  watchtower serve -c example.server.yaml --host 127.0.0.1 --port 8080
+# If WATCHTOWER_API_KEYS is unset the API runs OPEN (handy for local UI dev).
+
+# Where run directories are written (the durable record).
+output_root: ./runs
+
+# NOTE: there is no scan-target allowlist — the per-scan `roots` is the only
+# scope. With auth (WATCHTOWER_API_KEYS) unset the API is OPEN and can be pointed
+# at any host, so set API keys before exposing this server.
+
+bind:
+  host: 0.0.0.0
+  port: 8080
+
+limits:
+  max_concurrent_scans: 2
+  max_queue_depth: 10
+
+webhook:
+  callback_host_allowlist:
+    - svc.internal
+  timeout_seconds: 10
+
+docs_enabled: true   # expose /docs + /openapi.json
+
+# The base WatchTowerConfig used for every scan. May instead be a path:
+#   base_config: /etc/watchtower/scan.yaml
+# `roots` is supplied per-request, so it is omitted here.
+base_config:
+  mmdb_path: /data/mmdb/GeoLite2-ASN.mmdb
+  throttle: gentle
+  sanctioned_cidrs: []
+  sanctioned_asns: []
+  llm:
+    base_url: https://openrouter.ai/api/v1
+    model: minimax/minimax-m3
+    # api_key comes from WATCHTOWER_LLM_API_KEY

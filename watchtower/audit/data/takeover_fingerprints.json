@@ -1,0 +1,140 @@
+{
+  "_source": "Curated from EdOverflow/can-i-take-over-xyz (CC0). Refresh periodically.",
+  "_schema": {
+    "service": "display name",
+    "cname": "provider domain suffixes that identify the service from a CNAME chain",
+    "fingerprint": "HTTP body string(s) shown when the resource is unclaimed (for the nuclei/HTTP-confirmation half; not used by the deterministic CNAME check)",
+    "nxdomain": "true = takeover manifests as the CNAME target going NXDOMAIN (the dangling-pointer class the HTTP templates cannot reach)",
+    "vulnerable": "currently claimable per can-i-take-over-xyz (false = edge case / fixed → emitted as a lower-severity 'review')"
+  },
+  "services": [
+    {
+      "service": "AWS/S3",
+      "cname": ["s3.amazonaws.com", "s3-website", "amazonaws.com"],
+      "fingerprint": ["The specified bucket does not exist", "NoSuchBucket"],
+      "nxdomain": false,
+      "vulnerable": true,
+      "reference": "https://github.com/EdOverflow/can-i-take-over-xyz"
+    },
+    {
+      "service": "GitHub Pages",
+      "cname": ["github.io", "github.map.fastly.net"],
+      "fingerprint": ["There isn't a GitHub Pages site here.", "For root URLs (like http://example.com/) you must provide an index.html file"],
+      "nxdomain": false,
+      "vulnerable": true,
+      "reference": "https://github.com/EdOverflow/can-i-take-over-xyz"
+    },
+    {
+      "service": "Heroku",
+      "cname": ["herokuapp.com", "herokudns.com", "herokussl.com"],
+      "fingerprint": ["No such app", "There's nothing here, yet."],
+      "nxdomain": false,
+      "vulnerable": true,
+      "reference": "https://github.com/EdOverflow/can-i-take-over-xyz"
+    },
+    {
+      "service": "Microsoft Azure",
+      "cname": ["azurewebsites.net", "cloudapp.net", "cloudapp.azure.com", "trafficmanager.net", "blob.core.windows.net", "azure-api.net", "azurehdinsight.net", "azureedge.net", "azurefd.net", "azurecontainer.io", "cloudapp.azure.com"],
+      "fingerprint": ["404 Web Site not found"],
+      "nxdomain": true,
+      "vulnerable": true,
+      "reference": "https://github.com/EdOverflow/can-i-take-over-xyz"
+    },
+    {
+      "service": "Bitbucket",
+      "cname": ["bitbucket.io"],
+      "fingerprint": ["Repository not found"],
+      "nxdomain": false,
+      "vulnerable": true,
+      "reference": "https://github.com/EdOverflow/can-i-take-over-xyz"
+    },
+    {
+      "service": "Surge.sh",
+      "cname": ["surge.sh"],
+      "fingerprint": ["project not found"],
+      "nxdomain": false,
+      "vulnerable": true,
+      "reference": "https://github.com/EdOverflow/can-i-take-over-xyz"
+    },
+    {
+      "service": "Cargo Collective",
+      "cname": ["cargocollective.com"],
+      "fingerprint": ["404 Not Found", "If you're moving your domain away from Cargo"],
+      "nxdomain": false,
+      "vulnerable": true,
+      "reference": "https://github.com/EdOverflow/can-i-take-over-xyz"
+    },
+    {
+      "service": "Pantheon",
+      "cname": ["pantheonsite.io"],
+      "fingerprint": ["404 error unknown site!", "The gods are wise, but do not know of the site which you seek."],
+      "nxdomain": false,
+      "vulnerable": true,
+      "reference": "https://github.com/EdOverflow/can-i-take-over-xyz"
+    },
+    {
+      "service": "Help Scout",
+      "cname": ["helpscoutdocs.com"],
+      "fingerprint": ["No settings were found for this company"],
+      "nxdomain": false,
+      "vulnerable": true,
+      "reference": "https://github.com/EdOverflow/can-i-take-over-xyz"
+    },
+    {
+      "service": "Worksites/Smartling",
+      "cname": ["worksites.net"],
+      "fingerprint": ["Hello! Sorry, but the website you’re looking for doesn’t exist."],
+      "nxdomain": true,
+      "vulnerable": true,
+      "reference": "https://github.com/EdOverflow/can-i-take-over-xyz"
+    },
+    {
+      "service": "Fastly",
+      "cname": ["fastly.net"],
+      "fingerprint": ["Fastly error: unknown domain"],
+      "nxdomain": false,
+      "vulnerable": false,
+      "reference": "https://github.com/EdOverflow/can-i-take-over-xyz"
+    },
+    {
+      "service": "Shopify",
+      "cname": ["myshopify.com"],
+      "fingerprint": ["Sorry, this shop is currently unavailable"],
+      "nxdomain": false,
+      "vulnerable": false,
+      "reference": "https://github.com/EdOverflow/can-i-take-over-xyz"
+    },
+    {
+      "service": "Tumblr",
+      "cname": ["domains.tumblr.com"],
+      "fingerprint": ["Whatever you were looking for doesn't currently exist at this address."],
+      "nxdomain": false,
+      "vulnerable": false,
+      "reference": "https://github.com/EdOverflow/can-i-take-over-xyz"
+    },
+    {
+      "service": "Zendesk",
+      "cname": ["zendesk.com"],
+      "fingerprint": ["Help Center Closed"],
+      "nxdomain": false,
+      "vulnerable": false,
+      "reference": "https://github.com/EdOverflow/can-i-take-over-xyz"
+    },
+    {
+      "service": "Ghost",
+      "cname": ["ghost.io"],
+      "fingerprint": ["The thing you were looking for is no longer here, or never was"],
+      "nxdomain": false,
+      "vulnerable": false,
+      "reference": "https://github.com/EdOverflow/can-i-take-over-xyz"
+    },
+    {
+      "service": "Unbounce",
+      "cname": ["unbouncepages.com"],
+      "fingerprint": ["The requested URL was not found on this server."],
+      "nxdomain": false,
+      "vulnerable": false,
+      "reference": "https://github.com/EdOverflow/can-i-take-over-xyz"
+    }
+  ]
+}

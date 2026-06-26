@@ -1,0 +1,33 @@
+# WatchTower single-image deployment with PERSISTENT state.
+#
+# The named volume `watchtower-data` is mounted at /data/runs (the output_root) —
+# it holds runs/<id>/ artifacts, the config store (.config/server-config.json),
+# and watchtower.db. A named volume survives `docker compose up --build` and
+# `docker rm`, so config + assets are NOT wiped on rebuild (the common gotcha).
+#
+# Usage:
+#   echo "my-secret-key" > api.key   (or set WATCHTOWER_API_KEYS inline)
+#   docker compose up --build
+#   → UI at http://localhost:8080/ , API at /api/...
+#
+# Bind-mount the MMDB (GeoLite2-ASN) read-only so triage/ASN lookups work.
+
+services:
+  watchtower:
+    build: .
+    image: watchtower
+    command: ["serve", "--host", "0.0.0.0", "--port", "8080"]
+    ports:
+      - "8080:8080"
+    environment:
+      # REQUIRED before exposing the server — without it auth is OPEN (no scope ceiling).
+      WATCHTOWER_API_KEYS: "${WATCHTOWER_API_KEYS:?set WATCHTOWER_API_KEYS}"
+      # Optional webhook HMAC secret.
+      # WATCHTOWER_WEBHOOK_SECRET: "..."
+    volumes:
+      - watchtower-data:/data/runs                       # persistent: runs + .config + watchtower.db
+      - ./mmdb:/data/mmdb:ro                            # GeoLite2-ASN.mmdb (set mmdb_path in the UI)
+    restart: unless-stopped
+
+volumes:
+  watchtower-data:

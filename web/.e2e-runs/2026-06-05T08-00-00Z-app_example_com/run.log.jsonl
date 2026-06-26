@@ -1,0 +1,4 @@
+{"ts": "2026-06-05T08:00:00+00:00", "level": "info", "event": "run_start", "msg": "WatchTower run started"}
+{"ts": "2026-06-05T08:00:00+00:00", "level": "info", "event": "stage_start", "msg": "recon.subfinder"}
+{"ts": "2026-06-05T08:00:00+00:00", "level": "warn", "event": "tool_timeout", "msg": "httpx: TIMEOUT after 10s on slow.example.com"}
+{"ts": "2026-06-05T08:04:12+00:00", "level": "info", "event": "run_summary", "msg": "5 findings, 0 errors, 252.0s"}
