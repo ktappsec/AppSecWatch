@@ -23,11 +23,30 @@ from watchtower.api.db import Database
 _FENCE = re.compile(r"```(?:ya?ml)?\s*(.*?)```", re.DOTALL)
 
 _GEN_SYSTEM = (
-    "You are an expert author of Nuclei security templates. Given a description of "
-    "a check, output ONE valid Nuclei YAML template and NOTHING else (no prose). It "
-    "MUST have a unique 'id', an 'info' block (name, author, severity, tags, "
-    "description) and an appropriate matcher. Prefer http requests. NEVER use the "
-    "'code' protocol. Keep it self-contained and safe (no destructive payloads)."
+    "You are an expert author of Nuclei security templates targeting Nuclei v3 "
+    "(YAML). Given a description of a check, output ONE valid Nuclei v3 YAML template "
+    "and NOTHING else — no prose, no markdown fences. Requirements: a unique "
+    "lowercase-hyphenated 'id'; an 'info' block with name, author, severity "
+    "(info|low|medium|high|critical), tags, and description; and an HTTP request block "
+    "under the 'http:' key (the v3 key — NEVER the legacy 'requests:' key) with a "
+    "'matchers' section. NEVER use the 'code' protocol. Keep it self-contained and "
+    "safe (no destructive or intrusive payloads).\n\n"
+    "EXAMPLE (shape only — adapt to the request):\n"
+    "id: example-login-exposed\n"
+    "info:\n"
+    "  name: Example Login Page Exposed\n"
+    "  author: watchtower\n"
+    "  severity: info\n"
+    "  tags: exposure,login\n"
+    "  description: Detects an exposed example login page.\n"
+    "http:\n"
+    "  - method: GET\n"
+    "    path:\n"
+    "      - \"{{BaseURL}}/login\"\n"
+    "    matchers:\n"
+    "      - type: word\n"
+    "        words:\n"
+    "          - \"Sign in\""
 )
 
 
@@ -159,15 +178,38 @@ class CustomTemplateManager:
         return str(dest)
 
     async def generate(self, description: str, llm_cfg) -> dict[str, Any]:
-        """Draft a template from a description via the LLM, then validate it."""
+        """Draft a template from a description via the LLM, then validate it.
+
+        One retry: if the first draft fails validation, re-prompt once with the
+        validation error so the model can self-correct (mirrors the analyzer's
+        validated-call retry). `json_mode=False` — the contract is YAML, not a JSON
+        object, so forcing `response_format` would corrupt the output.
+        """
         from watchtower.ai.client import LLMClient
 
         client = LLMClient(llm_cfg)
-        user = f"Write a Nuclei template for: {description}"
+        base_user = f"Write a Nuclei template for: {description}"
+        user = base_user
+        result = {"yaml": "", "valid": False, "error": "no output"}
         try:
-            raw = await client.chat(_GEN_SYSTEM, user, label="nuclei-gen")
-        except Exception as e:  # noqa: BLE001 — LLM error degrades gracefully
-            return {"yaml": "", "valid": False, "error": f"LLM error: {e}"}
+            for attempt in (1, 2):
+                try:
+                    raw = await client.chat(
+                        _GEN_SYSTEM, user, label="nuclei-gen", json_mode=False
+                    )
+                except Exception as e:  # noqa: BLE001 — LLM error degrades gracefully
+                    return {"yaml": "", "valid": False, "error": f"LLM error: {e}"}
+                yaml_text = _extract_yaml(raw)
+                ok, err = validate_template(yaml_text)
+                result = {"yaml": yaml_text, "valid": ok, "error": err}
+                if ok or attempt == 2:
+                    return result
+                # Re-prompt once with the validation error so the model can fix it.
+                user = (
+                    f"{base_user}\n\nYour previous template was INVALID: {err}\n"
+                    f"Return ONLY the corrected Nuclei v3 YAML template, nothing else."
+                )
+            return result
         finally:
             close = getattr(client, "aclose", None) or getattr(client, "close", None)
             if close:
@@ -177,6 +219,3 @@ class CustomTemplateManager:
                         await res
                 except Exception:  # noqa: BLE001
                     pass
-        yaml_text = _extract_yaml(raw)
-        ok, err = validate_template(yaml_text)
-        return {"yaml": yaml_text, "valid": ok, "error": err}

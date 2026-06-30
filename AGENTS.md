@@ -219,6 +219,14 @@ docker run --rm -p 8080:8080 -e WATCHTOWER_API_KEYS=key \
   just headers. It (a) **soft-suppresses** false-positives across every source by
   the ephemeral integer `ref` each finding is given in the prompt payload, and
   (b) adds new header findings the rules miss (these keep source `ai_headers`).
+  **The keep/suppress decision is anchored on a multi-vector harm test, not on
+  list length** (`_TRIAGE_HARM_TEST` in `prompts.py`): a finding is KEPT when it
+  contributes real risk under any of host/data compromise, user harm, brand /
+  reputational damage, phishing / impersonation enablement, or supply-chain
+  exposure — even at **low** severity — and suppressed only when it contributes to
+  none (false-positive, N/A here, or accepted by-design). The supply-chain prompts
+  use the same harm framing (brand-damage from a compromised third-party script is
+  explicit). The old "prefer FEW / when unsure omit" volume heuristics were removed.
   **AI findings now get a stable `check_id`** derived from the model's `type` tag
   (`ai/analyzer.py::_ai_check_id`, e.g. `ai_headers.cookie-missing-httponly-flag`)
   so they dedup/group/suppress by class via `group_key`. A code-level guard in

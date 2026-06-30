@@ -48,8 +48,12 @@ class LLMClient:
         return label.split("[", 1)[0] or None
 
     async def chat(
-        self, system: str, user: str, *, temperature: float = 0.0, label: str | None = None
+        self, system: str, user: str, *, temperature: float = 0.0,
+        label: str | None = None, json_mode: bool = True,
     ) -> str:
+        """Call the chat endpoint. `json_mode` requests a JSON-object response
+        (`response_format`); pass `json_mode=False` for callers whose contract is a
+        non-JSON body (e.g. nuclei-gen returns YAML — forcing JSON would corrupt it)."""
         purpose = self._purpose(label)
         # Per-call-type model override (cfg.models keyed by purpose); falls back to
         # the base model for an unlisted purpose or an unlabeled call.
@@ -62,7 +66,7 @@ class LLMClient:
                 {"role": "user", "content": user},
             ],
         }
-        if self._supports_response_format:
+        if json_mode and self._supports_response_format:
             # Honored by some backends; ignored by others. Dropped permanently on
             # the first 400/422 (see the probe below).
             payload["response_format"] = {"type": "json_object"}

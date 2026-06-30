@@ -121,6 +121,34 @@ def test_supply_default_vs_profiled():
     assert "Application profile" in user_prof
 
 
+def test_triage_uses_harm_vector_calibration():
+    """Suppression is anchored on real-risk harm vectors, not on list length."""
+    system, _ = build_triage_prompt("https://h", {"server": "nginx"})
+    low = system.lower()
+    assert "harm vector" in low                      # the decisive multi-vector test
+    assert "phishing" in low and "brand" in low and "supply-chain exposure" in low
+    assert "even at low" in low                       # keep real low-severity risks
+    assert "prefer few" not in low                    # volume heuristic removed
+    # The example KEEPS a real-risk finding (expired cert), not just suppresses.
+    assert "keep ref 2" in low and "expired cert" in low
+
+
+def test_triage_shape_hint_keeps_real_risk_not_prefer_few():
+    _, user = build_triage_prompt("https://h", {"server": "nginx"})
+    assert "Prefer FEW" not in user
+    assert "carries real risk" in user                # keep-every-real-risk instruction
+    assert "<the integer ref" not in user             # invalid-JSON placeholder removed
+    assert '"ref": 0' in user                         # realistic value instead
+
+
+def test_supply_flags_brand_damage_as_real_risk():
+    sys_default, _ = build_supply_chain_prompt("https://h", [{"url": "https://x/a.js", "party": "3rd"}])
+    low = sys_default.lower()
+    assert "deface" in low and "skim" in low          # brand/user harm made explicit
+    assert "no real risk" in low                      # risk-anchored omission
+    assert "prefer few" not in low
+
+
 # ---- editable-prompt registry -------------------------------------------
 
 def test_resolved_prompt_prefers_nonblank_override():

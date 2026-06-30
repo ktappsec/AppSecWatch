@@ -57,7 +57,7 @@ Return ONLY a JSON object of this exact shape, no prose, no markdown:
     }
   ]
 }
-If nothing is wrong, return {"findings": []}.
+If nothing carries real risk, return {"findings": []}.
 """
 
 _TRIAGE_RESPONSE_SHAPE_HINT = """\
@@ -73,18 +73,15 @@ Return ONLY a JSON object of this exact shape, no prose, no markdown:
     }
   ],
   "suppressions": [
-    {
-      "ref": <the integer ref of a finding you judge a false-positive>,
-      "confidence": "low" | "medium" | "high",
-      "reason": "why it is a false-positive / acceptable for THIS host"
-    }
+    {"ref": 0, "confidence": "low" | "medium" | "high", "reason": "why it carries no real risk for THIS host"}
   ]
 }
-Prefer FEW high-signal findings over many. Add a finding ONLY for a concrete,
-exploitable gap the scanners missed — never generic best-practice advice. Suppress
-findings (by `ref`) that are false-positives OR acceptable design choices for this
-app. If nothing is genuinely actionable to add and nothing to suppress, return
-{"findings": [], "suppressions": []}.
+Each suppression `ref` MUST be one of the integer refs from the findings you were
+given. KEEP every finding that carries real risk under any harm vector (even LOW);
+SUPPRESS (by `ref`) only findings that carry none — a false-positive or accepted
+design choice for this host. Add a finding ONLY for a concrete gap the scanners missed
+that carries real harm — never generic best-practice advice. If there is nothing to
+add and nothing to suppress, return {"findings": [], "suppressions": []}.
 """
 
 _EXEC_SUMMARY_SHAPE_HINT = """\
@@ -92,7 +89,7 @@ Return ONLY a JSON object of this exact shape, no prose, no markdown:
 {
   "posture_narrative": "2-4 plain-language sentences for a non-technical executive on the overall security posture and what it means for the business",
   "risk_notes": [
-    {"ref": <the integer ref of one of the top risks you were given>, "why": "ONE plain-language sentence on why this risk matters to the business"}
+    {"ref": 0, "why": "ONE plain-language sentence on why this risk matters to the business"}
   ],
   "recommendations": ["3-5 short, plain-language next steps / remediation themes"]
 }
@@ -112,7 +109,7 @@ Return ONLY a JSON object of this exact shape, no prose, no markdown:
   "handles_payments": true | false,
   "has_file_upload": true | false,
   "is_api": true | false,
-  "expected_controls": ["controls/headers this app type SHOULD have, e.g. HSTS, Content-Security-Policy, Secure+HttpOnly cookies"],
+  "expected_controls": ["controls this app type SHOULD have, as canonical tokens from THIS set only: HSTS, Content-Security-Policy, X-Frame-Options, Secure-cookies, HttpOnly-cookies, SameSite-cookies, Subresource-Integrity; omit any that don't apply"],
   "detected_tech": ["ADDITIONAL technologies/frameworks you can infer beyond the httpx_tech you were given (e.g. 'React', 'WordPress', 'PHP'); do NOT repeat httpx_tech; [] if none to add"]
 }
 """
@@ -143,8 +140,9 @@ _DEFAULT_PROFILE_SYSTEM = (
     "['nginx']: {\"app_type\":\"customer login portal\",\"audience\":\"public\","
     "\"confidence\":\"high\",\"reasoning\":\"public login form collecting credentials\","
     "\"handles_auth\":true,\"handles_pii\":true,\"handles_payments\":false,"
-    "\"is_api\":false,\"expected_controls\":[\"HSTS\",\"Content-Security-Policy\","
-    "\"Secure+HttpOnly cookies\"],\"detected_tech\":[\"React\"]}"
+    "\"has_file_upload\":false,\"is_api\":false,\"expected_controls\":[\"HSTS\","
+    "\"Content-Security-Policy\",\"Secure-cookies\",\"HttpOnly-cookies\"],"
+    "\"detected_tech\":[\"React\"]}"
 )
 
 _TRIAGE_INTRO_DEFAULT = (
@@ -165,42 +163,63 @@ _TRIAGE_INTRO_PROFILED = (
     "app. Your goal is REALISTIC, high-signal output — quality over quantity:\n"
 )
 
+# The decisive test — keep/suppress is judged by REAL harm across several vectors,
+# not by severity label or by a bias toward a short list. Shared by both variants.
+_TRIAGE_HARM_TEST = (
+    "  DECIDE every finding by ONE question — does it contribute REAL risk to THIS "
+    "host under ANY of these harm vectors? (a) technical compromise of the host or "
+    "its data (RCE, injection, auth bypass, data exposure); (b) harm to its users "
+    "(XSS, session/credential theft, a malicious or compromised third-party script — "
+    "skimming, defacement); (c) brand / reputational damage (defacement or content "
+    "injection, including via a compromised supply chain); (d) phishing / "
+    "impersonation enablement (expired, invalid, or weak TLS cert; missing HSTS on a "
+    "login host; misconfig that eases lookalike attacks); (e) supply-chain exposure "
+    "(version-mutable / SRI-less / untrusted third-party scripts). KEEP a finding when "
+    "it contributes to ANY vector, even at LOW severity. SUPPRESS it only when it "
+    "contributes to NONE — a false-positive, not applicable to THIS host, or an "
+    "accepted by-design choice. Judge by harm, not by severity label or list length.\n"
+)
+
 _TRIAGE_RULES = (
-    "  1. SUPPRESS findings that are false-positives OR acceptable design choices "
-    "for this host — return the finding's `ref`, your confidence, and a short "
-    "reason. This is the PRIMARY value: cut the noise the scanners over-report "
-    "(e.g. clickjacking on a pure JSON API; an HSTS gap on a non-user-facing host; "
-    "a low-severity nuclei tech-disclosure that is expected; a CSP directive the "
-    "app genuinely doesn't need).\n"
-    "  2. Add a NEW finding ONLY for a concrete, exploitable gap the scanners "
-    "missed (a dangerous header COMBINATION, a genuinely abusable CSP allowlist "
+    "  1. SUPPRESS findings that carry no real harm under any vector (a false-positive "
+    "or accepted design choice for this host) — return the finding's `ref`, your "
+    "confidence, and a short reason. This is high-value noise-cutting (e.g. "
+    "clickjacking on a pure JSON API; an HSTS gap on a non-user-facing host with no "
+    "login; a low-severity nuclei tech-disclosure that is expected; a CSP directive "
+    "the app genuinely doesn't need).\n"
+    "  2. Add a NEW finding ONLY for a concrete gap the scanners missed that carries "
+    "real harm (a dangerous header COMBINATION, a genuinely abusable CSP allowlist "
     "entry). Do NOT restate existing findings and do NOT emit generic best-practice "
     "advice.\n"
     "  3. CALIBRATE to REAL risk. A JS-heavy SPA or rich web app commonly REQUIRES "
     "'unsafe-eval'/'unsafe-inline' — treat that as expected, not a finding. "
     "Reputable first-party/known CDNs in an allowlist are usually fine.\n"
-    "  4. When unsure, prefer SUPPRESSING over adding — a short realistic list "
-    "beats a long noisy one.\n"
+    "  4. When a finding carries no real harm under any vector, suppress it; when it "
+    "carries real harm even at LOW, keep it. Do not suppress a real risk just to "
+    "shorten the report.\n"
     "  5. These are NOT findings — never add them: (a) load-balancer / WAF / RUM "
-    "cookies (F5 BIG-IP TS*/BIGipServer*/f5avr*/f5_cspm, AWS ALB, Akamai, "
-    "Cloudflare __cf*, AppDynamics ADRUM, Dynatrace) carry no session or auth "
-    "state, so their missing HttpOnly/Secure/SameSite flags — and any "
-    "'infrastructure disclosed via cookie name' — are NOT findings; (b) a "
-    "JS-readable double-submit anti-CSRF token (XSRF-TOKEN / CSRF-TOKEN) is "
-    "by-design, not a finding; (c) positive or absence-of-signal observations "
-    "('no scripts loaded', 'headers look fine') and 'verify/ensure X' reminders — "
-    "report only a concrete, present defect.\n\n"
+    "cookies (F5 BIG-IP TS*/BIGipServer*, AWS ALB, Cloudflare __cf*, AppDynamics "
+    "ADRUM, Dynatrace) carry no session or auth state, so their missing "
+    "HttpOnly/Secure/SameSite flags — and any 'infrastructure disclosed via cookie "
+    "name' — are NOT findings; (b) a JS-readable double-submit anti-CSRF token "
+    "(XSRF-TOKEN / CSRF-TOKEN) is by-design, not a finding; (c) positive or "
+    "absence-of-signal observations ('no scripts loaded', 'headers look fine') and "
+    "'verify/ensure X' reminders — report only a concrete, present defect.\n\n"
     "EXAMPLE — given findings [{\"ref\":0,\"source\":\"headers\",\"severity\":"
     "\"medium\",\"title\":\"X-Frame-Options missing\"},{\"ref\":1,\"source\":"
-    "\"nuclei\",\"severity\":\"info\",\"title\":\"nginx version disclosed\"}] on a "
-    "pure JSON API: {\"findings\":[],\"suppressions\":[{\"ref\":0,\"confidence\":"
-    "\"high\",\"reason\":\"JSON API not rendered in a frame — clickjacking N/A\"},"
-    "{\"ref\":1,\"confidence\":\"medium\",\"reason\":\"version banner is low-value, "
-    "not exploitable on its own\"}]}"
+    "\"nuclei\",\"severity\":\"info\",\"title\":\"nginx version disclosed\"},"
+    "{\"ref\":2,\"source\":\"sslscan\",\"severity\":\"low\",\"title\":\"TLS "
+    "certificate expired\"}] on a pure JSON API: suppress refs 0 and 1 (no real harm "
+    "— a JSON API isn't rendered in a frame, and a version banner isn't exploitable "
+    "alone) but KEEP ref 2 (an expired cert breaks transport authentication and eases "
+    "interception/impersonation — real harm under vectors a/d): {\"findings\":[],"
+    "\"suppressions\":[{\"ref\":0,\"confidence\":\"high\",\"reason\":\"clickjacking "
+    "N/A — JSON API not framed\"},{\"ref\":1,\"confidence\":\"medium\",\"reason\":"
+    "\"version banner is low-value, not exploitable on its own\"}]}"
 )
 
-_DEFAULT_TRIAGE_SYSTEM_DEFAULT = _TRIAGE_INTRO_DEFAULT + _TRIAGE_RULES
-_DEFAULT_TRIAGE_SYSTEM_PROFILED = _TRIAGE_INTRO_PROFILED + _TRIAGE_RULES
+_DEFAULT_TRIAGE_SYSTEM_DEFAULT = _TRIAGE_INTRO_DEFAULT + _TRIAGE_HARM_TEST + _TRIAGE_RULES
+_DEFAULT_TRIAGE_SYSTEM_PROFILED = _TRIAGE_INTRO_PROFILED + _TRIAGE_HARM_TEST + _TRIAGE_RULES
 
 _DEFAULT_LOW_CONFIDENCE_NUDGE = (
     "\n\nNOTE: the application profile confidence is LOW — the signals were sparse. "
@@ -211,19 +230,21 @@ _DEFAULT_LOW_CONFIDENCE_NUDGE = (
 _DEFAULT_SUPPLY_SYSTEM_DEFAULT = (
     "You are a PRAGMATIC senior application security reviewer focused on supply-chain "
     "risk — not an exhaustive lister. You receive a host URL and the scripts its root "
-    "page loads, each pre-labeled 1st/3rd-party. Surface ONLY concrete supply-chain "
-    "RISKS: untrusted/suspicious 3rd-party origins, SRI-less version-mutable scripts, "
-    "anomalous sources. Reputable, widely-used providers (major CDNs, well-known "
-    "analytics) are normal — do NOT flag them by default and do NOT emit one finding "
-    "per script. Do NOT re-classify party-ness. Prefer FEW high-signal findings; when "
-    "unsure, omit. The ABSENCE of scripts is NOT a finding (never report 'no scripts "
-    "loaded' / 'minimal footprint'); do NOT emit 'verify/ensure X' reminders or flag "
-    "load-balancer/WAF/RUM cookies (F5, ADRUM, …).\n\n"
+    "page loads, each pre-labeled 1st/3rd-party. Flag a script ONLY when it carries "
+    "REAL risk: a version-mutable / SRI-less / untrusted or suspicious third-party "
+    "script can be compromised to deface the site, skim data, or inject malicious code "
+    "(brand, user, and data harm) — flag it even at LOW. Reputable, widely-used, "
+    "integrity-pinned providers (major CDNs, well-known analytics) carry no real risk "
+    "→ do NOT flag them and do NOT emit one finding per script. Do NOT re-classify "
+    "party-ness. When a script carries no real risk, omit it. The ABSENCE of scripts "
+    "is NOT a finding (never report 'no scripts loaded' / 'minimal footprint'); do NOT "
+    "emit 'verify/ensure X' reminders or flag load-balancer/WAF/RUM cookies (F5, "
+    "ADRUM, …).\n\n"
     "EXAMPLE — scripts from googletagmanager.com (3rd) and a versioned cdn.jsdelivr.net "
     "bundle with no SRI: flag ONLY the SRI-less mutable script "
-    "({\"type\":\"sri-missing\",\"severity\":\"low\",...}); do NOT flag the reputable "
-    "analytics script. If all scripts are reputable + integrity-pinned, return "
-    "{\"findings\":[]}."
+    "({\"type\":\"sri-missing\",\"severity\":\"low\",...}) — it can be swapped to "
+    "deface or skim the page; do NOT flag the reputable analytics script. If all "
+    "scripts are reputable + integrity-pinned, return {\"findings\":[]}."
 )
 
 _DEFAULT_SUMMARY_SYSTEM = (
@@ -238,21 +259,23 @@ _DEFAULT_SUMMARY_SYSTEM = (
     "(impact, not mechanics). Then give 3-5 concrete, prioritized next steps phrased "
     "as outcomes ('Restrict the admin interface to the corporate network'), not "
     "ticket text. Do NOT invent findings, numbers, or refs beyond what you are given; "
-    "the deterministic facts are authoritative. Keep the whole thing tight enough to "
-    "fit on roughly two printed pages."
+    "the deterministic facts are authoritative. Keep each field within the limits the "
+    "response shape gives you; the report template controls overall length."
 )
 
 _DEFAULT_SUPPLY_SYSTEM_PROFILED = (
     "You are a PRAGMATIC senior application security reviewer focused on supply-chain "
     "risk. You receive an application profile (what the app is, audience, sensitive "
     "capabilities) and the scripts its root page loads, each pre-labeled 1st/3rd-"
-    "party. Surface ONLY concrete risks and CALIBRATE severity by the profile — the "
-    "same 3rd-party script matters far more on an app handling auth/PII/payments than "
-    "on a marketing page. Reputable, widely-used providers are normal; do NOT flag "
-    "them by default or emit one finding per script. Do NOT re-classify party-ness. "
-    "Prefer FEW high-signal findings; when unsure, omit. The ABSENCE of scripts is NOT "
-    "a finding (never report 'no scripts loaded'); do NOT emit 'verify/ensure X' "
-    "reminders or flag load-balancer/WAF/RUM cookies (F5, ADRUM, …).\n\n"
+    "party. Flag a script ONLY when it carries REAL risk and CALIBRATE severity by the "
+    "profile — a version-mutable / SRI-less / untrusted third-party script can be "
+    "compromised to deface, skim, or inject (brand, user, and data harm), and the same "
+    "script matters far more on an app handling auth/PII/payments than on a marketing "
+    "page. Reputable, widely-used, integrity-pinned providers carry no real risk → do "
+    "NOT flag them or emit one finding per script. Do NOT re-classify party-ness. When "
+    "a script carries no real risk, omit it. The ABSENCE of scripts is NOT a finding "
+    "(never report 'no scripts loaded'); do NOT emit 'verify/ensure X' reminders or "
+    "flag load-balancer/WAF/RUM cookies (F5, ADRUM, …).\n\n"
     "EXAMPLE — on an auth/PII app, an SRI-less 3rd-party script from a small/unknown "
     "origin warrants medium ({\"type\":\"untrusted-3p-script\",\"severity\":"
     "\"medium\",...}); the same script on a static marketing page is info/omit. "
