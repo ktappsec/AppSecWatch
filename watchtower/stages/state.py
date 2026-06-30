@@ -10,6 +10,7 @@ from watchtower.models import (
     AppProfile,
     CertInfo,
     CrawlerArtifact,
+    ExecutiveSummary,
     Finding,
     LiveWebServer,
     PageSignals,
@@ -55,6 +56,9 @@ class ScanState(BaseModel):
     current_stage: str | None = None                        # live progress hook (Web API)
     stage_durations: dict[str, float] = Field(default_factory=dict)  # stage name -> seconds
     summary: RunSummary | None = None                       # set by ReportStage at run end
+    # Optional AI executive-narrative overlay (set by ExecSummaryStage / ai.summary).
+    # None => exec report renders its deterministic core only.
+    exec_summary: ExecutiveSummary | None = None
 
     def all_findings(self) -> list[Finding]:
         """Every Finding across all sources — the single canonical collection used

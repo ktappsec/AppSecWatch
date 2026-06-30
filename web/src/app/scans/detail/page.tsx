@@ -12,6 +12,8 @@ import {
   Clock,
   Loader2,
   AlertCircle,
+  FileText,
+  Download,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -147,6 +149,20 @@ function ScanDetail() {
           )}
           {terminal && (
             <Button asChild size="sm" variant="outline">
+              <a href={api.executiveUrl(id)} target="_blank" rel="noreferrer">
+                <FileText className="h-4 w-4" /> Executive <ExternalLink className="h-4 w-4" />
+              </a>
+            </Button>
+          )}
+          {terminal && result?.executive_pdf_url && (
+            <Button asChild size="sm" variant="outline">
+              <a href={api.executivePdfUrl(id)} target="_blank" rel="noreferrer">
+                <Download className="h-4 w-4" /> PDF
+              </a>
+            </Button>
+          )}
+          {terminal && (
+            <Button asChild size="sm" variant="outline">
               <a href={api.reportUrl(id)} target="_blank" rel="noreferrer">
                 Report <ExternalLink className="h-4 w-4" />
               </a>
@@ -193,6 +209,7 @@ function ScanDetail() {
             AI{result ? ` (${Object.keys(result.app_profiles).length})` : ""}
           </TabsTrigger>
           <TabsTrigger value="log">Log</TabsTrigger>
+          {terminal && <TabsTrigger value="executive">Executive</TabsTrigger>}
           {terminal && <TabsTrigger value="report">Report</TabsTrigger>}
         </TabsList>
 
@@ -267,6 +284,18 @@ function ScanDetail() {
             <LogView id={id} live={isLive} />
           </Card>
         </TabsContent>
+
+        {terminal && (
+          <TabsContent value="executive">
+            <Card className="overflow-hidden p-0 py-0">
+              <iframe
+                src={api.executiveUrl(id)}
+                title="Executive summary"
+                className="h-[75vh] w-full border-0 bg-white"
+              />
+            </Card>
+          </TabsContent>
+        )}
 
         {terminal && (
           <TabsContent value="report">

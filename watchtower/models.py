@@ -74,6 +74,26 @@ class Finding(BaseModel):
         never deleted). Drives report/severity-count exclusion."""
         return self.ai_verdict is not None and self.ai_verdict.suppressed
 
+    @property
+    def group_key(self) -> str:
+        """Stable identity for dedup/grouping + manual-suppression fingerprints:
+        the rule ``check_id`` when present (AI findings now derive one from their
+        ``type`` tag), else a source-specific natural key, else the title. Reused
+        by ``suppress.finding_key``, ``select_top_risks``, and the report's
+        per-source grouping so the same issue collapses across hosts instead of
+        emitting one row per host."""
+        if self.check_id:
+            return self.check_id
+        ev = self.evidence or {}
+        if self.source in ("nuclei", "takeover"):
+            return ev.get("template_id") or self.title
+        if self.source == "sslscan":
+            return ev.get("check") or self.title
+        if self.source == "js_lib":
+            lib = ev.get("library")
+            return f"{lib}@{ev.get('version', '')}" if lib else self.title
+        return self.title
+
     def evidence_rows(self) -> list[tuple[str, str]]:
         """Project the source-specific `evidence` dict into ordered
         (label, value) display rows, dropping empties.
@@ -144,6 +164,15 @@ class CrawlerArtifact(BaseModel):
     status: int | None = None
     headers: dict[str, str] = Field(default_factory=dict)
     scripts: list[dict[str, Any]] = Field(default_factory=list)
+    # Broadened, STRUCTURE-ONLY capture (names/urls/flags — never any value or
+    # body; runs/<id>/ is a shareable, emailable artifact set). Every capture is
+    # best-effort: a failure is recorded in `errors`, never raised.
+    resources: list[dict[str, Any]] = Field(default_factory=list)   # {url, type, status, method}
+    cookies: list[dict[str, Any]] = Field(default_factory=list)     # name + flags, NO value
+    local_storage_keys: list[str] = Field(default_factory=list)     # key names only
+    session_storage_keys: list[str] = Field(default_factory=list)   # key names only
+    rendered_text: str = ""                                         # body.innerText, normalized + <=2KB
+    screenshot: str | None = None                                   # per-host PNG filename (dashboard only)
     errors: list[str] = Field(default_factory=list)
 
 
@@ -196,6 +225,36 @@ class AppProfile(BaseModel):
     @property
     def usable(self) -> bool:
         """True when this profile should drive context-aware prompts."""
+        return self.error is None
+
+
+class ExecRiskNote(BaseModel):
+    """An AI-written plain-language note for ONE of the deterministically-selected
+    executive top-risks. `ref` is the ephemeral index the risk was given in the
+    prompt payload (the only handle the LLM is given). `key` is NOT supplied by the
+    LLM — the exec summary stage fills it post-validation by mapping ref→the risk's
+    stable key, so the renderer merges notes by key and survives a later selection
+    shift (e.g. manual suppression running after the AI call)."""
+    ref: int
+    why: str = ""
+    key: str = ""
+
+
+class ExecutiveSummary(BaseModel):
+    """Optional AI prose overlay for executive.html (the `ai.summary` call).
+
+    The executive report's deterministic core (posture rating, severity counts,
+    coverage/scale, top-risk SELECTION) is computed in Python and ALWAYS renders;
+    this object only carries the narrative overlay. Lenient defaults + the
+    `error`/`usable` contract (mirrors AppProfile/AIResponse) so a degrade is just
+    `ExecutiveSummary(error=...)` and the renderer falls back to templated prose."""
+    posture_narrative: str = ""
+    risk_notes: list[ExecRiskNote] = Field(default_factory=list)
+    recommendations: list[str] = Field(default_factory=list)
+    error: str | None = None
+
+    @property
+    def usable(self) -> bool:
         return self.error is None
 
 

@@ -18,6 +18,7 @@ from watchtower.stages.capabilities import (
     SelectionError,
     resolve_selection,
 )
+from watchtower.stages.exec_summary import ExecSummaryStage
 from watchtower.stages.profile import AIProfileStage
 from watchtower.stages.recon import (
     DnsxAndTriageStage,
@@ -44,6 +45,7 @@ def build_pipeline(
     skip: set[str] | None = None,
     include_report: Stage,
     include_compress: Stage | None,
+    include_exec_pdf: Stage | None = None,
 ) -> tuple[list[Stage], dict[str, dict]]:
     """Assemble the ordered stage list for a selection, plus the coverage manifest.
 
@@ -55,6 +57,35 @@ def build_pipeline(
         into the report.
     """
     active, coverage, discovery_only, plan = resolve_selection(only, skip)
+
+    # ai.profile is framework-special: it runs at the HEAD of the ai-analyze phase
+    # (after the audit fan-out) so it can consume the crawler's rendered capture
+    # when available. It never gates the deterministic scanners.
+    profile_active = (
+        not discovery_only
+        and "ai" in active
+        and cfg.ai.profiling
+        and "profile" in plan.ai_steps
+    )
+    # profile.render == "always" forces a browser render per host: pull in the
+    # crawler (the `supply-chain` capability) even when supply-chain wasn't selected.
+    # This runs CrawlerStage only — supply-chain *analysis* stays gated on
+    # plan.ai_steps, so it adds a browser pass but no extra LLM calls.
+    if profile_active and cfg.ai.profile.render == "always" and "supply-chain" not in active:
+        active = active | {"supply-chain"}
+        coverage = {
+            **coverage,
+            "supply-chain": {"ran": True, "reason": "forced for profile.render=always"},
+        }
+
+    # ai.summary is framework-special like ai.profile, but runs at the TAIL of the
+    # ai-analyze phase (after triage suppression) so it summarizes the final visible
+    # findings. One LLM call per run; degrades to deterministic exec prose.
+    summary_active = (
+        not discovery_only
+        and "ai" in active
+        and "summary" in plan.ai_steps
+    )
 
     stages: list[Stage] = []
 
@@ -70,12 +101,6 @@ def build_pipeline(
             stages.append(recon_map[step]())
 
     if not discovery_only:
-        # ai.profile is framework-special: pre-audit, only when ai is active,
-        # profiling is enabled, and the profile sub-step is selected. It never
-        # gates the deterministic scanners.
-        if "ai" in active and cfg.ai.profiling and "profile" in plan.ai_steps:
-            stages.append(AIProfileStage())
-
         for phase in PHASE_ORDER:
             phase_stages: list[Stage] = []
             for tok in ALL_TOKENS:
@@ -85,6 +110,16 @@ def build_pipeline(
                 s = cap.factory(cfg, plan)
                 if s is not None:
                     phase_stages.append(s)
+            # The profiler leads the ai-analyze phase: the AppProfile must be ready
+            # before triage/supply analysis, and only now (post-audit) is the
+            # crawler's rendered capture available to it.
+            if phase == "ai-analyze" and profile_active:
+                phase_stages.insert(0, AIProfileStage())
+            # Tail: the executive-summary call (must precede the empty-phase guard,
+            # so an `--only ai.summary` selection — which builds no AIStage — isn't
+            # dropped).
+            if phase == "ai-analyze" and summary_active:
+                phase_stages.append(ExecSummaryStage())
             if not phase_stages:
                 continue
             if phase == "audit":
@@ -93,6 +128,10 @@ def build_pipeline(
                 stages.extend(phase_stages)
 
     stages.append(include_report)
+    # executive.pdf (best-effort) renders from executive.html, so after the report
+    # and before compression (which leaves run-root files untouched anyway).
+    if include_exec_pdf is not None:
+        stages.append(include_exec_pdf)
     if include_compress is not None:
         stages.append(include_compress)
     return stages, coverage

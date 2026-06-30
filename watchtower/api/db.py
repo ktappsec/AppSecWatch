@@ -37,6 +37,7 @@ _SCHEMA: list[str] = [
         tech         TEXT,                                 -- JSON list[{name,source}] (P3)
         profile      TEXT,                                 -- JSON AppProfile (ai.profile)
         finding_counts TEXT,                               -- JSON {sev: n} from last scan
+        surface      TEXT,                                 -- JSON curated surface (EASM): domains/endpoints/keys
         notes        TEXT,
         first_seen   TEXT,
         last_seen    TEXT,
@@ -144,6 +145,7 @@ _MIGRATIONS: list[tuple[str, str, str]] = [
     ("assets", "profile", "TEXT"),
     ("assets", "finding_counts", "TEXT"),
     ("assets", "status", "TEXT"),          # buckets → liveness; backfilled in _init_schema
+    ("assets", "surface", "TEXT"),         # curated EASM surface from the last scan
 ]
 
 

@@ -38,6 +38,7 @@ SLOT_TRIAGE_SYSTEM_PROFILED = "triage_system_profiled"
 SLOT_SUPPLY_SYSTEM_DEFAULT = "supply_system_default"
 SLOT_SUPPLY_SYSTEM_PROFILED = "supply_system_profiled"
 SLOT_LOW_CONFIDENCE_NUDGE = "low_confidence_nudge"
+SLOT_SUMMARY_SYSTEM = "summary_system"
 
 # ---------------------------------------------------------------------------
 # Shape hints (NOT editable — the JSON contract with the Pydantic validator)
@@ -86,6 +87,19 @@ app. If nothing is genuinely actionable to add and nothing to suppress, return
 {"findings": [], "suppressions": []}.
 """
 
+_EXEC_SUMMARY_SHAPE_HINT = """\
+Return ONLY a JSON object of this exact shape, no prose, no markdown:
+{
+  "posture_narrative": "2-4 plain-language sentences for a non-technical executive on the overall security posture and what it means for the business",
+  "risk_notes": [
+    {"ref": <the integer ref of one of the top risks you were given>, "why": "ONE plain-language sentence on why this risk matters to the business"}
+  ],
+  "recommendations": ["3-5 short, plain-language next steps / remediation themes"]
+}
+Cover the given top risks by their `ref` (do not invent new refs). If there is
+nothing to say, return {"posture_narrative": "", "risk_notes": [], "recommendations": []}.
+"""
+
 _PROFILE_SHAPE_HINT = """\
 Return ONLY a JSON object of this exact shape, no prose, no markdown:
 {
@@ -110,11 +124,17 @@ Return ONLY a JSON object of this exact shape, no prose, no markdown:
 _DEFAULT_PROFILE_SYSTEM = (
     "You are a senior application security engineer building a concise profile of "
     "a web application so that later analysis can be tailored to it. You are given "
-    "signals scraped from the application's root page. IMPORTANT: the HTML is the "
-    "RAW pre-JavaScript response — for single-page apps the visible body text may "
-    "be sparse or empty; do not conclude the app is trivial just because the body "
-    "is thin. Reason from the title, meta description, OpenGraph tags, detected "
-    "technology, and any form/login signals. "
+    "signals scraped from the application's root page. NOTE: `body_text_snippet_pre_js` "
+    "is the RAW pre-JavaScript response — for single-page apps it may be sparse or "
+    "empty; do not conclude the app is trivial just because it is thin. When the page "
+    "was rendered in a browser you also get `rendered_body_text` (the rendered visible "
+    "text — prefer it over the pre-JS snippet) and `observed_resources`: the "
+    "third-party domains, API/data endpoints, and cookie/storage KEY names the page "
+    "actually loaded (names only, never values). These are strong tells — e.g. a "
+    "'POST api.stripe.com/...' endpoint or a 'stripe' script domain implies payments; "
+    "an 'access_token' storage key implies client-side auth. Reason from the title, "
+    "meta description, OpenGraph tags, detected technology, form/login signals, and "
+    "these observed resources when present. "
     "Infer: what the application is (app_type), who its audience is, what sensitive "
     "capabilities it likely has, and — crucially — which security controls/headers "
     "an application of THIS type ought to have (expected_controls). Set confidence "
@@ -160,7 +180,16 @@ _TRIAGE_RULES = (
     "'unsafe-eval'/'unsafe-inline' — treat that as expected, not a finding. "
     "Reputable first-party/known CDNs in an allowlist are usually fine.\n"
     "  4. When unsure, prefer SUPPRESSING over adding — a short realistic list "
-    "beats a long noisy one.\n\n"
+    "beats a long noisy one.\n"
+    "  5. These are NOT findings — never add them: (a) load-balancer / WAF / RUM "
+    "cookies (F5 BIG-IP TS*/BIGipServer*/f5avr*/f5_cspm, AWS ALB, Akamai, "
+    "Cloudflare __cf*, AppDynamics ADRUM, Dynatrace) carry no session or auth "
+    "state, so their missing HttpOnly/Secure/SameSite flags — and any "
+    "'infrastructure disclosed via cookie name' — are NOT findings; (b) a "
+    "JS-readable double-submit anti-CSRF token (XSRF-TOKEN / CSRF-TOKEN) is "
+    "by-design, not a finding; (c) positive or absence-of-signal observations "
+    "('no scripts loaded', 'headers look fine') and 'verify/ensure X' reminders — "
+    "report only a concrete, present defect.\n\n"
     "EXAMPLE — given findings [{\"ref\":0,\"source\":\"headers\",\"severity\":"
     "\"medium\",\"title\":\"X-Frame-Options missing\"},{\"ref\":1,\"source\":"
     "\"nuclei\",\"severity\":\"info\",\"title\":\"nginx version disclosed\"}] on a "
@@ -187,12 +216,30 @@ _DEFAULT_SUPPLY_SYSTEM_DEFAULT = (
     "anomalous sources. Reputable, widely-used providers (major CDNs, well-known "
     "analytics) are normal — do NOT flag them by default and do NOT emit one finding "
     "per script. Do NOT re-classify party-ness. Prefer FEW high-signal findings; when "
-    "unsure, omit.\n\n"
+    "unsure, omit. The ABSENCE of scripts is NOT a finding (never report 'no scripts "
+    "loaded' / 'minimal footprint'); do NOT emit 'verify/ensure X' reminders or flag "
+    "load-balancer/WAF/RUM cookies (F5, ADRUM, …).\n\n"
     "EXAMPLE — scripts from googletagmanager.com (3rd) and a versioned cdn.jsdelivr.net "
     "bundle with no SRI: flag ONLY the SRI-less mutable script "
     "({\"type\":\"sri-missing\",\"severity\":\"low\",...}); do NOT flag the reputable "
     "analytics script. If all scripts are reputable + integrity-pinned, return "
     "{\"findings\":[]}."
+)
+
+_DEFAULT_SUMMARY_SYSTEM = (
+    "You are a senior application-security consultant writing the EXECUTIVE SUMMARY "
+    "of an external, point-in-time assessment for the client's leadership (e.g. a "
+    "CISO and non-technical executives). You are given the deterministically-computed "
+    "facts of the scan: the overall risk posture rating, the finding counts by "
+    "severity, the scale assessed, and the TOP RISKS (each with an integer `ref`, "
+    "title, source, severity, and affected-host count). Write in PLAIN, calm, "
+    "business language — no tool names, no jargon, no hype. Explain what the posture "
+    "means and, for each top risk, ONE sentence on why it matters to the business "
+    "(impact, not mechanics). Then give 3-5 concrete, prioritized next steps phrased "
+    "as outcomes ('Restrict the admin interface to the corporate network'), not "
+    "ticket text. Do NOT invent findings, numbers, or refs beyond what you are given; "
+    "the deterministic facts are authoritative. Keep the whole thing tight enough to "
+    "fit on roughly two printed pages."
 )
 
 _DEFAULT_SUPPLY_SYSTEM_PROFILED = (
@@ -203,7 +250,9 @@ _DEFAULT_SUPPLY_SYSTEM_PROFILED = (
     "same 3rd-party script matters far more on an app handling auth/PII/payments than "
     "on a marketing page. Reputable, widely-used providers are normal; do NOT flag "
     "them by default or emit one finding per script. Do NOT re-classify party-ness. "
-    "Prefer FEW high-signal findings; when unsure, omit.\n\n"
+    "Prefer FEW high-signal findings; when unsure, omit. The ABSENCE of scripts is NOT "
+    "a finding (never report 'no scripts loaded'); do NOT emit 'verify/ensure X' "
+    "reminders or flag load-balancer/WAF/RUM cookies (F5, ADRUM, …).\n\n"
     "EXAMPLE — on an auth/PII app, an SRI-less 3rd-party script from a small/unknown "
     "origin warrants medium ({\"type\":\"untrusted-3p-script\",\"severity\":"
     "\"medium\",...}); the same script on a static marketing page is info/omit. "
@@ -248,6 +297,13 @@ PROMPT_SLOTS: dict[str, dict[str, str]] = {
                        "profile confidence is 'low' — caps severity escalation.",
         "default_text": _DEFAULT_LOW_CONFIDENCE_NUDGE,
     },
+    SLOT_SUMMARY_SYSTEM: {
+        "label": "Executive summary — system",
+        "description": "Writes the executive.html narrative (posture paragraph, "
+                       "per-risk 'why it matters', next steps) from the deterministic "
+                       "scan facts. One call per run; degrades to templated prose.",
+        "default_text": _DEFAULT_SUMMARY_SYSTEM,
+    },
 }
 
 
@@ -268,6 +324,9 @@ def resolved_prompt(slot_id: str, overrides: Mapping[str, str] | None = None) ->
 def build_profile_prompt(
     signals: PageSignals,
     overrides: Mapping[str, str] | None = None,
+    *,
+    rendered_text: str | None = None,
+    surface: dict | None = None,
 ) -> tuple[str, str]:
     payload = {
         "host": signals.host,
@@ -280,6 +339,13 @@ def build_profile_prompt(
         "response_headers": signals.headers,
         "body_text_snippet_pre_js": signals.body_snippet,
     }
+    # When the page was rendered in a headless browser (render auto/always), attach
+    # the rendered visible text and the observed resource/endpoint/cookie/storage
+    # manifest (names only). Far richer than the pre-JS snippet for SPAs.
+    if rendered_text:
+        payload["rendered_body_text"] = rendered_text
+    if surface:
+        payload["observed_resources"] = surface
     user_msg = (
         f"Application signals (raw pre-JavaScript root page):\n"
         f"```json\n{json.dumps(payload, indent=2, ensure_ascii=False)}\n```\n\n"
@@ -379,6 +445,34 @@ def build_supply_chain_prompt(
     return resolved_prompt(SLOT_SUPPLY_SYSTEM_DEFAULT, overrides), user_msg
 
 
+def build_summary_prompt(
+    posture: dict[str, Any],
+    counts: dict[str, int],
+    scale: dict[str, int],
+    risks: list[dict[str, Any]],
+    overrides: Mapping[str, str] | None = None,
+) -> tuple[str, str]:
+    """Whole-run executive summary (the `ai.summary` call). The deterministic core
+    is supplied as facts; the LLM only writes prose keyed to the given risk `ref`s.
+
+    `risks` is the projected ExecRisk payload: each entry carries `ref`, `title`,
+    `source`, `severity`, `host_count`.
+    """
+    payload = {
+        "posture_rating": posture.get("rating"),
+        "volume_note": posture.get("volume_note"),
+        "finding_counts_by_severity": counts,
+        "scale": scale,
+        "top_risks": risks,
+    }
+    user_msg = (
+        f"Deterministic assessment facts (authoritative — do not contradict):\n"
+        f"```json\n{json.dumps(payload, indent=2, ensure_ascii=False)}\n```\n\n"
+        f"{_EXEC_SUMMARY_SHAPE_HINT}"
+    )
+    return resolved_prompt(SLOT_SUMMARY_SYSTEM, overrides), user_msg
+
+
 def assemble_preview(slot_id: str, candidate_text: str) -> tuple[str, str]:
     """Render the EXACT (system, user) message the engine would send for a slot,
     using `candidate_text` as the system override + a representative fixture. No
@@ -409,6 +503,19 @@ def assemble_preview(slot_id: str, candidate_text: str) -> tuple[str, str]:
         {"url": "https://app.example.com/static/app.js", "party": "1st",
          "etld_plus_one": "example.com", "status": 200, "initiator_url": None},
     ]
+    if slot_id == SLOT_SUMMARY_SYSTEM:
+        return build_summary_prompt(
+            {"rating": "HIGH", "volume_note": "24 high-severity findings, 18 hosts"},
+            {"critical": 0, "high": 24, "medium": 66, "low": 47, "info": 7},
+            {"live": 156, "live_servers": 35, "dead": 126},
+            [
+                {"ref": 0, "title": "Exposed admin panel", "source": "nuclei",
+                 "severity": "high", "host_count": 3},
+                {"ref": 1, "title": "Missing HSTS", "source": "headers",
+                 "severity": "medium", "host_count": 18},
+            ],
+            ovr,
+        )
     if slot_id in (SLOT_PROFILE_SYSTEM,):
         return build_profile_prompt(
             PageSignals(host="app.example.com", title="Acme Bank — Login",

@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from watchtower.report.aggregator import build_report_context, build_run_summary
-from watchtower.report.renderer import render_report
+from watchtower.report.renderer import render_executive, render_report
 from watchtower.stages.base import Stage
 
 _COMPRESSIBLE_SUBDIRS = ("01_recon", "02_audit", "03_ai")
@@ -57,8 +57,13 @@ class ReportStage(Stage):
             app_profiles=state.app_profiles,
             coverage=state.coverage,
             summary=summary,
+            report_cfg=getattr(cfg, "report", None),
+            exec_summary=state.exec_summary,
         )
         render_report(context, run_dir / "report.html")
+        # The executive one-pager shares the context (deterministic core + optional
+        # AI overlay) and the themeable base template; always written.
+        render_executive(context, run_dir / "executive.html")
         (run_dir / "errors.json").write_text(
             json.dumps([e.model_dump() for e in state.errors], indent=2)
         )

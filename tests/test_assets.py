@@ -125,6 +125,27 @@ def test_sync_stores_cname_chain(tmp_path):
     assert am.get("www.a.com")["cname_chain"] == ["a.cdn.net"]
 
 
+def test_sync_writes_and_roundtrips_surface(tmp_path):
+    am = _am(tmp_path)
+    surface = {
+        "third_party_domains": ["stripe.com"],
+        "endpoints": ["POST api.stripe.com/v1/tokens"],
+        "cookie_keys": ["JSESSIONID"],
+        "storage_keys": ["access_token"],
+    }
+    am.sync_discovered([_ta("a.com")], ["a.com"], "S1",
+                       surface_by_host={"a.com": surface})
+    assert am.get("a.com")["surface"] == surface
+    # A host with no surface this scan keeps None (and doesn't crash on read).
+    assert am.get("a.com") is not None
+
+
+def test_sync_no_surface_leaves_none(tmp_path):
+    am = _am(tmp_path)
+    am.sync_discovered([_ta("a.com")], ["a.com"], "S1")
+    assert am.get("a.com")["surface"] is None
+
+
 # --- bulk ops --------------------------------------------------------------
 def test_bulk_set_group_and_delete(tmp_path):
     am = _am(tmp_path)

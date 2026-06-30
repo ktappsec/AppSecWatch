@@ -172,6 +172,14 @@ keeps the stored secret. This is a **deliberate
 relaxation** of decision 13's original "secrets only in env / fixed guardrail"
 stance — the YAML may eventually be dropped entirely in favor of the store.
 
+Two base-config keys back the rendering features above and, like the rest of
+`base_config`, are editable at runtime via `PUT /config`:
+- **`ai.profile.render`** (`auto` | `always` | `never`, default `auto`) — the
+  server-wide default for the profiler's input/render mode, overridable per scan
+  via `ScanRequest.profile_render`.
+- **`tools.playwright.screenshot`** (bool, default `true`) — gates per-host
+  screenshot capture (the source for `GET /assets/{fqdn}/screenshot`).
+
 ---
 
 ## 5. Endpoint reference
@@ -186,6 +194,8 @@ All endpoints require auth except `GET /healthz`. Errors use a consistent
 | `GET` | `/scans/{id}` | — | `200 JobStatus` | 401, 404 |
 | `GET` | `/scans/{id}/result` | — | `200 ScanResult` (JSON) | 401, 404, 409 (not finished) |
 | `GET` | `/scans/{id}/report` | — | `200 text/html` (report.html) | 401, 404, 409 |
+| `GET` | `/scans/{id}/executive` | — | `200 text/html` (executive.html) | 401, 404, 409 |
+| `GET` | `/scans/{id}/executive.pdf` | — | `200 application/pdf` (executive.pdf) | 401, 404 (best-effort artifact) |
 | `GET` | `/scans/{id}/log` | `?tail=N` | `200 application/x-ndjson` | 401, 404 |
 | `POST` | `/scans/{id}/cancel` | — | `200 JobStatus` (state→cancelled) | 401, 404, 409 (already terminal) |
 | `GET` | `/healthz` | — | `200 {status, version}` | — |
@@ -203,6 +213,7 @@ All endpoints require auth except `GET /healthz`. Errors use a consistent
 | `POST` | `/assets/import` | `{csv}` (`domain,group`) | `200 {added,updated,skipped}` | 401 |
 | `POST` | `/assets/bulk` | `{action: delete\|set_group, fqdns[] \| filter{group,status,source}, group?}` | `200 {affected}` | 401 |
 | `GET` | `/assets/{fqdn}/findings` | — (visible findings from the asset's last scan) | `200 [Finding]` | 401 |
+| `GET` | `/assets/{fqdn}/screenshot` | — (last-scan per-host PNG screenshot) | `200 image/png` | 401, 404 (not_found) |
 | `GET` | `/scan-templates` | — | `200 [ScanTemplate]` | 401 |
 | `POST` | `/scan-templates` | `{name, only?, skip?, throttle?, compress?}` (option preset, no target) | `201 ScanTemplate` | 401 |
 | `DELETE` | `/scan-templates/{id}` | — | `200 {deleted}` | 401, 404 |
@@ -227,6 +238,26 @@ are injected into `run_scan` and mark matching findings cross-run (hidden +
 uncounted, never deleted). Custom templates are validated, mirrored into the
 catalog (`source=custom`), and materialized + `-t`-loaded at scan start.
 
+The `Asset` model (returned by `GET /assets`, `GET /assets/{fqdn}`) carries an
+optional **`surface`** object — a curated, NAMES-ONLY snapshot from the last
+scan's crawl that answers "what does this host call?" (a lightweight EASM view):
+```json
+"surface": {
+  "third_party_domains": ["cdn.vendor.com"],
+  "script_domains": ["js.analytics.com"],
+  "endpoints": ["GET app.example.com/api/v1/users"],  // "METHOD host/path"; no query string
+  "cookie_keys": ["session"],
+  "storage_keys": ["theme"]
+}
+```
+Endpoints are `"METHOD host/path"`; query strings and all values/bodies are
+excluded. `_sync_assets` persists it on the assets row — latest snapshot only (no
+over-time history). `GET /assets/{fqdn}/screenshot` serves the asset's last-scan
+per-host PNG (`image/png`), or `404 not_found` when there is no screenshot
+(screenshots disabled / host not crawled / older scan). It is **dashboard-only** —
+the screenshot is NEVER embedded in `report.html`; the UI fetches it as an
+authenticated blob (an `<img src>` can't send the `Authorization` header).
+
 ### 5.1 `ScanRequest`
 
 Exactly one **target** must be given — it resolves to root domains from the
@@ -242,9 +273,16 @@ inventory before the run:
   "skip": null,                        // mutually exclusive with only
   "throttle": "gentle",                // optional override of base config
   "compress": true,                    // optional
+  "profile_render": "auto",            // optional: auto|always|never (null = use ai.profile.render)
   "callback_url": "https://svc/ingest" // optional, must be in callback_host_allowlist
 }
 ```
+`profile_render` is a per-scan override of the AI profiler's input/render mode
+(nullable; `null` → use the server config's `ai.profile.render`): `always` forces
+a headless-browser render per host (the crawler runs even if supply-chain analysis
+isn't selected), `auto` (default) only uses rendered capture when supply-chain ran,
+and `never` uses the fast httpx fetch only.
+
 A `group`/`assets`/`all_assets` that resolves to **no** roots → `422 empty_target`.
 After the scan, discovered (triaged) FQDNs are synced back into `assets`
 (discovered inherit their root's group; imported group/notes are never clobbered).
@@ -278,9 +316,14 @@ Assembled from the run dir (`result.py`):
   "tls": [ { "host": "...", "checks": [ {"name":"...","passed":true} ], "error": null } ],
   "tls_certs": [ { "ip": "...", "subject_cn": "...", "issuer": "...", "not_after": "...", "days_remaining": 60, "expired": false, "self_signed": false, "wildcard": true, "sha256": "...", "sans": ["..."] } ],
   "app_profiles": { "host": { ...AppProfile... } },
-  "report_url": "/scans/{id}/report"
+  "report_url": "/scans/{id}/report",
+  "executive_url": "/scans/{id}/executive",
+  "executive_pdf_url": "/scans/{id}/executive.pdf"
 }
 ```
+`executive_url` is always present (the one-pager is written every run);
+`executive_pdf_url` is `null` when the PDF wasn't rendered (`report.executive_pdf`
+off, or the best-effort render skipped).
 
 ---
 
@@ -294,7 +337,7 @@ POST <callback_url>
   Content-Type: application/json
   X-WatchTower-Event: scan.completed | scan.failed | scan.cancelled
   X-WatchTower-Signature: sha256=<hex HMAC-SHA256(body, WATCHTOWER_WEBHOOK_SECRET)>
-  body: { id, state, finished_at, finding_count, result_url, report_url }
+  body: { id, state, finished_at, finding_count, result_url, report_url, executive_url }
 ```
 
 SSRF guards: host must be allowlisted; resolve + connect with a short timeout;

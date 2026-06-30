@@ -34,7 +34,9 @@ watchtower/              Python package (the engine)
 ├── recon/ audit/ ai/  tool wrappers (subfinder/dnsx/tlsx/httpx, sslscan/nuclei/crawler, LLM).
 │                      audit/ also: header_checks, js_libs (retire.js-style),
 │                      suppress (manual fingerprints), tech (httpx+AI merge)
-├── report/            aggregator + Jinja renderer (single self-contained report.html)
+├── report/            aggregator + Jinja renderer; two self-contained docs from a
+│                      shared themeable base (report.html technical + executive.html
+│                      one-pager) + optional executive.pdf
 ├── util/subproc.py    run_tool — every subprocess flows through here
 └── api/               Web API (FastAPI): config, auth, security, models, jobs, result,
                        server, db (SQLite); assets, history (scans index), scheduler,
@@ -114,7 +116,7 @@ docker run --rm -p 8080:8080 -e WATCHTOWER_API_KEYS=key \
   user-facing names; the token→stage mapping + dependency resolution live **only**
   in `stages/capabilities.py` / `stages/pipeline.py`. Four of them split into
   dotted **sub-tokens** (`recon.subfinder|dns|tlsx|httpx`, `ai.profile|triage|
-  supply-chain`, `headers.csp|best-practice`, `nuclei.<severity>`); a parent
+  supply-chain|summary`, `headers.csp|best-practice`, `nuclei.<severity>`); a parent
   expands to all its sub-tokens (back-compat), and `resolve_selection` returns a
   `SelectionPlan` that `build_pipeline` uses to assemble the exact sub-steps.
   Coverage marks a parent `partial` when only some sub-steps ran. If you
@@ -124,15 +126,106 @@ docker run --rm -p 8080:8080 -e WATCHTOWER_API_KEYS=key \
 - The AI layer never gates deterministic scanners; all LLM output is
   Pydantic-validated with one retry then graceful degradation. Party-ness
   (1st/3rd) is decided in Python (`tldextract`), never by the LLM.
+- **LLM request attribution** (`LLMConfig.app_title`/`app_url`/`tag_requests`,
+  applied in `ai/client.py`): the client sets `X-Title` (default `WatchTower`) +
+  optional `HTTP-Referer` default headers so OpenRouter can name/group the spend.
+  `LLMClient.chat(..., label=...)` reuses the existing per-call label
+  (`profile[host]`/`triage[host]`/`supply[host]`, plus `nuclei-gen` from
+  `nuclei_custom`): when `tag_requests`, it overrides `X-Title` with the call
+  **purpose** (`WatchTower: profile`) so spend breaks down by call type, and on an
+  OpenRouter `base_url` it sets the OpenAI `user` field to the full label for
+  per-host granularity. Headers/`user` are ignored by other backends, so it's safe
+  off OpenRouter. If you add a new `chat()` caller, pass a `label`.
+- **Per-call model overrides** (`LLMConfig.models`, applied in `chat()`): a dict
+  keyed by the same call **purpose** (`profile`/`triage`/`supply`/`nuclei-gen`);
+  `chat()` resolves the per-call model from it via the label, falling back to
+  `model`. Empty = one model everywhere (default). Lets a cheap model run profiling
+  while triage (it can suppress findings) keeps a capable one. The purpose key is
+  the label prefix, NOT the capability token — note `supply`, not `supply-chain`.
+- **Two reports, one shared base.** `report/renderer.py` renders BOTH `report.html`
+  (the full technical doc — content unchanged) and `executive.html` (a ≤2-page
+  leadership one-pager) from the SAME `build_report_context` dict, via a shared
+  Jinja base (`templates/_base.html.j2` + `_theme.css.j2`). Both stay single-file
+  /self-contained (inline CSS+JS, no external assets) and gain a **light/dark
+  toggle** (head theme-init sets `data-theme` from `localStorage` else
+  `prefers-color-scheme`; `@media print` forces the light palette). When you touch
+  report markup, keep it shared in `_base.html.j2`; never interpolate a Jinja var
+  into the theme-init `<script>` (use `|tojson`).
+- **The executive report has a deterministic core + optional AI overlay.**
+  `aggregator.build_executive_context` computes the posture rating (highest
+  severity present + volume note), severity counts, scale (DNS-live vs
+  HTTP-responding `live_servers`), and **top-5 risks** (`select_top_risks`, grouped
+  by `source|title`, ranked severity→host-count→key) — ALWAYS, even with AI off.
+  `ai.summary` (new sub-token; ONE LLM call at the **TAIL** of `ai-analyze`, after
+  triage suppression; label/purpose `summary`) adds the narrative paragraph +
+  per-risk "why it matters" + next-steps onto `state.exec_summary`; a degrade falls
+  back to templated prose. **Merge is by stable key, not `ref`**: the stage binds
+  each AI note's `ref`→the risk `key`, and the renderer re-selects top-N over the
+  FINAL visible set (manual `SuppressionStage` runs after the summary stage) and
+  drops notes whose key isn't shown. So the AI overlay is strictly best-effort.
+- **Executive artifacts + branding.** `ReportStage` always writes `executive.html`
+  next to `report.html`. A separate `ExecPdfStage` (`report.pdf`, gated on
+  `cfg.report.executive_pdf`, threaded as `build_pipeline(include_exec_pdf=…)`)
+  best-effort renders `executive.pdf` via the bundled Chromium — it **catches
+  everything internally and never raises** (raising would pollute `errors.json` +
+  trip `--strict`). Branding is `cfg.report` (`org_name`→root fallback,
+  `classification`→"Confidential", `logo_path` base64-embedded, `executive_pdf`).
+  Web API exposes `GET /scans/{id}/executive` + `/executive.pdf` and result
+  `executive_url`/`executive_pdf_url` (PDF url null when absent).
+- **The profiler (`ai.profile`) runs at the HEAD of the `ai-analyze` phase**
+  (after the audit fan-out), NOT pre-audit — so it can read the crawler's rendered
+  capture. Nothing in takeovers/audit consumes `app_profiles`; only `ai.triage`/
+  `ai.supply-chain` do, and the profile is produced first. Its INPUT source is
+  `cfg.ai.profile.render` (`auto|always|never`, default `auto`, per-scan override
+  `ScanRequest.profile_render`): **auto** uses the crawler's `rendered_text` +
+  `curated_surface()` manifest when supply-chain ran (else httpx pre-JS signals);
+  **always** force-includes the crawler (the `supply-chain` capability) in
+  `build_pipeline` even when supply-chain analysis is off — running `CrawlerStage`
+  only, never extra LLM calls (coverage marks it `forced for profile.render=always`);
+  **never** = httpx only. `build_profile_prompt` adds `rendered_body_text` +
+  `observed_resources` to the user payload (assembly in code; shape hint unchanged).
+- **The crawler captures a STRUCTURE-ONLY manifest** (`audit/crawler.py`): every
+  response (`resources`: url/type/status/method, dedup+capped), `scripts` (kept for
+  `js_libs`/supply-chain back-compat), cookie **names+flags** (`cookies`, NO value),
+  localStorage/sessionStorage **key names** (NO values), `rendered_text`
+  (`body.innerText`, whitespace-normalized + ≤2KB), and an optional per-host
+  **screenshot** (`tools.playwright.screenshot`, default true). **Never values or
+  bodies** — `runs/<id>/` + `report.html` are shareable/emailable; capturing
+  secrets would make a scan a credential-leak vector. `_capture_state` is
+  best-effort (each step wrapped). `audit/surface.py::curated_surface()` projects an
+  artifact into the names-only `{third_party_domains, script_domains, endpoints,
+  cookie_keys, storage_keys}` dict (query strings dropped) — the ONE source reused
+  by both the profiler summary and the EASM per-asset surface. Playwright is
+  lazy-imported inside the browser-driving functions, so `crawler.py` (and its pure
+  helpers) import without the heavy dep.
 - `headers` is a deterministic, passive capability: `audit/header_checks.py`
   evaluates the captured `PageSignals.headers` (OWASP best-practice + structured
   CSP) into first-class `Finding`s (sources `headers`/`csp`, each with a stable
-  `check_id`).
+  `check_id`). **Cookie-flag checks skip infrastructure cookies.**
+  `audit/cookies.py::is_infra_cookie()` is the single source of truth for
+  load-balancer / WAF / RUM cookies (F5 BIG-IP `TS*`/`BIGipServer*`/`f5avr*`/
+  `f5_cspm`/`MRHSession`, AWS ALB, Citrix `NSC_`, Cloudflare `__cf*`, Imperva,
+  Akamai, AppDynamics `ADRUM`, Dynatrace `dt*`). These carry no session/auth state,
+  so their missing HttpOnly/Secure/SameSite flags are **dropped entirely** (not a
+  finding) and they no longer trip `_apparently_sensitive`. Reused by the AI guard.
+- **Finding identity / dedup.** Every finding has a stable `group_key` property
+  (`models.py`): `check_id` when present, else a source-specific natural key, else
+  the title. It is the ONE grouping key reused by `suppress.finding_key` (manual
+  fingerprints), `aggregator.select_top_risks` (`source|group_key`), and the
+  `report.html.j2` `groupby('group_key')` — so the same issue collapses across
+  hosts into one row instead of one-per-host.
 - **`ai.triage`** (formerly `ai.headers`) is a per-host pass that triages **all**
   deterministic findings for the host — nuclei/TLS/js_lib/headers/takeover, not
   just headers. It (a) **soft-suppresses** false-positives across every source by
   the ephemeral integer `ref` each finding is given in the prompt payload, and
   (b) adds new header findings the rules miss (these keep source `ai_headers`).
+  **AI findings now get a stable `check_id`** derived from the model's `type` tag
+  (`ai/analyzer.py::_ai_check_id`, e.g. `ai_headers.cookie-missing-httponly-flag`)
+  so they dedup/group/suppress by class via `group_key`. A code-level guard in
+  `_ai_findings_to_findings` **drops** AI non-findings (`type` in
+  `positive-observation`/`no-scripts-loaded`/`best-practice-reminder`/
+  `missing-control-check`/`server-config-concern`) and infra-cookie findings
+  (`is_infra_cookie` on the evidence cookie), backstopping the tightened prompts.
   Suppression attaches an `AIFindingVerdict` (`source='ai_triage'`) that hides a
   finding from the report + severity counts but **never deletes** it (kept in
   `findings.json`). Gating lives in `cfg.ai.suppression`: `enabled`,
@@ -169,10 +262,19 @@ docker run --rm -p 8080:8080 -e WATCHTOWER_API_KEYS=key \
   threads 3 → 84 live, threads 50 → 0). This — not the stealth headers — was the fix.
 - **Stealth identity** (`config.IdentityConfig`, `WatchTowerConfig.identity`): a
   `preset` (off | chrome-win | chrome-mac | firefox) bundles a coherent browser
-  UA + headers + locale; `user_agent`/`headers`/`locale` override/extend it.
-  `effective_user_agent/headers/locale` are injected into **httpx** (`-H`),
-  **nuclei** (`build_nuclei_cmd` UA override + `-H`), and the **crawler** (browser
-  context UA/extra_http_headers/locale). Takeovers are skipped (they hit
+  UA + headers + locale; `user_agent`/`headers`/`locale` override/extend it. The
+  default is now **`chrome-win`** (every scan presents a Chrome-on-Windows identity
+  unless set to `off`). Chrome presets ship **only the low-entropy client hints**
+  (`Sec-CH-UA`/`-Mobile`/`-Platform`) a real browser sends on a cold first request —
+  the high-entropy `Sec-CH-UA-*` and the Google-proprietary `x-client-data`/
+  `x-browser-*` are deliberately omitted (sending them unsolicited is itself a bot
+  tell). A browser preset also rotates a **`Referer`** from `REFERER_POOL` (10
+  external search/social origins) and sets **`Sec-Fetch-Site: cross-site`** to match;
+  rotation is per `effective_headers()` call (once per tool run → httpx/nuclei/crawler
+  each get an independent referrer), and an operator-pinned `headers['Referer']`
+  overrides it. `effective_user_agent/headers/locale` are injected into **httpx**
+  (`-H`), **nuclei** (`build_nuclei_cmd` UA override + `-H`), and the **crawler**
+  (browser context UA/extra_http_headers/locale). Takeovers are skipped (they hit
   dangling third-party services, not the target). NB this defeats UA/header WAF
   rules only — NOT TLS/JA3 fingerprinting or IP-reputation (the crawler's real
   Chromium fingerprint is the genuinely stealthy surface). No proxy support yet.
@@ -218,9 +320,15 @@ docker run --rm -p 8080:8080 -e WATCHTOWER_API_KEYS=key \
   scan form), and finding rows **deep-link** to `/assets?q=<fqdn>`.
 - **Asset enrichment**: `_sync_assets` also writes per-host `profile` (AppProfile JSON
   when ai.profile ran) + `finding_counts` (per-severity, visible-only, seeded at 0 so
-  re-scans clear stale counts). `GET /assets/{fqdn}/findings` returns the asset's
-  visible findings from its last scan (reads `last_scan_id`'s result.json, host=fqdn).
-  UI: Findings column (severity dots) + a Details dialog (profile · tech · findings).
+  re-scans clear stale counts) + **`surface`** (the curated names-only EASM blob from
+  `curated_surface()`, last crawl only; `assets.surface TEXT` col + migration).
+  `GET /assets/{fqdn}/findings` returns the asset's visible findings from its last scan
+  (reads `last_scan_id`'s result.json, host=fqdn). **`GET /assets/{fqdn}/screenshot`**
+  serves the last scan's per-host PNG (`02_audit/playwright/<host>.png`), 404 when
+  absent — dashboard only, never in report.html; the UI fetches it as an
+  authenticated blob → object URL (an `<img src>` can't send the Bearer header).
+  UI: Findings column (severity dots) + a Details dialog (profile · tech · findings ·
+  **surface/connections + screenshot thumbnail**, all lazy-loaded on expand).
 - **Scan templates** (`api/scan_templates.py`, `scan_templates` table): reusable
   OPTION presets (only/skip/throttle/compress, NO target). `GET/POST/DELETE
   /scan-templates`; New-Scan form has Load-template + Save-as-template + a one-click

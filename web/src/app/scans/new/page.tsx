@@ -54,6 +54,7 @@ export default function NewScanPage() {
   const [tokens, setTokens] = React.useState<string[]>([]);
 
   const [throttle, setThrottle] = React.useState("");
+  const [renderMode, setRenderMode] = React.useState("");   // blank = server default
   const [caps, setCaps] = React.useState<Capabilities | null>(null);
   const [compress, setCompress] = React.useState(true);
   const [callbackUrl, setCallbackUrl] = React.useState("");
@@ -131,6 +132,7 @@ export default function NewScanPage() {
       req.all_assets = true;
     }
     if (throttle) req.throttle = throttle as ScanRequest["throttle"];
+    if (renderMode) req.profile_render = renderMode as ScanRequest["profile_render"];
     if (callbackUrl.trim()) req.callback_url = callbackUrl.trim();
 
     if (selection === "only" && tokens.length) req.only = tokens;
@@ -311,11 +313,28 @@ export default function NewScanPage() {
                 </SelectContent>
               </Select>
             </Field>
+            <Field label="Profile render" hint="Blank = server default" info="/docs#capabilities">
+              <Select value={renderMode} onValueChange={setRenderMode}>
+                <SelectTrigger><SelectValue placeholder="Server default" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="auto">Auto</SelectItem>
+                  <SelectItem value="always">Always</SelectItem>
+                  <SelectItem value="never">Never</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
             <Field label="Webhook callback (optional)">
               <Input value={callbackUrl} onChange={(e) => setCallbackUrl(e.target.value)}
                 placeholder="https://svc.internal/ingest" />
             </Field>
           </div>
+          <p className="text-xs text-muted-foreground">
+            Profiling reads the root page. <span className="font-medium">Auto</span> renders it in a headless
+            browser when supply-chain runs and captures resource / endpoint / cookie / storage{" "}
+            <span className="font-medium">names — never values</span>.{" "}
+            <span className="font-medium">Always</span> forces a browser per host (slower, more thorough).{" "}
+            <span className="font-medium">Never</span> uses the fast HTTP fetch only.
+          </p>
           {details && (
             <p className="text-xs text-muted-foreground">
               <span className="capitalize font-medium">{throttle}</span>: httpx {String(details.httpx_threads)} threads / {String(details.httpx_rl)} rps ·

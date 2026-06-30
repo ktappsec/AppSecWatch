@@ -24,7 +24,7 @@ def _hvals(cmd):
 def test_preset_resolution():
     i = IdentityConfig(preset="chrome-win")
     assert i.active
-    assert "Chrome/124" in i.effective_user_agent()
+    assert "Chrome/149" in i.effective_user_agent()
     h = i.effective_headers()
     assert h["Accept-Language"].startswith("tr-TR")
     assert "Sec-CH-UA" in h and h["Sec-CH-UA-Platform"] == '"Windows"'
@@ -41,10 +41,33 @@ def test_overrides_merge_over_preset():
     assert "Sec-CH-UA" in h                                # untouched preset header kept
 
 
-def test_off_is_inactive():
+def test_default_is_chrome_win():
+    # Default identity is now an active Chrome-on-Windows preset (was 'off').
     i = IdentityConfig()
+    assert i.preset == "chrome-win" and i.active
+    assert "Chrome/149" in i.effective_user_agent()
+
+
+def test_off_is_inactive():
+    i = IdentityConfig(preset="off")
     assert i.preset == "off" and not i.active
     assert i.effective_user_agent() is None and i.effective_headers() == {}
+
+
+def test_browser_preset_rotates_referer():
+    from watchtower.config import REFERER_POOL
+
+    i = IdentityConfig(preset="chrome-win")
+    h = i.effective_headers()
+    assert h["Sec-Fetch-Site"] == "cross-site"          # coherent with a referrer
+    assert h["Referer"] in REFERER_POOL                 # rotated from the pool
+    # 'off' never injects a referrer.
+    assert "Referer" not in IdentityConfig(preset="off").effective_headers()
+
+
+def test_explicit_referer_overrides_pool():
+    i = IdentityConfig(preset="chrome-win", headers={"Referer": "https://intranet.local/"})
+    assert i.effective_headers()["Referer"] == "https://intranet.local/"
 
 
 # --- command injection -----------------------------------------------------

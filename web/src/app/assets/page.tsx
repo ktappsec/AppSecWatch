@@ -154,16 +154,27 @@ export default function AssetsPage() {
   const toggle = (g: string) =>
     setCollapsed((s) => { const n = new Set(s); n.has(g) ? n.delete(g) : n.add(g); return n; });
 
-  // Per-asset detail (profile + tech + findings) — inline expanding row.
+  // Per-asset detail (profile + tech + findings + surface + screenshot) — inline row.
   const [expanded, setExpanded] = React.useState<Set<string>>(new Set());
   // fqdn -> findings (undefined = not fetched, null = loading, [] / list = loaded)
   const [findingsCache, setFindingsCache] = React.useState<Record<string, Finding[] | null>>({});
+  // fqdn -> screenshot object URL (undefined = not fetched, null = loading, "" = none, url = shown)
+  const [shotCache, setShotCache] = React.useState<Record<string, string | null>>({});
+  const createdUrls = React.useRef<string[]>([]);
+  // Revoke all object URLs on unmount so blobs don't leak.
+  React.useEffect(() => () => { createdUrls.current.forEach((u) => URL.revokeObjectURL(u)); }, []);
   const toggleDetail = async (a: Asset) => {
     setExpanded((s) => { const n = new Set(s); n.has(a.fqdn) ? n.delete(a.fqdn) : n.add(a.fqdn); return n; });
     if (!(a.fqdn in findingsCache)) {
       setFindingsCache((c) => ({ ...c, [a.fqdn]: null }));
       try { const f = await api.assetFindings(a.fqdn); setFindingsCache((c) => ({ ...c, [a.fqdn]: f })); }
       catch { setFindingsCache((c) => ({ ...c, [a.fqdn]: [] })); }
+    }
+    if (!(a.fqdn in shotCache)) {
+      setShotCache((c) => ({ ...c, [a.fqdn]: null }));
+      const url = await api.assetScreenshot(a.fqdn);
+      if (url) createdUrls.current.push(url);
+      setShotCache((c) => ({ ...c, [a.fqdn]: url ?? "" }));
     }
   };
 
@@ -326,7 +337,7 @@ export default function AssetsPage() {
                         {expanded.has(a.fqdn) && (
                           <TableRow className="hover:bg-transparent">
                             <TableCell colSpan={8} className="bg-secondary/30 p-4">
-                              <AssetDetailPanel asset={a} findings={findingsCache[a.fqdn]} />
+                              <AssetDetailPanel asset={a} findings={findingsCache[a.fqdn]} screenshot={shotCache[a.fqdn]} />
                             </TableCell>
                           </TableRow>
                         )}
@@ -345,11 +356,18 @@ export default function AssetsPage() {
 }
 
 /** Inline detail panel shown under an expanded asset row. */
-function AssetDetailPanel({ asset, findings }: { asset: Asset; findings: Finding[] | null | undefined }) {
+function AssetDetailPanel(
+  { asset, findings, screenshot }:
+  { asset: Asset; findings: Finding[] | null | undefined; screenshot: string | null | undefined },
+) {
   const p = (asset.profile ?? {}) as Record<string, unknown>;
   const flags = ["handles_auth", "handles_pii", "handles_payments", "has_file_upload", "is_api"]
     .filter((k) => p[k]);
+  const s = asset.surface ?? null;
+  const hasSurface = !!s && [s.third_party_domains, s.endpoints, s.cookie_keys, s.storage_keys]
+    .some((x) => x && x.length);
   return (
+    <div className="space-y-4">
     <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
       {/* Profile */}
       <section className="space-y-1.5">
@@ -404,6 +422,55 @@ function AssetDetailPanel({ asset, findings }: { asset: Asset; findings: Finding
           </div>
         )}
       </section>
+    </div>
+
+    {/* Surface (EASM) + screenshot */}
+    <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+      <section className="space-y-2 md:col-span-2">
+        <h4 className="text-xs font-semibold uppercase text-muted-foreground">Surface / connections</h4>
+        {hasSurface ? (
+          <div className="space-y-2 text-xs">
+            <SurfaceList label="3rd-party domains" items={s?.third_party_domains} />
+            <SurfaceList label="Endpoints" items={s?.endpoints} mono />
+            <SurfaceList label="Cookie keys" items={s?.cookie_keys} mono />
+            <SurfaceList label="Storage keys" items={s?.storage_keys} mono />
+          </div>
+        ) : <p className="text-xs text-muted-foreground">No surface data (run a scan that renders the page).</p>}
+      </section>
+
+      <section className="space-y-1.5">
+        <h4 className="text-xs font-semibold uppercase text-muted-foreground">Screenshot</h4>
+        {screenshot === null || screenshot === undefined ? (
+          <p className="text-xs text-muted-foreground">Loading…</p>
+        ) : screenshot === "" ? (
+          <p className="text-xs text-muted-foreground">No screenshot.</p>
+        ) : (
+          <a href={screenshot} target="_blank" rel="noreferrer">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={screenshot} alt={`${asset.fqdn} screenshot`}
+              className="max-h-44 rounded border border-border transition-smooth hover:opacity-90" />
+          </a>
+        )}
+      </section>
+    </div>
+    </div>
+  );
+}
+
+/** A labelled, wrapped chip list for one facet of an asset's surface. */
+function SurfaceList({ label, items, mono }: { label: string; items?: string[]; mono?: boolean }) {
+  if (!items || items.length === 0) return null;
+  return (
+    <div className="space-y-1">
+      <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
+      <div className="flex flex-wrap gap-1">
+        {items.map((it, i) => (
+          <span key={i} className={cn(
+            "rounded border border-border px-1.5 py-0.5 text-[10px]",
+            mono && "font-mono",
+          )}>{it}</span>
+        ))}
+      </div>
     </div>
   );
 }

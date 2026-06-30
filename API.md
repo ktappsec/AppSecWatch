@@ -103,7 +103,7 @@ dependencies.
 | Parent | Sub-tokens | Effect |
 |---|---|---|
 | `recon` | `recon.subfinder`, `recon.dns`, `recon.tlsx`, `recon.httpx` | Narrow discovery (`--only recon.subfinder` = enumerate & stop) or drop the optional re-feed (`--skip recon.tlsx`). `subfinder`/`dns`/`httpx` are the mandatory chain whenever audit runs; only `recon.tlsx` is skippable. |
-| `ai` | `ai.profile`, `ai.triage`, `ai.supply-chain` | Run one analysis. `ai.triage`/`ai.profile` need only httpx; `ai.supply-chain` auto-includes the crawler. They don't pull each other in. `ai.headers` is a deprecated alias of `ai.triage`. |
+| `ai` | `ai.profile`, `ai.triage`, `ai.supply-chain`, `ai.summary` | Run one analysis. `ai.triage` needs only httpx; `ai.supply-chain` auto-includes the crawler. `ai.profile` needs only httpx under `ai.profile.render: auto`/`never`, but `render: always` **force-includes** the crawler (one browser per host). `ai.summary` makes ONE whole-run LLM call at the **tail** of the AI phase (after triage suppression) to write the `executive.html` narrative; it degrades to deterministic prose. They don't otherwise pull each other in. `ai.headers` is a deprecated alias of `ai.triage`. |
 | `headers` | `headers.csp`, `headers.best-practice` | Run one deterministic header analysis. `headers.csp` = structured CSP weakness rules; `headers.best-practice` = the OWASP header catalog (HSTS, clickjacking, cookies, info-disclosure, …). Both passive over httpx headers. (`headers.cors` is reserved for a future active probe.) |
 | `nuclei` | `nuclei.critical`, `nuclei.high`, `nuclei.medium`, `nuclei.low` (opt-in `nuclei.info`) | Map to `nuclei -severity …`. Parent `nuclei` uses the config's `tools.nuclei.severities`. |
 
@@ -294,15 +294,25 @@ llm:
   model: <str>              # required; e.g., llama3.1:8b-instruct
   timeout_seconds: 120      # optional; default 120
   max_retries: 1            # optional; default 1
+  app_title: WatchTower     # optional; X-Title header (the request "name")
+  app_url: null             # optional; HTTP-Referer header (sent only if set)
+  tag_requests: true        # optional; append call purpose to the title for spend breakdown
+  models: {}                # optional; per-call-type model overrides (see below)
 ```
 
+**Per-call-type models.** `models` is a map keyed by call purpose — `profile`, `triage`, `supply`, `nuclei-gen` — letting each call type use a different model; any purpose not listed falls back to `model`. The three per-host calls (`profile` / `triage` / `supply`) dominate cost on a large estate, so e.g. a cheap/fast model for `profile` + `supply` and a capable one for `triage` (the highest-stakes call — it can soft-suppress findings) cuts spend without touching anything else. Empty (default) = one model for every call.
+
 The client posts to `{base_url}/chat/completions` with OpenAI-shape payloads. `response_format: {"type": "json_object"}` is sent; backends that reject it get a retry without that field automatically.
+
+**Request attribution.** Every call carries an `X-Title` header (default `WatchTower`) and, when `app_url` is set, an `HTTP-Referer` — OpenRouter surfaces both in its activity log, so you can see what spent what. With `tag_requests: true` (default), each call's purpose is appended to the title (`WatchTower: profile`, `WatchTower: triage`, `WatchTower: supply`, `WatchTower: nuclei-gen`) so spend groups by call type; on an `openrouter.ai` `base_url` the OpenAI `user` field also carries the full per-host label (e.g. `profile[app.example.com]`). The headers and `user` field are ignored by backends that don't use them, so this is harmless on Ollama / llama.cpp / vLLM / LM Studio.
 
 ### `ai`
 
 ```yaml
 ai:
   profiling: true       # bool; default true
+  profile:
+    render: auto        # auto | always | never — profiler INPUT source (default auto)
   suppression:          # cross-source AI false-positive suppression (ai.triage)
     enabled: true
     min_confidence: medium     # low | medium | high
@@ -319,14 +329,15 @@ ai:
 
 | Key | Type | Default | Notes |
 |---|---|---|---|
-| `profiling` | bool | `true` | Enable the **context-aware profiling pass** (`ai.profile` stage). When `true`, an `AppProfile` is inferred per host from httpx signals and fed into the triage + supply-chain prompts (triage becomes an expectation-gap diff against the app's `expected_controls`; severity is calibrated to the inferred app type). When `false`, the analysis prompts use their **default context-light form**, no `03_ai/profile/` artifact is written, and the pipeline makes 2 LLM calls/host instead of 3. |
+| `profiling` | bool | `true` | Enable the **context-aware profiling pass** (`ai.profile` stage). When `true`, an `AppProfile` is inferred per host and fed into the triage + supply-chain prompts (triage becomes an expectation-gap diff against the app's `expected_controls`; severity is calibrated to the inferred app type). When `false`, the analysis prompts use their **default context-light form**, no `03_ai/profile/` artifact is written, and the pipeline makes 2 LLM calls/host instead of 3. |
+| `profile.render` | enum | `auto` | Controls the profiler's **input source** (`AIProfileConfig.render`). `auto` (default) = use the supply-chain crawler's **rendered** text + a curated resource/endpoint/cookie/storage manifest when the crawler ran for that host, else fall back to the fast **httpx pre-JavaScript** signals (never opens a browser just to profile). `always` = render **every** profiled host in a headless browser even when supply-chain is off (slower — one browser per host; force-includes the crawler). `never` = httpx pre-JS signals only. |
 | `suppression.enabled` | bool | `true` | Let the `ai.triage` stage **soft-suppress** deterministic findings (any source) it judges false-positive. Hidden + uncounted but kept in `findings.json` (auditable, never deleted). |
 | `suppression.min_confidence` | enum | `medium` | Minimum AI verdict confidence to actually hide a finding. |
 | `suppression.max_severity` | enum | `medium` | Highest severity the AI may auto-hide. Findings **above** this are never offered to the AI and always stay visible + counted. |
 | `suppression.require_profile` | bool | `false` | When `true`, only hosts with a usable, non-low-confidence `AppProfile` get suppression (legacy gate). Default `false`: the profile is calibration, not a precondition. An AI degrade hides nothing either way. |
 | `prompts.*` | str \| null | `null` | Override a built-in AI **system** prompt (slot ids mirror `watchtower/ai/prompts.py` `PROMPT_SLOTS`). `null`/blank = built-in default. Shape-hints + user-message assembly stay in code, so an override can change judgment but never break JSON validation. Usually edited via the UI's **AI Tuning** page. |
 
-Profiling adds one LLM call per host. Hard failures degrade to the default prompts for that host; a profile that self-reports `confidence: low` is still used but does not drive aggressive severity escalation. The profiling stage runs **early** (after httpx, before the audit fan-out) and never gates the deterministic scanners — nuclei/sslscan/crawler always run at full coverage regardless of the profile.
+Profiling adds one LLM call per host. Hard failures degrade to the default prompts for that host; a profile that self-reports `confidence: low` is still used but does not drive aggressive severity escalation. The profiling stage runs at the **head of the `ai-analyze` phase** (after the audit fan-out) so it can consume the crawler's rendered capture under `render: auto`/`always`; with `render: always` the crawler (the `supply-chain` capability) is **force-included** even when supply-chain analysis isn't selected. It never gates the deterministic scanners — nuclei/sslscan/crawler always run at full coverage regardless of the profile.
 
 ### `headers`
 
@@ -415,8 +426,33 @@ tools:
     wait_until: networkidle    # one of: load, domcontentloaded, networkidle, commit
     timeout_ms: 30000          # hard navigation timeout
     user_agent: null           # null = default Chromium UA
+    screenshot: true           # bool; default true — capture a per-host viewport
+                               # screenshot during the crawl
     extra_flags: []            # reserved; not currently used by Playwright wrapper
 ```
+
+`screenshot` (`PlaywrightConfig.screenshot`) saves a per-host viewport PNG as a run
+artifact (`02_audit/playwright/<host>.png`) that the UI surfaces. The screenshot is
+**never** sent to the LLM and **never** inlined into `report.html`. Disable it for
+large inventories to save disk.
+
+### `report` — executive report branding & output
+
+```yaml
+report:
+  org_name: null              # str|null — letterhead org (null → scanned root)
+  classification: Confidential # str — banner label (blank to omit)
+  logo_path: null             # str|null — logo file, base64-embedded into executive.html
+  executive_pdf: true         # bool — also render executive.pdf via the bundled Chromium
+```
+
+All optional. Every scan writes `executive.html` (a ≤2-page leadership one-pager)
+alongside `report.html`; both share a light/dark theme toggle and a print
+stylesheet. `executive_pdf` additionally renders `executive.pdf` best-effort (a
+missing/failed browser is logged and skipped — never an error). The executive
+report's posture rating, counts, scale, and top-5 risks are deterministic; the
+`ai.summary` capability (when AI runs) adds the narrative prose, degrading to
+templated text otherwise. Display-only — `report` never gates a scan.
 
 ### Generating a fresh template
 
@@ -437,6 +473,8 @@ runs/<UTC-ISO-timestamp>-<root-slug>/
 ├── errors.json                  # consolidated failures: stage crashes + every per-host error
 ├── summary.json                 # end-of-run rollup (findings/assets/errors/timings) — RunSummary
 ├── report.html                  # single-file HTML dashboard (uncompressed)
+├── executive.html               # leadership one-pager (uncompressed; light/dark + print)
+├── executive.pdf                # optional — rendered from executive.html (cfg.report.executive_pdf)
 │
 │  --- with --compress (default): ---
 ├── 01_recon.tar.gz              # was 01_recon/
@@ -455,14 +493,16 @@ runs/<UTC-ISO-timestamp>-<root-slug>/
 │   ├── takeovers/nuclei-takeovers.jsonl
 │   ├── sslscan/<host>.xml                    # raw sslscan XML, one per host
 │   ├── nuclei/findings.jsonl
-│   └── playwright/<host>.json                # crawler artifact per host
+│   ├── playwright/<host>.json                # crawler artifact per host
+│   └── playwright/<host>.png                 # per-host screenshot (tools.playwright.screenshot)
 └── 03_ai/
     ├── profile/<host>.json       # AppProfile (omitted when ai.profiling: false)
     ├── headers/<host>.json
-    └── supply_chain/<host>.json
+    ├── supply_chain/<host>.json
+    └── exec_summary/summary.json # ExecutiveSummary narrative (ai.summary; if it ran)
 ```
 
-The top-level files (`config.snapshot.yaml`, `versions.json`, `manifest.json`, `run.log.jsonl`, `errors.json`, `summary.json`, `report.html`) always stay uncompressed so post-run tooling (CI, downstream parsers, the report itself) can read them without unpacking. Only the bulk per-stage subdirectories get archived.
+The top-level files (`config.snapshot.yaml`, `versions.json`, `manifest.json`, `run.log.jsonl`, `errors.json`, `summary.json`, `report.html`, `executive.html`, `executive.pdf`) always stay uncompressed so post-run tooling (CI, downstream parsers, the report itself) can read them without unpacking. Only the bulk per-stage subdirectories get archived.
 
 ### Inspecting a compressed run
 
@@ -568,9 +608,25 @@ Raw `sslscan --xml` output, one file per host. WatchTower parses each `<ssltest>
     {"url": "https://example.com/app.js", "status": 200,
      "initiator_url": "https://www.example.com/", "method": "GET"}
   ],
+  "resources": [
+    {"url": "https://cdn.example.com/style.css", "status": 200,
+     "type": "stylesheet", "method": "GET"}
+  ],
+  "cookies": [
+    {"name": "session", "secure": true, "http_only": true, "same_site": "Lax"}
+  ],
+  "local_storage_keys": ["theme", "feature_flags"],
+  "session_storage_keys": ["csrf"],
+  "rendered_text": "Sign in to Acme …",
   "errors": []
 }
 ```
+
+`resources`, `cookies`, `local_storage_keys`, `session_storage_keys`, and
+`rendered_text` are **structure only** — cookie names + flags (never values),
+storage **keys** (never values), and the post-JavaScript visible text. No value or
+response body is captured. When `tools.playwright.screenshot` is on, a sibling
+`<host>.png` viewport screenshot is written next to this file.
 
 ### `03_ai/profile/<host>.json`
 
@@ -892,8 +948,19 @@ class CrawlerArtifact(BaseModel):
     status: int | None
     headers: dict[str, str]         # lower-cased keys
     scripts: list[dict[str, Any]]   # {url, status, initiator_url, method}
+    resources: list[dict[str, Any]] # {url, status, type, method} — endpoint manifest
+    cookies: list[dict[str, Any]]   # cookie names + flags ONLY (no values)
+    local_storage_keys: list[str]   # keys only (no values)
+    session_storage_keys: list[str] # keys only (no values)
+    rendered_text: str              # post-JS visible text (structure only)
     errors: list[str]
 ```
+
+`resources`, `cookies`, `local_storage_keys`, `session_storage_keys`, and
+`rendered_text` are **structure only** — never a cookie/storage value or a response
+body. The per-host screenshot (`<host>.png`, written when
+`tools.playwright.screenshot` is on) is a run artifact, not a model field; it is
+never sent to the LLM and never inlined into `report.html`.
 
 ### `AIFinding` / `AIResponse`
 
@@ -1097,19 +1164,22 @@ For the CLI (`scan`) no secrets flow through env vars: the LLM API key lives in 
 2.  recon.dnsx-triage        (initial pass)
 3.  recon.tlsx-loop          (iterations 1..3 — each runs dnsx + triage on new SANs)
 4.  recon.httpx              (-include-response; parses PageSignals from the body)
-5.  ai.profile               (per host; only when ai.profiling: true)
-6.  audit.takeovers
-7.  audit.parallel           (sslscan + nuclei + crawler + headers concurrently)
+5.  audit.takeovers
+6.  audit.parallel           (sslscan + nuclei + crawler + headers concurrently)
+7.  ai.profile               (per host; only when ai.profiling: true — head of ai-analyze)
 8.  ai.analyze               (header + supply analysis; consumes AppProfile + the
                               deterministic header findings, soft-suppresses FPs)
 9.  report
 10. compress                 (if --compress)
 ```
 
-`ai.profile` runs **before** the audit fan-out so the profile is available to the
-analysis prompts; it never gates the deterministic scanners. The deterministic
-`audit.headers` stage runs in the audit group, so its findings exist before
-`ai.analyze` can attach soft-suppression verdicts.
+`ai.profile` runs at the **head of the `ai-analyze` phase** (after the audit
+fan-out) so it can consume the crawler's rendered capture (`ai.profile.render:
+auto`/`always`); it never gates the deterministic scanners. With `render: always`
+the crawler (the `supply-chain` capability) is **force-included** even when
+supply-chain analysis isn't selected. The deterministic `audit.headers` stage runs
+in the audit group, so its findings exist before `ai.analyze` can attach
+soft-suppression verdicts.
 
 ### Stage selection & capability resolution
 
@@ -1120,6 +1190,8 @@ filters the stage list by capability token and resolves dependencies:
   prerequisite unless the selection is exactly `--only recon` (discovery-only: spine +
   report, stop).
 * Selecting `ai` **auto-includes** the crawler (`supply-chain`) and logs it.
+* `ai.profile.render: always` **force-includes** the crawler (`supply-chain`) even when
+  supply-chain analysis isn't selected, so the profiler always has a rendered capture.
 * `--skip supply-chain` while `ai` runs keeps `ai.profile` + header analysis and disables
   only the supply-chain analysis half.
 * The resulting coverage map is written to `manifest.json` and threaded into the report

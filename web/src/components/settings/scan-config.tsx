@@ -27,14 +27,34 @@ type LlmShape = {
   api_key?: string;
   timeout_seconds?: number;
   max_retries?: number;
+  app_title?: string;
+  app_url?: string;
+  tag_requests?: boolean;
+  models?: Record<string, string>;
 };
+
+// Per-call-type model override slots (LLMConfig.models keys = call purpose).
+const MODEL_SLOTS: { key: string; label: string }[] = [
+  { key: "profile", label: "profile" },
+  { key: "triage", label: "triage" },
+  { key: "supply", label: "supply-chain" },
+  { key: "summary", label: "summary" },
+  { key: "nuclei-gen", label: "nuclei-gen" },
+];
 type Dict = Record<string, unknown>;
+
+type ReportShape = {
+  org_name?: string;
+  classification?: string;
+  logo_path?: string;
+  executive_pdf?: boolean;
+};
 
 // Keys surfaced as friendly fields → stripped from the JSON editor (which keeps
 // only the long tail: tools, concurrency, anything unrecognized).
 const PROMOTED = [
   "llm", "mmdb_path", "throttle", "ai", "headers", "identity",
-  "paths_per_host",
+  "paths_per_host", "report",
 ];
 
 const IDENTITY_PRESETS = ["off", "chrome-win", "chrome-mac", "firefox"];
@@ -76,6 +96,8 @@ export function ScanConfigCard() {
   const [aiBlock, setAiBlock] = React.useState<Dict>({});
   const [headersBlock, setHeadersBlock] = React.useState<Dict>({});
   const [idBlock, setIdBlock] = React.useState<Dict>({});
+  // Executive-report branding + PDF toggle (cfg.report).
+  const [report, setReport] = React.useState<ReportShape>({});
   const [restJson, setRestJson] = React.useState("");
   const [jsonError, setJsonError] = React.useState<string | null>(null);
   const [paths, setPaths] = React.useState<{ config_store: string; db: string } | null>(null);
@@ -109,6 +131,7 @@ export function ScanConfigCard() {
     setIdUA((id.user_agent as string) || "");
     setIdLocale((id.locale as string) || "");
     setIdHeaders(headersToText((id.headers as Record<string, string>) || {}));
+    setReport((base.report as ReportShape) || {});
     for (const k of PROMOTED) delete base[k];
     setRestJson(Object.keys(base).length ? JSON.stringify(base, null, 2) : "");
   }
@@ -134,6 +157,18 @@ export function ScanConfigCard() {
     if (llm.max_retries !== undefined && Number.isFinite(Number(llm.max_retries)))
       llmOut.max_retries = Number(llm.max_retries);
     if (apiKey.trim()) llmOut.api_key = apiKey.trim(); // write-only secret
+    if (llm.app_title?.trim()) llmOut.app_title = llm.app_title.trim();
+    if (llm.app_url?.trim()) llmOut.app_url = llm.app_url.trim();
+    llmOut.tag_requests = llm.tag_requests !== false; // default on
+    const models: Record<string, string> = {};
+    for (const [k, v] of Object.entries(llm.models || {}))
+      if (typeof v === "string" && v.trim()) models[k] = v.trim();
+    if (Object.keys(models).length) llmOut.models = models;
+
+    const reportOut: ReportShape = { executive_pdf: report.executive_pdf !== false };
+    if (report.org_name?.trim()) reportOut.org_name = report.org_name.trim();
+    if (report.classification?.trim()) reportOut.classification = report.classification.trim();
+    if (report.logo_path?.trim()) reportOut.logo_path = report.logo_path.trim();
 
     const paths = splitList(pathsPerHost);
     const body: ServerConfigView = {
@@ -152,6 +187,7 @@ export function ScanConfigCard() {
           locale: idLocale.trim() || null,
         },
         paths_per_host: paths.length ? paths : ["/"],
+        report: reportOut,
       },
     };
 
@@ -229,6 +265,38 @@ export function ScanConfigCard() {
                     placeholder="1" />
                 </Field>
               </div>
+              <Field label="App title" hint="X-Title — the request name in OpenRouter's logs">
+                <Input value={llm.app_title ?? ""} onChange={(e) => setLlm({ ...llm, app_title: e.target.value })}
+                  placeholder="WatchTower" />
+              </Field>
+              <Field label="App URL" hint="optional HTTP-Referer">
+                <Input value={llm.app_url ?? ""} onChange={(e) => setLlm({ ...llm, app_url: e.target.value })}
+                  placeholder="https://watchtower.internal" />
+              </Field>
+              <Field label="Per-call attribution" hint="append the call purpose (profile/triage/…) so OpenRouter spend breaks down by call type">
+                <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <input type="checkbox" className="h-4 w-4 accent-accent"
+                    checked={llm.tag_requests !== false}
+                    onChange={(e) => setLlm({ ...llm, tag_requests: e.target.checked })} />
+                  Tag requests by purpose
+                </label>
+              </Field>
+            </div>
+            <p className="mt-3 text-xs text-muted-foreground">
+              Per-call models <span className="opacity-70">— optional; blank uses Model above. Profiling tolerates a cheap/fast model; keep triage capable (it can suppress findings).</span>
+            </p>
+            <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {MODEL_SLOTS.map((slot) => (
+                <Field key={slot.key} label={`Model · ${slot.label}`}>
+                  <Input value={llm.models?.[slot.key] ?? ""}
+                    onChange={(e) => {
+                      const m = { ...(llm.models || {}) };
+                      if (e.target.value) m[slot.key] = e.target.value; else delete m[slot.key];
+                      setLlm({ ...llm, models: m });
+                    }}
+                    placeholder="(uses Model above)" className="font-mono text-xs" />
+                </Field>
+              ))}
             </div>
           </Section>
 
@@ -255,6 +323,41 @@ export function ScanConfigCard() {
                 <Input value={pathsPerHost} onChange={(e) => setPathsPerHost(e.target.value)} placeholder="/" />
               </Field>
             </div>
+          </Section>
+
+          <Separator />
+
+          {/* Executive report branding */}
+          <Section title="Executive report">
+            <p className="text-xs text-muted-foreground">
+              Branding for the executive one-pager (executive.html). All optional —
+              an unset org name falls back to the scanned root.
+            </p>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <Field label="Organization name" hint="letterhead — blank = scanned root">
+                <Input value={report.org_name ?? ""}
+                  onChange={(e) => setReport({ ...report, org_name: e.target.value })}
+                  placeholder="Kuveyt Türk" />
+              </Field>
+              <Field label="Classification" hint="banner label">
+                <Input value={report.classification ?? ""}
+                  onChange={(e) => setReport({ ...report, classification: e.target.value })}
+                  placeholder="Confidential" />
+              </Field>
+            </div>
+            <Field label="Logo path" hint="optional — embedded (base64) so the report stays self-contained">
+              <Input value={report.logo_path ?? ""}
+                onChange={(e) => setReport({ ...report, logo_path: e.target.value })}
+                placeholder="/etc/watchtower/logo.png" className="font-mono text-xs" />
+            </Field>
+            <Field label="PDF" hint="also render executive.pdf via the bundled Chromium (best-effort)">
+              <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                <input type="checkbox" className="h-4 w-4 accent-accent"
+                  checked={report.executive_pdf !== false}
+                  onChange={(e) => setReport({ ...report, executive_pdf: e.target.checked })} />
+                Auto-render executive.pdf
+              </label>
+            </Field>
           </Section>
 
           <Separator />

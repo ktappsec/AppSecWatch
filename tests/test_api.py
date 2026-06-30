@@ -57,6 +57,8 @@ def _make_fake_run(*, findings=1, block_event=None, fail=False):
                         title=f"finding-{i}")
             )
         (run_dir / "report.html").write_text("<html><body>report</body></html>")
+        # ReportStage always writes the executive one-pager alongside the report.
+        (run_dir / "executive.html").write_text("<html><body>executive</body></html>")
         if fail:
             raise RuntimeError("boom")
         if block_event is not None:
@@ -182,6 +184,37 @@ def test_subtoken_selection_accepted(tmp_path, monkeypatch):
     with _client(tmp_path, monkeypatch) as client:
         r = client.post("/scans", json={**REQ, "only": ["nuclei.high", "ai.triage"]}, headers=H)
         assert r.status_code == 202
+
+
+def test_scan_accepts_profile_render(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        assert client.post("/scans", json={**REQ, "profile_render": "always"}, headers=H).status_code == 202
+
+
+def test_scan_bad_profile_render_422(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        r = client.post("/scans", json={**REQ, "profile_render": "sometimes"}, headers=H)
+        assert r.status_code == 422
+
+
+def test_profile_render_reaches_engine_config(tmp_path, monkeypatch):
+    seen = {}
+
+    async def fake_run(*args, **kwargs):
+        seen["render"] = args[0].ai.profile.render          # cfg is the first positional arg
+        (kwargs["run_dir"] / "report.html").write_text("<html></html>")
+        return kwargs["run_dir"] / "report.html"
+
+    with _client(tmp_path, monkeypatch, fake_run=fake_run) as client:
+        job = client.post("/scans", json={**REQ, "profile_render": "always"}, headers=H).json()
+        _wait_state(client, job["id"], "completed")
+        assert seen["render"] == "always"
+
+
+def test_asset_screenshot_404_when_absent(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        # Unknown asset / no screenshot on disk → 404 (never a broken image).
+        assert client.get("/assets/nope.example.com/screenshot", headers=H).status_code == 404
 
 
 def test_bad_subtoken_422(tmp_path, monkeypatch):
@@ -592,10 +625,40 @@ def test_lifecycle_completed(tmp_path, monkeypatch):
         assert rj["state"] == "completed"
         assert rj["histogram_totals"]["high"] == 3
         assert len(rj["findings"]) == 3
+        # executive URLs in the result: HTML always present, PDF null (not rendered)
+        assert rj["executive_url"] == f"/scans/{job_id}/executive"
+        assert rj["executive_pdf_url"] is None
 
         report = client.get(f"/scans/{job_id}/report", headers=H)
         assert report.status_code == 200
         assert "report" in report.text
+
+        # executive one-pager is served
+        execr = client.get(f"/scans/{job_id}/executive", headers=H)
+        assert execr.status_code == 200
+        assert "executive" in execr.text
+        # the PDF is best-effort; the fake run wrote none → 404 (not 409)
+        assert client.get(f"/scans/{job_id}/executive.pdf", headers=H).status_code == 404
+
+
+def test_executive_pdf_served_when_present(tmp_path, monkeypatch):
+    async def fake_run(*args, **kwargs):
+        run_dir = kwargs["run_dir"]
+        state = kwargs["state"]
+        state.coverage = {"recon": {"ran": True, "reason": "prerequisite"}}
+        (run_dir / "report.html").write_text("<html>r</html>")
+        (run_dir / "executive.html").write_text("<html>e</html>")
+        (run_dir / "executive.pdf").write_bytes(b"%PDF-1.4 fake")
+        return run_dir / "report.html"
+
+    with _client(tmp_path, monkeypatch, fake_run) as client:
+        job_id = client.post("/scans", json=REQ, headers=H).json()["id"]
+        _wait_state(client, job_id, "completed")
+        rj = client.get(f"/scans/{job_id}/result", headers=H).json()
+        assert rj["executive_pdf_url"] == f"/scans/{job_id}/executive.pdf"
+        pdf = client.get(f"/scans/{job_id}/executive.pdf", headers=H)
+        assert pdf.status_code == 200
+        assert pdf.headers["content-type"] == "application/pdf"
 
 
 def test_result_409_before_finish(tmp_path, monkeypatch):

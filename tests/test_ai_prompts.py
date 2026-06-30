@@ -34,6 +34,26 @@ def test_profile_prompt_mentions_pre_js_and_expected_controls():
     assert "expected_controls" in user
     assert "Acme Login" in user
     assert "do NOT repeat httpx_tech" in user      # detected_tech echo trimmed
+    # Without a render, the rendered/observed payload fields are absent.
+    assert "rendered_body_text" not in user
+    assert "observed_resources" not in user
+
+
+def test_profile_prompt_includes_rendered_and_surface_when_present():
+    sig = PageSignals(host="h", title="App")
+    surface = {
+        "third_party_domains": ["stripe.com"],
+        "endpoints": ["POST api.stripe.com/v1/tokens"],
+        "cookie_keys": ["JSESSIONID"],
+        "storage_keys": ["access_token"],
+    }
+    system, user = build_profile_prompt(
+        sig, rendered_text="Welcome to the dashboard", surface=surface,
+    )
+    assert "rendered_body_text" in user and "Welcome to the dashboard" in user
+    assert "observed_resources" in user and "stripe.com" in user
+    # The system prompt explains how to use the new signals.
+    assert "observed_resources" in system or "rendered_body_text" in system
 
 
 def test_triage_default_when_no_profile():
@@ -64,6 +84,22 @@ def test_errored_profile_falls_back_to_default():
     system, user = build_triage_prompt("https://h", {"server": "nginx"}, None, p)
     assert "application profile" not in system.lower()   # default, not profiled
     assert "Application profile" not in user
+
+
+def test_triage_marks_infra_cookies_and_nonfindings_out_of_scope():
+    system, _ = build_triage_prompt("https://h", {"server": "nginx"})
+    low = system.lower()
+    assert "not findings" in low                      # the rule-5 block
+    assert "bigipserver" in low and "adrum" in low    # infra cookie families named
+    assert "xsrf-token" in low                        # by-design anti-CSRF token
+    assert "verify/ensure" in low                     # reminders excluded
+
+
+def test_supply_excludes_absence_and_reminders():
+    sys_default, _ = build_supply_chain_prompt("https://h", [{"url": "https://x/a.js", "party": "3rd"}])
+    low = sys_default.lower()
+    assert "absence of scripts is not a finding" in low
+    assert "verify/ensure" in low
 
 
 def test_triage_surfaces_findings_by_ref():

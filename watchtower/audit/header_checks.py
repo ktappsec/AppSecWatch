@@ -28,6 +28,7 @@ from __future__ import annotations
 import re
 from urllib.parse import urlparse
 
+from watchtower.audit.cookies import is_infra_cookie
 from watchtower.config import HeadersConfig
 from watchtower.models import Finding, PageSignals, Severity
 
@@ -68,7 +69,10 @@ def _apparently_sensitive(signals: PageSignals) -> bool:
     noisier situational checks so they don't spam every static asset."""
     if signals.has_password_input:
         return True
-    return any(_SESSION_COOKIE_RE.search(_cookie_name(c)) for c in signals.set_cookies)
+    return any(
+        _SESSION_COOKIE_RE.search(name) and not is_infra_cookie(name)
+        for name in (_cookie_name(c) for c in signals.set_cookies)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -211,6 +215,10 @@ def check_best_practice(url: str, signals: PageSignals, em: _Emitter) -> None:
     # --- Cookie flags (per cookie) ----------------------------------------
     for raw in signals.set_cookies:
         name = _cookie_name(raw) or "(unnamed)"
+        # Load-balancer / WAF / RUM cookies (F5 BIG-IP, AWS ALB, Akamai, …) carry
+        # no app or session state — their flag gaps are not a finding. Drop them.
+        if is_infra_cookie(name):
+            continue
         session_like = bool(_SESSION_COOKIE_RE.search(name))
         if https and not _has_flag(raw, "secure"):
             em.add(source="headers", check_id=f"cookie.secure.{name}", severity="medium",

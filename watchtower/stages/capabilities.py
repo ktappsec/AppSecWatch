@@ -45,7 +45,7 @@ RECON_STEPS = ("subfinder", "dns", "tlsx", "httpx")
 RECON_REQUIRED = ("dns", "httpx")
 RECON_OPTIONAL = ("subfinder", "tlsx")
 
-AI_STEPS = ("profile", "triage", "supply-chain")
+AI_STEPS = ("profile", "triage", "supply-chain", "summary")
 
 # Deprecated capability tokens → their current name. Applied before validation so
 # saved scan-templates/schedules that stored the old token keep working.

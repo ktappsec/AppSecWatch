@@ -93,6 +93,7 @@ export const CAPABILITY_TOKENS: CapabilityToken[] = [
       { token: "ai.profile", label: "profile", description: "per-app profiling" },
       { token: "ai.triage", label: "triage", description: "cross-source FP suppression + header gaps" },
       { token: "ai.supply-chain", label: "supply-chain", description: "script risk (needs crawler)" },
+      { token: "ai.summary", label: "summary", description: "executive-summary narrative (1 call/run)" },
     ],
   },
 ];

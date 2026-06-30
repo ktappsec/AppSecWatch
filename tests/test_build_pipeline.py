@@ -129,6 +129,88 @@ def test_ai_headers_alias_still_works():
     assert ai is not None and ai.do_triage is True and ai.do_supply is False
 
 
+def test_profile_runs_at_head_of_ai_analyze():
+    # ai.profile must run AFTER the audit fan-out (so it can read the crawler
+    # capture) and BEFORE ai.analyze (triage/supply use the profile).
+    stages, _ = build_pipeline(
+        _cfg(), include_report=_DummyReport(), include_compress=None,
+    )
+    names = [s.name for s in stages]
+    assert names.index("audit.parallel") < names.index("ai.profile") < names.index("ai.analyze")
+
+
+def test_ai_summary_runs_at_tail_of_ai_analyze():
+    # ai.summary must run AFTER ai.analyze (it summarizes the post-triage findings)
+    # and be the last ai-analyze stage, immediately before the report.
+    stages, _ = build_pipeline(
+        _cfg(), include_report=_DummyReport(), include_compress=None,
+    )
+    names = [s.name for s in stages]
+    assert names.index("ai.analyze") < names.index("ai.summary")
+    assert names.index("ai.profile") < names.index("ai.summary")
+    assert names.index("ai.summary") == names.index("report") - 1
+
+
+def test_ai_summary_only_builds_stage_without_aistage():
+    # --only ai.summary builds the summary stage even though no AIStage is created
+    # (the tail append must precede the empty-phase guard).
+    stages, _ = build_pipeline(
+        _cfg(), only={"ai.summary"},
+        include_report=_DummyReport(), include_compress=None,
+    )
+    assert _stage(stages, "ai.summary") is not None
+    assert _stage(stages, "ai.analyze") is None
+    assert _stage(stages, "ai.profile") is None
+
+
+def test_skip_ai_summary_drops_only_the_summary():
+    stages, _ = build_pipeline(
+        _cfg(), skip={"ai.summary"},
+        include_report=_DummyReport(), include_compress=None,
+    )
+    assert _stage(stages, "ai.summary") is None
+    # the rest of the ai phase still runs
+    assert _stage(stages, "ai.analyze") is not None
+    assert _stage(stages, "ai.profile") is not None
+
+
+def test_profile_only_has_no_summary():
+    stages, _ = build_pipeline(
+        _cfg(), only={"ai.profile"},
+        include_report=_DummyReport(), include_compress=None,
+    )
+    assert _stage(stages, "ai.profile") is not None
+    assert _stage(stages, "ai.summary") is None
+    assert _stage(stages, "ai.analyze") is None
+
+
+def test_render_always_forces_crawler_without_supply_analysis():
+    cfg = _cfg()
+    cfg.ai.profile.render = "always"
+    stages, cov = build_pipeline(
+        cfg, only={"ai.profile"},
+        include_report=_DummyReport(), include_compress=None,
+    )
+    # The crawler is force-included so the profiler gets a render, and coverage says so.
+    assert _stage(stages, "audit.crawler") is not None
+    assert cov["supply-chain"] == {"ran": True, "reason": "forced for profile.render=always"}
+    # ...but supply-chain ANALYSIS is not added (no ai.analyze), and the profile runs.
+    assert _stage(stages, "ai.profile") is not None
+    assert _stage(stages, "ai.analyze") is None
+
+
+def test_render_auto_skip_supply_chain_has_no_crawler_but_profiles():
+    cfg = _cfg()  # render defaults to "auto"
+    stages, cov = build_pipeline(
+        cfg, skip={"supply-chain"},
+        include_report=_DummyReport(), include_compress=None,
+    )
+    assert _stage(stages, "audit.crawler") is None
+    assert cov["supply-chain"]["ran"] is False
+    # Profiling still runs (it falls back to httpx signals at runtime).
+    assert _stage(stages, "ai.profile") is not None
+
+
 def test_headers_subtoken_configures_stage():
     # --only headers.csp → full spine + only the deterministic headers stage,
     # scoped to CSP (best-practice off).

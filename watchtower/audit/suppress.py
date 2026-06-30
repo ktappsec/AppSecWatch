@@ -14,17 +14,10 @@ from watchtower.models import AIFindingVerdict, Finding
 
 
 def finding_key(f: Finding) -> str:
-    if f.check_id:
-        return f.check_id
-    ev = f.evidence or {}
-    if f.source in ("nuclei", "takeover"):
-        return ev.get("template_id") or f.title
-    if f.source == "sslscan":
-        return ev.get("check") or f.title
-    if f.source == "js_lib":
-        lib = ev.get("library")
-        return f"{lib}@{ev.get('version', '')}" if lib else f.title
-    return f.title
+    """The stable per-host key for a finding's suppression fingerprint — the rule
+    check_id, else a source-specific natural key, else the title. Centralized on
+    ``Finding.group_key`` so report grouping and suppression agree."""
+    return f.group_key
 
 
 def finding_fingerprint(f: Finding, host: str | None = None) -> str:

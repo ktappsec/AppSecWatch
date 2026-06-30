@@ -80,7 +80,7 @@ Each triaged asset records the reason its status was chosen, surfaced in the rep
 | A — Takeovers | **`nuclei -t http/takeovers/`** (live hosts with a third-party CNAME) **+ deterministic CNAME check** (`audit/takeover_fingerprints.py` over the `dead` set) | per-class targeting | Two halves: nuclei's HTTP body-fingerprint templates need a *resolving* host, so they run on `live` hosts whose `cname_chain` has a hop **not** under any configured root; the dangling/NXDOMAIN class (the `dead` set, no A records) is matched offline against a bundled provider DB (`data/takeover_fingerprints.json`, from can-i-take-over-xyz) — the class nuclei structurally can't reach. Replaces `subjack`. Severity floor `high` (claimable) / `medium` (edge case). |
 | B — TLS | `sslscan --no-failed --xml=<path>` | Live web servers (httpx output) | Per-host pass/fail checklist (§2.5), parsed from sslscan XML via stdlib `xml.etree.ElementTree`. |
 | C — Web CVEs | `nuclei -as` | Live web servers | `severity: low,medium,high,critical`, `-rl 100`, templates **always latest** (not pinned — fresh CVEs > reproducibility). |
-| D — Supply chain | Playwright (Chromium) | Live web servers | Root path only, `networkidle` 30s cap, 5 parallel browsers. Captures all `script`-typed responses. |
+| D — Supply chain | Playwright (Chromium) | Live web servers | Root path only, `networkidle` 30s cap, 5 parallel browsers. Captures the rendered page **structure only, never values** — scripts, all response resources, cookie/storage **names**, rendered visible text, and an optional screenshot. See §2.2.2. |
 | E — Security headers | `audit/header_checks.py` (pure Python) | httpx `PageSignals.headers` | **Deterministic + passive** (no new requests). OWASP best-practice catalog + structured CSP. See §2.2.1. |
 
 Every tool config block in `config.yaml` supports an `extra_flags: []` passthrough escape hatch for unsurfaced flags (timing, user-agent, retries, etc.).
@@ -92,11 +92,37 @@ The `headers` capability (sub-tokens `headers.csp`, `headers.best-practice`; `he
 | Decision | Value |
 |---|---|
 | Determinism | Rules calibrate **only on response facts** they can read unambiguously (URL scheme, `content-type`, `set-cookie`, `has_password_input`): HSTS is N/A over http, clickjacking is informational on a JSON endpoint, situational cross-origin/cache checks fire only on apparently-session-bearing pages. They never infer business context — that is the AI's job. |
-| Catalog | OWASP Secure Headers (HSTS, `nosniff`, clickjacking via XFO **or** CSP `frame-ancestors`, Referrer-/Permissions-Policy, per-cookie Secure/HttpOnly/SameSite, info-disclosure, deprecated `X-XSS-Protection`) + situational COOP/COEP/CORP, `X-Permitted-Cross-Domain-Policies`, cache-control, Clear-Site-Data. CSP = structured directive parse with high-confidence rules (unsafe-inline/eval, wildcard, insecure scheme, missing `object-src 'none'`/`base-uri`, report-only-only). |
+| Catalog | OWASP Secure Headers (HSTS, `nosniff`, clickjacking via XFO **or** CSP `frame-ancestors`, Referrer-/Permissions-Policy, per-cookie Secure/HttpOnly/SameSite, info-disclosure, deprecated `X-XSS-Protection`) + situational COOP/COEP/CORP, `X-Permitted-Cross-Domain-Policies`, cache-control, Clear-Site-Data. CSP = structured directive parse with high-confidence rules (unsafe-inline/eval, wildcard, insecure scheme, missing `object-src 'none'`/`base-uri`, report-only-only). **Cookie-flag checks skip infrastructure cookies** (`audit/cookies.py::is_infra_cookie` — F5 BIG-IP/LB/WAF/RUM cookies that carry no session state); their flag gaps are dropped, not reported. |
 | Output | First-class `Finding`s (sources `headers`/`csp`), each with a stable, host-unique **`check_id`**. They **always stand on their own** — running even with `--skip ai`. |
 | AI relationship | `ai.triage` is a per-host pass over **all** of the host's deterministic findings (nuclei/TLS/js_lib/headers/takeover), not just headers. It adds **only** nuance the rules miss (header combinations, CSP allowlist bypassability — these keep source `ai_headers`) and **soft-suppresses** false-positives across every source. |
 | Soft-suppression | Each finding offered to the AI carries an ephemeral integer `ref`; the AI returns the `ref`s it judges false-positive. A suppressed finding is **hidden from the report + dropped from severity counts but never deleted** (kept in `findings.json`, shown in a collapsible "Suppressed" section, verdict `source='ai_triage'`) — fully auditable. **Gated** via `ai.suppression`: `enabled`, `min_confidence` (default **medium**), a `max_severity` ceiling (default **medium** — findings above it are never even offered, so always stay visible + counted), and `require_profile` (default **false**: the `AppProfile` is calibration context, not a precondition). An AI degrade suppresses nothing — preserving the **"AI never gates deterministic scanners"** invariant: an LLM failure can never erase a deterministic finding. |
 | Scope | Operates on the `PageSignals` captured by the httpx recon step, i.e. every live host discovered by the recon spine. |
+
+#### 2.2.2 Crawler capture (structure only, never values)
+
+The Playwright crawler (`audit/crawler.py`, the `supply-chain` capability) records the
+**shape** of each live host's rendered page into a `CrawlerArtifact` (§5) under
+`02_audit/playwright/<host>.json` — and **never a value**:
+
+* `scripts` — script URLs (unchanged).
+* `resources` — every response resource `{url, type, status, method}`, deduped and capped
+  at ~500.
+* `cookies` — cookie **names + flags** (`name`, `domain`, `path`, `secure`, `http_only`,
+  `same_site`, `expires`) — **never** the cookie value.
+* `local_storage_keys` / `session_storage_keys` — storage **key names** only.
+* `rendered_text` — the rendered visible text (`document.body.innerText`),
+  whitespace-normalized and capped at 2 KB.
+* `screenshot` — an optional per-host PNG (`tools.playwright.screenshot`, default `true`).
+
+**Hard rule:** never any value, cookie content, or response body. `runs/<id>/` and
+`report.html` are **shareable / emailable**, so capturing secrets would turn a scan into a
+credential-leak vector. Captures are best-effort (a failed capture leaves the field empty).
+
+`audit/surface.py::curated_surface(artifact)` projects an artifact into a names-only dict
+`{third_party_domains, script_domains, endpoints, cookie_keys, storage_keys}` (endpoints =
+`"METHOD host/path"`, query strings dropped) — the **single source** reused by both the
+profiler's input summary (§2.3.1) and the per-asset EASM surface exposed by the Web API
+(§5 / `WEB_API_PLAN.md`).
 
 ### 2.3 AI layer
 
@@ -116,16 +142,17 @@ differently, and it can only do that if it first establishes context.
 
 #### 2.3.1 The profiling pass
 
-A dedicated **profiling stage** (`ai.profile`) runs **once per host, early** — right after
-`httpx`, *before* the audit fan-out — and produces a structured `AppProfile` that the
-downstream header and supply-chain prompts consume as context.
+A dedicated **profiling stage** (`ai.profile`) runs **once per host**, at the **head of the
+AI-analysis phase** — *after* the audit fan-out (so it can consume the crawler's rendered
+capture), *before* the `ai.triage` / `ai.supply-chain` prompts — and produces a structured
+`AppProfile` that those downstream prompts consume as context.
 
 | Decision | Value |
 |---|---|
 | Toggle | `ai.profiling: true` by default (the headline capability ships enabled). When `false`, header/supply prompts revert to their **default, context-light prompts verbatim**, no profile artifact is written, and the pipeline makes 2 LLM calls/host instead of 3. |
-| Placement | Early stage after `httpx`, before the audit fan-out. The profile is therefore architecturally available pipeline-wide. **In v1 it influences only the AI prompts.** Deterministic scanners (nuclei/sslscan/crawler) always run at full coverage regardless of profile — an LLM guess must never *gate* a security scan. |
-| Inputs (signals) | Built **entirely from `httpx` output** — no new crawler work. `httpx -include-response` returns the raw (pre-JS) HTML, from which the httpx stage parses `PageSignals`: response headers, `<title>`, `<meta name=description>`, OpenGraph tags, a stripped `≤2 KB` visible-text snippet, `form_count`, and `has_password_input`. Plus the already-captured detected `tech`. |
-| SPA caveat | The body is **pre-JavaScript**. `<title>`/meta/OG live in the static `<head>` so they survive; visible body text is thin for SPAs. The profiler is explicitly told the HTML is pre-render so it does not over-read emptiness. |
+| Placement | **Head of the AI-analysis phase** — *after* the audit fan-out, *before* `ai.triage`/`ai.supply-chain`. Nothing in the takeovers/audit phases consumes the `AppProfile`; only the two downstream AI prompts do, and the profile is produced before them. **In v1 it influences only the AI prompts.** Deterministic scanners (nuclei/sslscan/crawler) always run at full coverage regardless of profile — an LLM guess must never *gate* a security scan. |
+| Inputs (signals) | Governed by **`ai.profile.render`** (`auto` \| `always` \| `never`, default `auto`). The always-present base is the httpx `PageSignals` (`httpx -include-response` → response headers, `<title>`, `<meta name=description>`, OpenGraph tags, a stripped `≤2 KB` *pre-JS* visible-text snippet, `form_count`, `has_password_input`) + the detected `tech`. On top of that: **`auto`** — when the crawler (`supply-chain`) ran for the host, add its **rendered** visible text + a curated resource/endpoint/cookie/storage manifest (§2.2.2); else fall back to the httpx pre-JS signals (a browser is **never** spun up solely to profile). **`always`** — force-include the crawler so the rendered capture is always available (see §2.8.3). **`never`** — httpx pre-JS signals only. `auto`/`always` add `rendered_body_text` + `observed_resources` to `build_profile_prompt` (assembly in code; the JSON shape hint is unchanged). |
+| SPA caveat | On the **httpx-only** path (`render: never`, or `auto` with no crawler for the host) the body is **pre-JavaScript**: `<title>`/meta/OG live in the static `<head>` so they survive, but visible body text is thin for SPAs, and the profiler is explicitly told the HTML is pre-render so it does not over-read emptiness. `render: auto`/`always` close this gap by feeding the crawler's **post-render** text when available. |
 | Output contract | Same machinery as the other calls: Pydantic-validated JSON, **retry once**, then graceful degrade. |
 | Failure degrade | A **hard failure** (LLM error or unparseable after retry) on a host ⇒ that host falls back to the **default prompts** (no profile). |
 | Confidence tiers | A profile that parses but self-reports `confidence: low` ⇒ still passed to the prompts, but they are instructed **not to aggressively escalate** on expectation gaps. Severity escalation requires `med`/`high` confidence. |
@@ -174,10 +201,29 @@ needs the crawler's scripts.
 
 ### 2.5 Reporting
 
+Every run writes **two self-contained HTML documents** from one shared, themeable
+Jinja base (`report/templates/_base.html.j2` + `_theme.css.j2`): the full technical
+**`report.html`** and a ≤2-page leadership **`executive.html`**, plus an optional
+**`executive.pdf`**. Both carry a **light/dark toggle** (head theme-init reads
+`localStorage` then `prefers-color-scheme`; `@media print` forces the light palette).
+
+The **executive one-pager** has a deterministic core that ALWAYS renders — a posture
+rating (**highest severity present** + a volume note), severity counts, scale
+(DNS-live vs HTTP-responding `live_servers`), and the **top-5 risks** (grouped by
+`source|title`, ranked severity→host-count). An **optional AI overlay** (`ai.summary`,
+one LLM call at the **tail** of the AI phase, after triage suppression) adds the
+narrative paragraph, per-risk "why it matters", and next-steps; it degrades to
+templated prose. The overlay merges onto risks by a **stable key** (not the prompt
+`ref`), so it survives the later manual `SuppressionStage` re-selecting the visible
+set. `executive.pdf` renders from `executive.html` via the bundled Chromium
+(best-effort; gated on `report.executive_pdf`; never raises). Branding is the optional
+`report` config block (`org_name`→root fallback, `classification`, embedded
+`logo_path`).
+
 | Decision | Value |
 |---|---|
-| Form factor | **Single self-contained HTML** (CSS, JS, SVG inlined). Must survive being emailed. |
-| Executive Summary | **Severity histogram only**. No aggregate score, no letter grade. Counts include source provenance (`high: 8 nuclei, 4 sslscan`). |
+| Form factor | **Two self-contained HTML docs** (CSS, JS, SVG inlined) from a shared base. Must survive being emailed. Per-host **screenshots are dashboard-only** — served by the Web API at `GET /assets/{fqdn}/screenshot` (404 when absent) and **never** inlined into `report.html`, preserving emailability. |
+| Executive Summary (in report.html) | **Severity histogram only**. No aggregate score, no letter grade. Counts include source provenance (`high: 8 nuclei, 4 sslscan`). (The standalone `executive.html` adds the deterministic posture rating + top-5 risks described above.) |
 | TLS scorecard | **Per-host pass/fail badges** on a fixed checklist: insecure protocols disabled (SSLv2/SSLv3/TLS 1.0/TLS 1.1), no weak ciphers (RC4/3DES/DES/EXPORT/NULL/MD5/anonymous, or bits < 112), cert valid + not expiring <30d, key strength (RSA ≥ 2048 / EC ≥ 256), signature algorithm not SHA-1/MD5, secure renegotiation supported. Fleet rollup at top. No letter grade. (Chain-trust and HSTS are *not* graded here — the recon cert dossier already carries issuer/expiry/self-signed, and HSTS is covered by the `headers` capability.) |
 | Recon / triage view | Two groups — **Live (scanned)** and **Dead / dangling (watch)**. Each row shows FQDN + IP + AS (ASN/org from the optional MMDB, when present). |
 | Cross-tool dedup | **None**. Each tool gets its own section ("lenses"). Overlap reads as corroboration. |
@@ -223,7 +269,7 @@ stage names:
 | `nuclei` | main `nuclei` web-CVE scan | |
 | `headers` | deterministic header + CSP analysis (§2.2.1) | Passive over httpx headers; sub-tokens `headers.csp`, `headers.best-practice`. Full-scan only. |
 | `supply-chain` | the Playwright crawler | |
-| `ai` | `ai.profile` + cross-source triage + supply-chain analysis | Supply-chain *analysis* requires the crawler (see resolution). `ai.triage` (formerly `ai.headers`) soft-suppresses false-positives across **all** deterministic findings + adds header-gap findings. |
+| `ai` | `ai.profile` + cross-source triage + supply-chain analysis + executive summary | Supply-chain *analysis* requires the crawler (see resolution). `ai.triage` (formerly `ai.headers`) soft-suppresses false-positives across **all** deterministic findings + adds header-gap findings. `ai.summary` makes one whole-run LLM call at the **tail** of the AI phase for the `executive.html` narrative (§2.5); degrades to deterministic prose. |
 
 #### 2.8.2 Selection flags
 
@@ -245,6 +291,10 @@ Resolution never errors:
   not the crawler.
 * `recon` is implied whenever any audit/AI token is selected; it cannot be skipped while
   other capabilities run.
+* **`ai.profile.render: always`** force-includes the crawler in `build_pipeline` even when
+  supply-chain *analysis* is off, so the profiler can read the rendered capture. Only
+  `CrawlerStage` runs (no supply-chain LLM call); coverage marks supply-chain
+  `{"ran": true, "reason": "forced for profile.render=always"}`.
 
 #### 2.8.4 Reporting honesty (three-state coverage)
 
@@ -345,7 +395,10 @@ runs/2026-05-26T10-24-00Z-prod-fleet/
 │   ├── headers/
 │   │   └── <host>.json          # deterministic header/CSP findings (sources headers/csp)
 │   └── playwright/
-│       └── <host>.json          # {url, status, headers, scripts: [...]}
+│       ├── <host>.json          # CrawlerArtifact (§5): url/status/headers + scripts,
+│       │                        #   resources, cookies (names+flags), *_storage_keys,
+│       │                        #   rendered_text — structure only, never values
+│       └── <host>.png           # optional per-host screenshot (tools.playwright.screenshot)
 ├── 03_ai/
 │   ├── profile/
 │   │   └── <host>.json          # AppProfile (omitted when ai.profiling: false)
@@ -395,6 +448,13 @@ ai:
   profiling: true         # context-aware per-app profiling (the headline AI capability).
                           # false => header/supply prompts use the default context-light
                           # prompts and no 03_ai/profile/ artifact is written.
+  profile:
+    render: auto          # auto | always | never (default auto): the profiler's INPUT.
+                          # auto  = crawler rendered text + curated surface when supply-chain
+                          #         ran for the host, else httpx pre-JS signals (a browser is
+                          #         never spun up solely to profile).
+                          # always= force the crawler (CrawlerStage only, no extra LLM calls).
+                          # never = httpx pre-JS signals only.
 
 tools:
   subfinder:
@@ -424,6 +484,7 @@ tools:
   playwright:
     wait_until: networkidle
     timeout_ms: 30000
+    screenshot: true      # capture an optional per-host PNG (dashboard-only; never in report.html)
     user_agent: null      # null = use Chromium default
 ```
 
@@ -457,9 +518,12 @@ class Finding(BaseModel):
     description: str
     evidence: dict[str, Any]   # source-specific; rendered via .evidence_rows()
                                # so the report never reads source keys directly
-    check_id: str | None       # stable id for rule findings (AI suppression ref)
+    check_id: str | None       # stable id; rule findings + AI findings (derived
+                               # from `type`, e.g. ai_headers.cookie-missing-httponly-flag)
     ai_verdict: AIFindingVerdict | None   # soft-suppression (§2.2.1); never deletes
     # .suppressed → ai_verdict.suppressed; excluded from histogram + finding_count
+    # .group_key → check_id-or-natural-key-or-title: the ONE dedup/grouping +
+    #   suppression-fingerprint key (select_top_risks, report groupby, suppress)
 ```
 
 ### AI response (validated)
@@ -506,6 +570,42 @@ class PageSignals(BaseModel):
     has_password_input: bool = False
     tech: list[str] = []                # carried from httpx tech-detect
 ```
+
+### Crawler artifact (Playwright capture — structure only, never values; §2.2.2)
+
+```python
+class CrawlerCookie(BaseModel):         # NAME + flags only — never the value
+    name: str
+    domain: str | None = None
+    path: str | None = None
+    secure: bool = False
+    http_only: bool = False
+    same_site: str | None = None
+    expires: float | None = None
+
+class CrawlerResource(BaseModel):
+    url: str
+    type: str | None = None             # resource type (script / xhr / fetch / image / …)
+    status: int | None = None
+    method: str | None = None
+
+class CrawlerArtifact(BaseModel):       # → 02_audit/playwright/<host>.json
+    url: str
+    status: int | None = None
+    headers: dict[str, str] = {}
+    scripts: list[str] = []             # script URLs (unchanged)
+    resources: list[CrawlerResource] = []      # all responses, deduped, ~500 cap
+    cookies: list[CrawlerCookie] = []   # names + flags, never values
+    local_storage_keys: list[str] = []  # key names only
+    session_storage_keys: list[str] = []
+    rendered_text: str = ""             # document.body.innerText, normalized, <= 2 KB
+    screenshot: str | None = None       # PNG filename, when captured
+```
+
+The Web API projects this artifact via `curated_surface` (§2.2.2) into a names-only
+`surface` dict stored on the server-side `Asset` (latest scan only; `assets.surface TEXT`
+column + guarded migration) and exposes the per-host PNG at `GET /assets/{fqdn}/screenshot`
+— engine-side it stays a `runs/<id>/` artifact only. See `WEB_API_PLAN.md`.
 
 ### Cert info (recon tlsx dossier, one handshake/IP)
 
@@ -588,7 +688,7 @@ watchtower/
 ├── __main__.py            # python -m watchtower
 ├── cli.py                 # argparse subcommands; --only/--skip token parsing
 ├── config.py              # YAML load + Pydantic models (incl. AIConfig)
-├── models.py              # TriagedAsset, Finding, PageSignals, AppProfile, StageError, RunSummary, …
+├── models.py              # TriagedAsset, Finding, PageSignals, CrawlerArtifact, AppProfile, StageError, RunSummary, …
 ├── runner.py              # bootstrap + run_scan(only=, skip=, stages=)
 ├── logging.py             # JSONL audit log + counters + plain/quiet renderers + RunSummary hook
 ├── progress.py            # rich live-progress renderer (lazy-imported by logging when --progress rich)
@@ -599,7 +699,7 @@ watchtower/
 │   ├── domains.py         # tldextract wrappers, eTLD+1 + host_to_filename helpers
 │   └── ipinfo.py          # optional GeoLite2-ASN MMDB lookup (asn/as_org; tolerates a missing/None mmdb)
 ├── recon/                 # raw recon tool wrappers (subfinder, dnsx+triage, tlsx loop, httpx)
-├── audit/                 # sslscan / nuclei / takeovers / crawler / header_checks + nuclei_parse (shared JSONL→Finding)
+├── audit/                 # sslscan / nuclei / takeovers / crawler / header_checks / surface (curated names-only projection) + nuclei_parse (shared JSONL→Finding)
 ├── ai/
 │   ├── client.py          # OpenAI-compat httpx client
 │   ├── schemas.py         # AIFinding + AISuppression + AIResponse (AppProfile lives in models.py)
@@ -609,7 +709,7 @@ watchtower/
 │   ├── state.py           # ScanState (app_profiles, page_signals, header_findings, coverage, …)
 │   ├── base.py            # Stage ABC + StageResult, ParallelStage, execute_stages()
 │   ├── recon.py           # Subfinder/Dnsx+Triage/TlsxLoop/Httpx (parses PageSignals)
-│   ├── profile.py         # AIProfileStage (after httpx, before audit)
+│   ├── profile.py         # AIProfileStage (head of the AI phase, after the audit fan-out)
 │   ├── audit.py           # Takeovers/Sslscan/Nuclei/Crawler/Headers stages
 │   ├── ai.py              # AIStage (cross-source triage + supply analysis + soft-suppression)
 │   ├── report_stage.py    # ReportStage, CompressStage
@@ -648,8 +748,6 @@ watchtower/
   scans run (skip nuclei on a "static" asset, pick nuclei tags by app type). Deferred:
   v1 keeps every deterministic scanner at full coverage; the profile is available as a
   documented future hook but never gates a scan.
-* **Post-render profiling for SPAs** — supplementing httpx's pre-JS body with the
-  crawler's rendered DOM. v1 profiles from httpx output only.
 
 ---
 
@@ -662,5 +760,5 @@ watchtower/
 | No authz preflight | Operator-trust model; recommended only for internal use. |
 | Docker-only excludes Docker-averse Debian users | Documented; not addressed in v1. |
 | AI mis-profiles an app and skews finding severity | Influence is confined to **AI findings only** — deterministic scanners run full coverage regardless. `confidence: low` profiles suppress escalation; hard failures fall back to default prompts. The profile + its reasoning are shown in the report for operator override. |
-| httpx pre-JS body is thin for SPAs | `<title>`/meta/OG come from the static `<head>` and survive; the profiler is told the HTML is pre-render so it does not over-read an empty body. Post-render profiling is a documented future hook. |
+| httpx pre-JS body is thin for SPAs | `<title>`/meta/OG come from the static `<head>` and survive; the profiler is told the HTML is pre-render so it does not over-read an empty body. **`ai.profile.render: auto`/`always`** further closes this by feeding the crawler's **post-render** text + curated surface when the crawler ran for the host (§2.3.1). |
 | Selective scans imply false coverage | Three-state coverage manifest + "Not run in this scan" placeholders ensure a skipped capability never reads as scanned-and-clean (§2.8.4). |

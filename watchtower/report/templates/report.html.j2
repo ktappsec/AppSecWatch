@@ -1,119 +1,12 @@
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>WatchTower Report — {{ run.label }}</title>
-<style>
-  :root {
-    --bg:#0e1014; --panel:#161a22; --panel2:#1c2230; --border:#2a3142;
-    --text:#e6e8ee; --muted:#8b94a7; --accent:#5ea9ff;
-    --crit:#ff4d4f; --high:#ff8a3d; --med:#ffc83d; --low:#5ea9ff; --info:#7a8499;
-    --pass:#2bd4a5; --fail:#ff4d4f;
-  }
-  * { box-sizing: border-box; }
-  html,body { margin:0; padding:0; background:var(--bg); color:var(--text); font: 14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,Helvetica,Arial,sans-serif; }
-  a { color: var(--accent); text-decoration: none; }
-  a:hover { text-decoration: underline; }
-  header.top { padding: 20px 28px; border-bottom: 1px solid var(--border); display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px;}
-  header.top h1 { margin:0; font-size: 20px; letter-spacing:.2px; }
-  header.top .meta { color: var(--muted); font-size: 12px; }
-  main { padding: 24px 28px 64px; max-width: 1400px; margin: 0 auto; }
-  section { background: var(--panel); border:1px solid var(--border); border-radius:10px; margin-bottom:18px; }
-  section > .head { padding: 14px 18px; border-bottom: 1px solid var(--border); display:flex; align-items:center; justify-content:space-between; cursor:pointer; user-select:none; }
-  section > .head h2 { margin:0; font-size: 16px; }
-  section > .head .toggle { color: var(--muted); }
-  section > .body { padding: 16px 18px; }
-  section.collapsed > .body { display:none; }
-  .grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:10px; }
-  .stat { background: var(--panel2); border: 1px solid var(--border); padding: 12px; border-radius: 8px; }
-  .stat .k { color: var(--muted); font-size: 12px; }
-  .stat .v { font-size: 22px; font-weight: 600; margin-top: 2px; }
-  .stat .sub { color: var(--muted); font-size: 11px; margin-top: 4px; }
-
-  .sev { display:inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing:.4px; }
-  .sev-critical { background: rgba(255,77,79,.15); color: var(--crit); border:1px solid rgba(255,77,79,.3);}
-  .sev-high     { background: rgba(255,138,61,.15); color: var(--high); border:1px solid rgba(255,138,61,.3);}
-  .sev-medium   { background: rgba(255,200,61,.15); color: var(--med); border:1px solid rgba(255,200,61,.3);}
-  .sev-low      { background: rgba(94,169,255,.15); color: var(--low); border:1px solid rgba(94,169,255,.3);}
-  .sev-info     { background: rgba(122,132,153,.15); color: var(--info); border:1px solid rgba(122,132,153,.3);}
-
-  .pf-pass { color: var(--pass); }
-  .pf-fail { color: var(--fail); }
-  .pf-badge { display:inline-block; padding:2px 6px; border-radius:4px; font-size:11px; }
-  .pf-badge.pf-pass { background: rgba(43,212,165,.12); border:1px solid rgba(43,212,165,.3);}
-  .pf-badge.pf-fail { background: rgba(255,77,79,.12); border:1px solid rgba(255,77,79,.3);}
-
-  table { width: 100%; border-collapse: collapse; }
-  table th, table td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: top; }
-  table th { color: var(--muted); font-weight: 500; font-size: 12px; text-transform: uppercase; letter-spacing:.4px; cursor:pointer; user-select:none; }
-  table th.sortable::after { content: " ⇅"; color: #4a546a; font-size: 10px; }
-  tr:hover { background: rgba(255,255,255,.02); }
-  td.evidence { color: var(--muted); font-size: 12px; word-break: break-all; }
-
-  .controls { display:flex; gap:8px; align-items:center; margin-bottom: 12px; flex-wrap: wrap;}
-  .controls input[type=text], .controls select {
-    background: var(--panel2); border:1px solid var(--border); color:var(--text);
-    padding: 6px 10px; border-radius: 6px; font-size: 13px; }
-  .controls input[type=text] { min-width: 240px; }
-  .controls .count { color: var(--muted); font-size: 12px; }
-
-  .histo { display:flex; gap:8px; flex-wrap:wrap; }
-  .histo .bucket { background: var(--panel2); padding:10px 14px; border-radius:8px; border:1px solid var(--border); }
-  .histo .bucket .v { font-size: 22px; font-weight: 600; }
-  .histo .bucket .k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing:.4px; }
-  .histo .bucket .src { color: var(--muted); font-size: 11px; margin-top: 4px; }
-
-  .grouphead { display:flex; align-items:center; justify-content:space-between; padding: 8px 0; border-bottom:1px solid var(--border); cursor:pointer; user-select:none; }
-  .grouphead .name { font-weight: 600; }
-  .grouphead .count { color: var(--muted); font-size: 12px; }
-  .grouphead .grouping { color: var(--muted); font-size: 11px; margin-left: 8px; }
-  .group-rows { padding: 6px 0 14px 12px; display:none; }
-  .group.expanded > .group-rows { display:block; }
-  .group-rows .row { padding: 4px 0; border-bottom: 1px dotted var(--border); display:grid; grid-template-columns: 2fr 1fr 2fr; gap: 8px; }
-
-  details.errors-block { color: var(--muted); font-size: 12px; }
-  details.errors-block pre { background: var(--panel2); padding: 12px; border-radius: 6px; overflow:auto; max-height: 320px; }
-
-  footer { padding: 20px 28px; border-top:1px solid var(--border); color: var(--muted); font-size: 12px; text-align:center; }
-
-  .pill { display:inline-block; background: var(--panel2); border:1px solid var(--border); padding: 2px 8px; border-radius: 999px; font-size: 11px; color: var(--muted); margin: 2px 4px 2px 0;}
-
-  .empty { color: var(--muted); font-style: italic; padding: 8px 0; }
-  .notrun { color: var(--muted); font-style: italic; padding: 10px 12px; background: var(--panel2);
-            border:1px dashed var(--border); border-radius: 6px; }
-
-  code { background: var(--panel2); padding: 1px 6px; border-radius: 4px; font-size: 12px; }
-
-  /* Coverage strip */
-  .cov-strip { display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin: 0 0 18px; }
-  .cov-strip .cov-label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing:.4px; margin-right:4px; }
-  .cov-chip { display:inline-block; padding: 3px 9px; border-radius: 999px; font-size: 12px; border:1px solid var(--border); }
-  .cov-chip.ran { background: rgba(43,212,165,.12); color: var(--pass); border-color: rgba(43,212,165,.3); }
-  .cov-chip.partial { background: rgba(255,214,0,.12); color: #d9b400; border-color: rgba(255,214,0,.35); }
-  .cov-chip.skipped { background: rgba(122,132,153,.10); color: var(--muted); }
-
-  /* Application profile cards */
-  .profile-card { background: var(--panel2); border:1px solid var(--border); border-radius:8px; padding:12px 14px; margin-bottom:10px; }
-  .profile-card .pc-head { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
-  .profile-card .pc-host { font-weight:600; font-size:15px; }
-  .profile-card .pc-type { margin-top:4px; color: var(--text); }
-  .profile-card .pc-flags { margin-top:6px; color: var(--muted); font-size:12px; }
-  .profile-card .pc-expected { margin-top:6px; }
-  .flag { display:inline-block; padding:1px 6px; border-radius:4px; font-size:11px; margin-left:4px; border:1px solid var(--border); }
-  .flag.on { color: var(--accent); border-color: rgba(94,169,255,.3); background: rgba(94,169,255,.10); }
-  .flag.off { color: var(--info); }
-</style>
-</head>
-<body>
-
-<header class="top">
+{% extends "_base.html.j2" %}
+{% block title %}<title>WatchTower Report — {{ run.label }}</title>{% endblock %}
+{% block header_title %}
   <h1>WatchTower — {{ run.label }}</h1>
   <div class="meta">
     started {{ run.started_at }} · finished {{ run.finished_at }} · duration {{ run.duration }}
   </div>
-</header>
-
+{% endblock %}
+{% block content %}
 <main>
 
   {% if coverage_strip %}
@@ -361,11 +254,11 @@
           <th class="sortable">Severity</th><th class="sortable">Hosts</th><th class="sortable">Title</th><th>Template</th>
         </tr></thead>
         <tbody>
-        {% for ttl, items in findings.nuclei | groupby('title') %}
+        {% for ttl, items in findings.nuclei | groupby('group_key') %}
           <tr data-row data-severity="{{ items[0].severity }}">
             <td><span class="{{ items[0].severity | sev_class }}">{{ items[0].severity }}</span></td>
             <td title="{{ items | map(attribute='host') | join(', ') }}">{{ items | length }} host{{ '' if items|length == 1 else 's' }}</td>
-            <td>{{ ttl }}</td>
+            <td>{{ items[0].title }}</td>
             <td class="evidence">{{ items[0].evidence_summary }}</td>
           </tr>
         {% endfor %}
@@ -386,7 +279,7 @@
           <th class="sortable">Library</th><th>Version</th><th>CVE</th>
         </tr></thead>
         <tbody>
-        {% for ttl, items in findings.js_lib | groupby('title') %}
+        {% for ttl, items in findings.js_lib | groupby('group_key') %}
           <tr data-row data-severity="{{ items[0].severity }}">
             <td><span class="{{ items[0].severity | sev_class }}">{{ items[0].severity }}</span></td>
             <td title="{{ items | map(attribute='host') | join(', ') }}">{{ items | length }} host{{ '' if items|length == 1 else 's' }}</td>
@@ -446,12 +339,12 @@
           <th class="sortable">Severity</th><th class="sortable">Source</th><th class="sortable">Hosts</th><th class="sortable">Title</th><th>Evidence</th>
         </tr></thead>
         <tbody>
-        {% for ttl, items in hdr_findings | groupby('title') %}
+        {% for ttl, items in hdr_findings | groupby('group_key') %}
           <tr data-row data-severity="{{ items[0].severity }}">
             <td><span class="{{ items[0].severity | sev_class }}">{{ items[0].severity }}</span></td>
             <td><span class="pill">{{ items[0].source }}</span></td>
             <td title="{{ items | map(attribute='host') | join(', ') }}">{{ items | length }} host{{ '' if items|length == 1 else 's' }}</td>
-            <td>{{ ttl }}</td>
+            <td>{{ items[0].title }}</td>
             <td class="evidence">{{ items[0].evidence_summary }}</td>
           </tr>
         {% endfor %}
@@ -537,11 +430,11 @@
       <table>
         <thead><tr><th>Severity</th><th>Hosts</th><th>Title</th><th>Description</th></tr></thead>
         <tbody>
-        {% for ttl, items in findings.ai_headers | groupby('title') %}
+        {% for ttl, items in findings.ai_headers | groupby('group_key') %}
           <tr>
             <td><span class="{{ items[0].severity | sev_class }}">{{ items[0].severity }}</span></td>
             <td title="{{ items | map(attribute='host') | join(', ') }}">{{ items | length }} host{{ '' if items|length == 1 else 's' }}</td>
-            <td>{{ ttl }}</td>
+            <td>{{ items[0].title }}</td>
             <td class="evidence">{{ items[0].description }}</td>
           </tr>
         {% endfor %}
@@ -564,11 +457,11 @@
       <table>
         <thead><tr><th>Severity</th><th>Hosts</th><th>Title</th><th>Description</th></tr></thead>
         <tbody>
-        {% for ttl, items in findings.ai_supply_chain | groupby('title') %}
+        {% for ttl, items in findings.ai_supply_chain | groupby('group_key') %}
           <tr>
             <td><span class="{{ items[0].severity | sev_class }}">{{ items[0].severity }}</span></td>
             <td title="{{ items | map(attribute='host') | join(', ') }}">{{ items | length }} host{{ '' if items|length == 1 else 's' }}</td>
-            <td>{{ ttl }}</td>
+            <td>{{ items[0].title }}</td>
             <td class="evidence">{{ items[0].description }}</td>
           </tr>
         {% endfor %}
@@ -634,11 +527,9 @@
   </section>
 
 </main>
-
-<footer>
-  WatchTower v{{ run.watchtower_version }} · {{ run.label }} · single-file report
-</footer>
-
+{% endblock %}
+{% block footer %}WatchTower v{{ run.watchtower_version }} · {{ run.label }} · single-file report{% endblock %}
+{% block scripts %}
 <script>
   // Section collapse
   function toggleSection(el) {
@@ -706,6 +597,4 @@
     });
   });
 </script>
-
-</body>
-</html>
+{% endblock %}

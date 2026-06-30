@@ -25,6 +25,7 @@ from pydantic import ValidationError
 from watchtower.ai.client import LLMClient, LLMError
 from watchtower.ai.prompts import (
     build_profile_prompt,
+    build_summary_prompt,
     build_supply_chain_prompt,
     build_triage_prompt,
 )
@@ -35,18 +36,32 @@ from watchtower.models import (
     AIFindingVerdict,
     AppProfile,
     CrawlerArtifact,
+    ExecutiveSummary,
     Finding,
     LiveWebServer,
     PageSignals,
 )
+from watchtower.audit.cookies import is_infra_cookie
 from watchtower.util.domains import etld_plus_one, host_to_filename
 
 _JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(\{.*\})\s*```", re.DOTALL)
 _CONF_RANK = {"low": 0, "medium": 1, "high": 2}
 _SEV_RANK = {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
 
-# Both validated-call targets carry an `error`/`usable` contract for graceful degrade.
-ValidatedModel = TypeVar("ValidatedModel", AppProfile, AIResponse)
+# AI findings carry no rule check_id; we derive a stable one from the model's
+# `type` tag (slugified) so identical issues dedup/group across hosts and become
+# class-suppressible. A blank type → None (falls back to title-based grouping).
+_AI_CHECK_SLUG_RE = re.compile(r"[^a-z0-9]+")
+# Slugified `type` tags that are NOT vulnerabilities — positive/absence
+# observations and analyst "verify X" reminders. Dropped outright (LLM-fabricated,
+# not deterministic scanner facts, so nothing to retain/audit).
+_AI_NONFINDING_TYPES = frozenset({
+    "positive-observation", "no-scripts-loaded", "best-practice-reminder",
+    "missing-control-check", "server-config-concern",
+})
+
+# All validated-call targets carry an `error`/`usable` contract for graceful degrade.
+ValidatedModel = TypeVar("ValidatedModel", AppProfile, AIResponse, ExecutiveSummary)
 
 
 def _extract_json(text: str) -> str:
@@ -99,7 +114,7 @@ async def _validated_call(
     last_err = ""
     for attempt in (1, 2):
         try:
-            raw = await client.chat(system, user)
+            raw = await client.chat(system, user, label=label)
         except LLMError as e:
             last_err = str(e)
             log.warn(f"ai {label} LLM error attempt {attempt}: {e}")
@@ -188,18 +203,43 @@ def _apply_suppressions(
     return hidden
 
 
+def _ai_check_id(source: str, type_tag: str) -> str | None:
+    slug = _AI_CHECK_SLUG_RE.sub("-", (type_tag or "").strip().lower()).strip("-")
+    return f"{source}.{slug}" if slug else None
+
+
+def _ai_evidence_cookie(ev: dict[str, Any]) -> str | None:
+    """Best-effort cookie NAME from an AI finding's evidence, for infra-cookie
+    filtering. `cookie`/`cookie_name`/`name` may be a bare name or a full
+    Set-Cookie string — take the token before '='."""
+    raw = ev.get("cookie_name") or ev.get("cookie") or ev.get("name")
+    if not isinstance(raw, str):
+        return None
+    return raw.split("=", 1)[0].strip()
+
+
 def _ai_findings_to_findings(host: str, source: str, ai_resp: AIResponse) -> list[Finding]:
-    return [
-        Finding(
+    out: list[Finding] = []
+    for f in ai_resp.findings:
+        check_id = _ai_check_id(source, f.type)
+        slug = check_id.split(".", 1)[1] if check_id else ""
+        # Drop AI-fabricated non-findings (positive/absence observations, analyst
+        # reminders) and load-balancer/WAF/RUM cookie noise — high-signal only.
+        if slug in _AI_NONFINDING_TYPES:
+            continue
+        cookie = _ai_evidence_cookie(f.evidence)
+        if cookie and is_infra_cookie(cookie):
+            continue
+        out.append(Finding(
             source=source,  # type: ignore[arg-type]
             host=host,
             severity=f.severity,
             title=f.title,
             description=f.description,
             evidence=f.evidence | {"type": f.type},
-        )
-        for f in ai_resp.findings
-    ]
+            check_id=check_id,
+        ))
+    return out
 
 
 async def profile_all(
@@ -209,6 +249,8 @@ async def profile_all(
     log: RunLogger,
     concurrency: int = 4,
     prompt_overrides: Mapping[str, str] | None = None,
+    surface_by_host: dict[str, dict] | None = None,
+    rendered_by_host: dict[str, str] | None = None,
 ) -> dict[str, AppProfile]:
     """Infer an AppProfile per host from PageSignals. Writes 03_ai/profile/<host>.json.
 
@@ -226,7 +268,11 @@ async def profile_all(
 
     async def per_host(host: str, signals: PageSignals) -> None:
         async with sem:
-            system, user = build_profile_prompt(signals, prompt_overrides)
+            system, user = build_profile_prompt(
+                signals, prompt_overrides,
+                rendered_text=(rendered_by_host or {}).get(host),
+                surface=(surface_by_host or {}).get(host),
+            )
             result = await _validated_call(
                 client, system, user, AppProfile, log, f"profile[{host}]"
             )
@@ -243,6 +289,32 @@ async def profile_all(
     usable = sum(1 for p in profiles.values() if p.usable)
     log.info(f"ai.profile: {usable}/{len(profiles)} hosts profiled (rest degraded to defaults)")
     return profiles
+
+
+async def summarize_run(
+    *,
+    posture: dict[str, Any],
+    counts: dict[str, int],
+    scale: dict[str, int],
+    risks: list[dict[str, Any]],
+    cfg: LLMConfig,
+    log: RunLogger,
+    prompt_overrides: Mapping[str, str] | None = None,
+) -> ExecutiveSummary:
+    """ONE whole-run executive-narrative call (the `ai.summary` capability).
+
+    Returns an ExecutiveSummary; on any failure it carries `error` set so the
+    renderer falls back to deterministic prose (the no-gating invariant). `risks`
+    is the projected top-risk payload (ref/title/source/severity/host_count); the
+    returned notes are keyed by the ephemeral `ref` — the caller re-binds them to
+    the stable risk key. The call label `summary` selects `cfg.models['summary']`
+    (else the base model)."""
+    client = LLMClient(cfg)
+    try:
+        system, user = build_summary_prompt(posture, counts, scale, risks, prompt_overrides)
+        return await _validated_call(client, system, user, ExecutiveSummary, log, "summary")
+    finally:
+        await client.close()
 
 
 def _build_work_map(

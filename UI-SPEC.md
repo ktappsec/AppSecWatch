@@ -35,6 +35,14 @@ Bu dokümanın amacı: AppSecMan'in görünüş ve hissini başka ürünlerde **
 
 > **Önemli:** `next-themes` paketi `package.json`'da olsa da kullanılmıyor — `src/components/theme-provider.tsx` kendi mini implementasyonumuz. API'si `next-themes` ile uyumlu (`attribute="class"`, `defaultTheme`, `enableSystem`), `localStorage` ile persist eder.
 
+> **Üretilen raporlar ayrı temalıdır:** Motorun ürettiği `report.html` ve
+> `executive.html`, web uygulamasının oklch token sisteminden **bağımsız**, kendi
+> içine gömülü (self-contained) CSS değişkenleriyle temalanır
+> (`watchtower/report/templates/_theme.css.j2`; `data-theme` + `prefers-color-scheme`,
+> baskıda açık palet). Tarama detay sayfası bu belgeleri `<iframe>` ile gömer ve
+> **Executive** + **PDF indir** bağlantılarını sunar; raporun teması uygulamanınkiyle
+> karışmaz.
+
 ---
 
 ## 2. Görsel kimlik — Renk sistemi

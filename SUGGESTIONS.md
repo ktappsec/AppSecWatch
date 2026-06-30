@@ -48,3 +48,36 @@ ordered by value-to-effort.
   computed next 2–3 fire times (UTC + local) before saving.
 - **Throttle preview on New-Scan** — already shows the active tier's knobs; extend
   to a small comparison so a user can see what dropping to `gentle` changes.
+
+## EASM & capture follow-ups (deferred from the rendered-profiling / surface work)
+
+The crawler now captures a structure-only manifest (resources, XHR/fetch endpoints,
+cookie/storage **key names** — never values) and persists a curated per-asset
+**surface** blob. These extend that foundation; all deliberately deferred.
+
+- **Fleet-wide connection graph.** The per-asset surface answers "what does *this*
+  host call?". Promote it to a normalized `observations` table (asset → {3rd-party
+  domain | endpoint | storage-key} edges) so the dashboard can answer the real EASM
+  queries: "which of my assets call `doubleclick.net`?", "my full external-domain
+  exposure ranked by host count", "every asset that stashes a token in localStorage".
+  This is the actual EASM substrate — its own table, endpoints, and UI view.
+- **Over-time change tracking / surface + visual diffing.** "This host started
+  calling a new 3rd-party domain (or its screenshot changed) since last scan." The
+  one EASM staple that genuinely breaks the locked *point-in-time, no-delta* design,
+  so it needs an explicit decision and a history store, not a slip-in.
+- **CDP initiator chain.** We capture transitively-loaded scripts (network-level
+  hook) but not the *edge* — which script pulled which. A `context.new_cdp_session`
+  + `Network.requestWillBeSent` `initiator.stack` would attribute
+  "app.js → loaded → evil-cdn.com/x.js" (remediation narrative). Noisy against
+  minified bundles; improves attribution, not detection. Defer until the
+  supply-chain view actually consumes a dependency graph.
+- **Multimodal profiling.** Screenshots are captured for the dashboard today but
+  never sent to the LLM. If WatchTower is pointed at a vision-capable model, feed the
+  screenshot to the profiler as an extra signal. Gate behind a dedicated flag (only
+  meaningful with a multimodal endpoint); the capture seam already exists.
+- **localStorage-token as a finding.** The new `storage_keys` capture means a
+  token-like key (`access_token` / `id_token` / `jwt` / `refresh_token` in
+  localStorage) is now observable — and it's an XSS-exfiltratable secret store.
+  Promote it from a profiling signal to a deterministic `Finding` (its own
+  `check_id`, low/medium severity, AI-triageable). Decide severity + matching rules
+  once there's real captured data to calibrate against.

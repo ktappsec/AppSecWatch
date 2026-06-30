@@ -219,6 +219,7 @@ class JobManager:
             only=req.only,
             skip=req.skip,
             throttle=req.throttle,
+            profile_render=req.profile_render,
             compress=req.compress,
             source=source,
             schedule_id=schedule_id,
@@ -335,7 +336,7 @@ class JobManager:
             self.semaphore.release()
             self.tasks.pop(job_id, None)
 
-    def _build_config(self, roots, throttle) -> WatchTowerConfig:
+    def _build_config(self, roots, throttle, profile_render=None) -> WatchTowerConfig:
         """Merge per-request params over the live base config + validate. Raises
         ValidationError when the base config is missing/invalid (→ NotConfigured).
         Re-validating re-applies the throttle profile cleanly (config._apply_throttle
@@ -344,10 +345,14 @@ class JobManager:
         raw["roots"] = list(roots or [])
         if throttle:
             raw["throttle"] = throttle
+        if profile_render:
+            ai = dict(raw.get("ai") or {})
+            ai["profile"] = {**dict(ai.get("profile") or {}), "render": profile_render}
+            raw["ai"] = ai
         return WatchTowerConfig.model_validate(raw)
 
     def _merged_config(self, rec: JobRecord) -> WatchTowerConfig:
-        return self._build_config(rec.roots, rec.throttle)
+        return self._build_config(rec.roots, rec.throttle, rec.profile_render)
 
     async def _sync_assets(self, rec: JobRecord, state: ScanState) -> None:
         """Write discovered (triaged) assets back into the inventory. Best-effort:
@@ -377,10 +382,17 @@ class JobManager:
                 finding_counts.setdefault(f.host, sev0())
                 if f.severity in finding_counts[f.host]:
                     finding_counts[f.host][f.severity] += 1
+        # Curated EASM surface (names only) from the crawler capture, for the hosts
+        # that were crawled (full scan or render=always).
+        from watchtower.audit.surface import curated_surface
+        surface_by_host: dict[str, dict] = {
+            a.host: curated_surface(a) for a in state.crawler_artifacts
+        }
         try:
             n = await asyncio.to_thread(
                 self.assets.sync_discovered, state.triaged, rec.roots or [], rec.id,
                 rec.group, tech_by_host, profile_by_host, finding_counts,
+                surface_by_host,
             )
             log.info("assets sync: %s upserted from %s", n, rec.id)
         except Exception as e:  # noqa: BLE001
@@ -421,9 +433,17 @@ class JobManager:
         rec.coverage = state.coverage or rec.coverage
         rec.finding_count = count_findings(state)
         try:
+            # The executive HTML is always written by ReportStage; expose the PDF
+            # URL only when the (best-effort) PDF actually landed.
+            exec_pdf_url = (
+                f"/scans/{rec.id}/executive.pdf"
+                if (run_dir / "executive.pdf").is_file() else None
+            )
             result = build_scan_result(
                 rec.id, state,
                 report_url=f"/scans/{rec.id}/report", job_state=rec.state,
+                executive_url=f"/scans/{rec.id}/executive",
+                executive_pdf_url=exec_pdf_url,
             )
             write_scan_result(run_dir, result)
         except Exception as e:  # noqa: BLE001
@@ -451,6 +471,7 @@ class JobManager:
             "finding_count": rec.finding_count,
             "result_url": f"/scans/{rec.id}/result",
             "report_url": f"/scans/{rec.id}/report",
+            "executive_url": f"/scans/{rec.id}/executive",
         }
         await send_webhook(self.server, rec.callback_url, event, payload)
 

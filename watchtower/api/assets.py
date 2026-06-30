@@ -53,6 +53,7 @@ class AssetManager:
         out["tech"] = json.loads(out["tech"]) if out.get("tech") else []
         out["profile"] = json.loads(out["profile"]) if out.get("profile") else None
         out["finding_counts"] = json.loads(out["finding_counts"]) if out.get("finding_counts") else {}
+        out["surface"] = json.loads(out["surface"]) if out.get("surface") else None
         return out
 
     def list(self, *, group: str | None = None, status: str | None = None,
@@ -148,10 +149,11 @@ class AssetManager:
                         scan_id: str, group: str | None = None,
                         tech_by_host: dict[str, list[dict]] | None = None,
                         profile_by_host: dict[str, dict] | None = None,
-                        finding_counts_by_host: dict[str, dict] | None = None) -> int:
+                        finding_counts_by_host: dict[str, dict] | None = None,
+                        surface_by_host: dict[str, dict] | None = None) -> int:
         """Upsert every triaged FQDN. Discovered inherit their root's imported
         group (else the scan's group); imported assets keep their group/notes.
-        tech/profile/finding_counts (by host) are written onto matching assets."""
+        tech/profile/finding_counts/surface (by host) are written onto matching assets."""
         roots = [_norm(r) for r in (scanned_roots or [])]
         # Precompute each root's imported group for inheritance.
         root_group: dict[str, str | None] = {}
@@ -197,6 +199,12 @@ class AssetManager:
         for host, fc in (finding_counts_by_host or {}).items():
             self.db.execute("UPDATE assets SET finding_counts=? WHERE fqdn=?",
                             (json.dumps(fc), _norm(host)))
+        # Curated EASM surface (names only) — overwrite from the last scan; a host
+        # the crawler didn't reach simply isn't in the map (keeps its prior surface).
+        for host, surf in (surface_by_host or {}).items():
+            if surf:
+                self.db.execute("UPDATE assets SET surface=? WHERE fqdn=?",
+                                (json.dumps(surf), _norm(host)))
         return n
 
     # ----- bulk ops ------------------------------------------------------- #

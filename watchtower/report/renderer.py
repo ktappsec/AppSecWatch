@@ -8,7 +8,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 _TEMPLATE_DIR = Path(__file__).parent / "templates"
 
 
-def render_report(context: dict[str, Any], out_path: Path) -> None:
+def _make_env() -> Environment:
     env = Environment(
         loader=FileSystemLoader(str(_TEMPLATE_DIR)),
         autoescape=select_autoescape(["html", "j2"]),
@@ -24,7 +24,20 @@ def render_report(context: dict[str, Any], out_path: Path) -> None:
 
     env.filters["sev_class"] = severity_class
     env.filters["pf_class"] = passfail_class
+    return env
 
-    template = env.get_template("report.html.j2")
-    html = template.render(**context)
+
+def _render(template_name: str, context: dict[str, Any], out_path: Path) -> None:
+    html = _make_env().get_template(template_name).render(**context)
     out_path.write_text(html, encoding="utf-8")
+
+
+def render_report(context: dict[str, Any], out_path: Path) -> None:
+    """Render the full technical report.html (shares _base.html.j2 with the exec one)."""
+    _render("report.html.j2", context, out_path)
+
+
+def render_executive(context: dict[str, Any], out_path: Path) -> None:
+    """Render the executive one-pager executive.html. Consumes the same context dict
+    (it reads context['executive'] + context['run'])."""
+    _render("executive.html.j2", context, out_path)

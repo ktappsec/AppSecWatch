@@ -61,6 +61,13 @@ export interface Asset {
   tech: { name: string; source?: string }[];
   profile?: Record<string, unknown> | null;
   finding_counts?: Record<string, number>;
+  surface?: {
+    third_party_domains?: string[];
+    script_domains?: string[];
+    endpoints?: string[];
+    cookie_keys?: string[];
+    storage_keys?: string[];
+  } | null;
   notes?: string | null;
   first_seen?: string | null;
   last_seen?: string | null;
@@ -163,6 +170,7 @@ export interface ScanRequest {
   only?: string[] | null;
   skip?: string[] | null;
   throttle?: ThrottleProfile | null;
+  profile_render?: "auto" | "always" | "never" | null;
   compress?: boolean;
   callback_url?: string | null;
 }
@@ -294,6 +302,8 @@ export interface ScanResult {
   wildcards: string[];
   summary?: RunSummary | null;
   report_url: string;
+  executive_url?: string | null;
+  executive_pdf_url?: string | null;
 }
 
 export interface RunSummary {

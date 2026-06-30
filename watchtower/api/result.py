@@ -28,10 +28,14 @@ def _all_findings(state: ScanState) -> list:
 
 
 def build_scan_result(
-    job_id: str, state: ScanState, *, report_url: str, job_state: str
+    job_id: str, state: ScanState, *, report_url: str, job_state: str,
+    executive_url: str | None = None, executive_pdf_url: str | None = None,
 ) -> dict[str, Any]:
     """Project the final ScanState into the ScanResult JSON shape (a plain dict so
-    it round-trips through job.json/result.json without import cycles)."""
+    it round-trips through job.json/result.json without import cycles).
+
+    executive_pdf_url is None when the PDF wasn't rendered (toggle off / best-effort
+    render skipped); the executive HTML is always produced alongside report.html."""
     findings = _all_findings(state)
     # Suppressed findings stay in the payload (UI shows them collapsed) but are
     # excluded from the severity histogram, matching the HTML report.
@@ -51,6 +55,8 @@ def build_scan_result(
         "wildcards": list(state.wildcards),
         "summary": state.summary.model_dump() if state.summary else None,
         "report_url": report_url,
+        "executive_url": executive_url,
+        "executive_pdf_url": executive_pdf_url,
     }
 
 

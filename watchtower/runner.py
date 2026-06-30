@@ -48,7 +48,7 @@ _RUN_SUBDIRS = (
     "01_recon",
     "02_audit/takeovers", "02_audit/sslscan",
     "02_audit/nuclei", "02_audit/playwright",
-    "03_ai/profile", "03_ai/triage", "03_ai/supply_chain",
+    "03_ai/profile", "03_ai/triage", "03_ai/supply_chain", "03_ai/exec_summary",
 )
 
 
@@ -173,6 +173,10 @@ async def _run(
             state = ScanState()
         report_stage = ReportStage(run_meta, versions)
         compress_stage = CompressStage() if compress else None
+        exec_pdf_stage: Stage | None = None
+        if cfg.report.executive_pdf:
+            from watchtower.stages.exec_pdf import ExecPdfStage
+            exec_pdf_stage = ExecPdfStage()
 
         if stages is not None:
             pipeline_stages: list[Stage] = list(stages)
@@ -182,6 +186,7 @@ async def _run(
                 cfg, only=only, skip=skip,
                 include_report=report_stage,
                 include_compress=compress_stage,
+                include_exec_pdf=exec_pdf_stage,
             )
         state.coverage = coverage
         # Manual suppressions (server-injected): mark matching findings just before

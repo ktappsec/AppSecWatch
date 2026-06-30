@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import random
 from pathlib import Path
 from typing import Any, Literal
 
@@ -22,6 +23,23 @@ class LLMConfig(BaseModel):
     model: str
     timeout_seconds: int = 120
     max_retries: int = 1
+    # Request attribution. OpenRouter surfaces these in its activity log so you can
+    # see which calls spent what. `app_title` → the `X-Title` header (the request
+    # "name"); `app_url` → the optional `HTTP-Referer`. When `tag_requests` is on,
+    # each call's purpose (profile / triage / supply / nuclei-gen) is appended to
+    # the title — so spend breaks down by call type — and, on OpenRouter, the
+    # OpenAI `user` field carries the full per-host label. Both are plain HTTP
+    # headers / a standard field that other backends (Ollama, llama.cpp, …) ignore,
+    # so this is harmless off OpenRouter.
+    app_title: str = "WatchTower"
+    app_url: str | None = None
+    tag_requests: bool = True
+    # Optional per-call-type model overrides, keyed by call purpose:
+    # `profile`, `triage`, `supply`, `nuclei-gen`. A purpose not listed falls back
+    # to `model`. Lets you run a cheap/fast model for profiling (and supply-chain)
+    # and a stronger one for triage (the highest-stakes call, since it can suppress
+    # findings) without changing anything else. Empty = one model for everything.
+    models: dict[str, str] = Field(default_factory=dict)
 
 
 class AIPromptsConfig(BaseModel):
@@ -39,6 +57,7 @@ class AIPromptsConfig(BaseModel):
     supply_system_default: str | None = None
     supply_system_profiled: str | None = None
     low_confidence_nudge: str | None = None
+    summary_system: str | None = None
 
     def as_overrides(self) -> dict[str, str]:
         """Slot-id → override text, dropping unset/blank slots."""
@@ -73,6 +92,20 @@ class SuppressionConfig(BaseModel):
     require_profile: bool = False
 
 
+class AIProfileConfig(BaseModel):
+    """Profiling-pass knobs (the `ai.profiling` flag still gates the pass itself).
+
+    `render` selects the profiler's INPUT source:
+      - auto   (default): consume the crawler's rendered text + curated surface
+               manifest when supply-chain ran for the host; otherwise fall back to
+               httpx pre-JS signals. The browser is never spun up just to profile.
+      - always: force a headless-browser render per host even when supply-chain is
+               not selected (slower; opens a browser for every profiled host).
+      - never:  httpx pre-JS signals only, even when a crawl is available.
+    """
+    render: Literal["auto", "always", "never"] = "auto"
+
+
 class AIConfig(BaseModel):
     """AI behavior. `profiling` toggles the context-aware profiling pass.
 
@@ -81,11 +114,13 @@ class AIConfig(BaseModel):
     context-light form and no 03_ai/profile/ artifact is written.
 
     `prompts` holds optional system-prompt overrides; `suppression` tunes the
-    cross-source false-positive filter run by the `ai.triage` step.
+    cross-source false-positive filter run by the `ai.triage` step; `profile`
+    holds the profiling-pass input/render knob.
     """
     profiling: bool = True
     prompts: AIPromptsConfig = Field(default_factory=AIPromptsConfig)
     suppression: SuppressionConfig = Field(default_factory=SuppressionConfig)
+    profile: AIProfileConfig = Field(default_factory=AIProfileConfig)
 
 
 class HeadersConfig(BaseModel):
@@ -159,6 +194,11 @@ class PlaywrightConfig(ToolBlock):
     wait_until: Literal["load", "domcontentloaded", "networkidle", "commit"] = "networkidle"
     timeout_ms: int = 30_000
     user_agent: str | None = None
+    # Capture a per-host viewport screenshot during the crawl. Dashboard-only
+    # inventory: stored as a run artifact, surfaced in the UI, NEVER sent to the LLM
+    # and NEVER inlined into report.html (keeps the report emailable). Disable for
+    # large inventories to save disk.
+    screenshot: bool = True
 
 
 # Coherent browser identities for the stealth layer. Each preset bundles a UA
@@ -166,51 +206,87 @@ class PlaywrightConfig(ToolBlock):
 # bot tell). Accept-Language leads with tr-TR — fits Turkish targets. Applied to
 # httpx, nuclei, and the Playwright crawler. NB: this defeats UA/header/signature
 # WAF rules — NOT TLS/JA3 fingerprinting or IP-reputation (see DESIGN/README).
+#
+# Client-hint policy: we send ONLY the LOW-entropy hints a real browser emits on a
+# cold first navigation (Sec-CH-UA / -Mobile / -Platform). The high-entropy hints
+# (-Arch, -Bitness, -Full-Version[-List], -Platform-Version, -Model, -Form-Factors,
+# -Wow64) and the network hints (downlink/rtt, prefers-color-scheme) are sent by a
+# real browser ONLY after the server requests them via `Accept-CH`. Our tools fire
+# one-shot requests with no prior round-trip, so emitting those unsolicited is
+# itself a bot tell — hence they're deliberately omitted. Likewise we never inject
+# Google-proprietary headers (x-client-data, x-browser-*) — those go only to
+# Google-owned origins and would scream "spoofed Chrome" against any other target.
+#
+# Referrer: browser presets emit a Referer rotated from REFERER_POOL (a real
+# navigation almost always has one). All pool entries are external origins, so the
+# coherent Sec-Fetch-Site is "cross-site" (a click from a search engine / social
+# site — not "none", which means a typed/bookmarked URL with no referrer). Per
+# Chrome's default `strict-origin-when-cross-origin` policy a cross-site Referer is
+# the *origin only*, which is exactly what these are. An operator can pin a fixed
+# Referer via `identity.headers` (it overrides the rotation).
+REFERER_POOL: list[str] = [
+    "https://www.google.com/",
+    "https://www.google.com.tr/",
+    "https://www.bing.com/",
+    "https://duckduckgo.com/",
+    "https://search.yahoo.com/",
+    "https://yandex.com.tr/",
+    "https://www.facebook.com/",
+    "https://www.linkedin.com/",
+    "https://t.co/",
+    "https://www.reddit.com/",
+]
+
 IDENTITY_PRESETS: dict[str, dict[str, Any]] = {
     "chrome-win": {
         "user_agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                       "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"),
+                       "(KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"),
         "locale": "tr-TR",
         "headers": {
             "Accept": ("text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,"
                        "image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"),
             "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
-            "Sec-CH-UA": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+            "Sec-CH-UA": '"Google Chrome";v="149", "Chromium";v="149", "Not)A;Brand";v="24"',
             "Sec-CH-UA-Mobile": "?0",
             "Sec-CH-UA-Platform": '"Windows"',
             "Sec-Fetch-Dest": "document",
             "Sec-Fetch-Mode": "navigate",
-            "Sec-Fetch-Site": "none",
+            "Sec-Fetch-Site": "cross-site",
             "Sec-Fetch-User": "?1",
             "Upgrade-Insecure-Requests": "1",
         },
     },
     "chrome-mac": {
         "user_agent": ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-                       "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"),
+                       "(KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"),
         "locale": "tr-TR",
         "headers": {
             "Accept": ("text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,"
                        "image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"),
             "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
-            "Sec-CH-UA": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+            "Sec-CH-UA": '"Google Chrome";v="149", "Chromium";v="149", "Not)A;Brand";v="24"',
             "Sec-CH-UA-Mobile": "?0",
             "Sec-CH-UA-Platform": '"macOS"',
             "Sec-Fetch-Dest": "document",
             "Sec-Fetch-Mode": "navigate",
-            "Sec-Fetch-Site": "none",
+            "Sec-Fetch-Site": "cross-site",
             "Sec-Fetch-User": "?1",
             "Upgrade-Insecure-Requests": "1",
         },
     },
     "firefox": {
-        "user_agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) "
-                       "Gecko/20100101 Firefox/125.0"),
+        "user_agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) "
+                       "Gecko/20100101 Firefox/140.0"),
         "locale": "tr-TR",
         "headers": {
             "Accept": ("text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,"
                        "image/webp,*/*;q=0.8"),
             "Accept-Language": "tr-TR,tr;q=0.8,en-US;q=0.5,en;q=0.3",
+            # Firefox does not implement UA Client Hints — no Sec-CH-UA here by design.
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "cross-site",
+            "Sec-Fetch-User": "?1",
             "Upgrade-Insecure-Requests": "1",
         },
     },
@@ -222,9 +298,11 @@ class IdentityConfig(BaseModel):
 
     `preset` picks a coherent browser UA+headers bundle; `user_agent` and `headers`
     override/extend it (headers merged over the preset's; decoys like
-    X-Forwarded-For go here). preset='off' + no overrides → tools use their own
-    defaults (unchanged behavior)."""
-    preset: Literal["off", "chrome-win", "chrome-mac", "firefox"] = "off"
+    X-Forwarded-For go here). Defaults to `chrome-win` — every scan presents a
+    coherent Chrome-on-Windows identity unless an operator sets `off` (tools then
+    use their own defaults). A browser preset also rotates a plausible cross-site
+    Referer from REFERER_POOL (pin one via `headers['Referer']` to opt out)."""
+    preset: Literal["off", "chrome-win", "chrome-mac", "firefox"] = "chrome-win"
     user_agent: str | None = None
     headers: dict[str, str] = Field(default_factory=dict)
     locale: str | None = None
@@ -244,10 +322,33 @@ class IdentityConfig(BaseModel):
 
     def effective_headers(self) -> dict[str, str]:
         """Preset headers with the free-form overrides merged on top (UA excluded —
-        each tool sets its own UA flag)."""
+        each tool sets its own UA flag). For a browser preset, a Referer is rotated
+        in from REFERER_POOL (coherent with the preset's Sec-Fetch-Site: cross-site)
+        unless the operator pinned one via `headers`. Called once per tool run, so
+        httpx / nuclei / the crawler each get an independently-rotated referrer."""
         out = dict(self._preset().get("headers", {}))
+        if self.preset != "off" and not any(k.lower() == "referer" for k in self.headers):
+            out["Referer"] = random.choice(REFERER_POOL)
         out.update(self.headers)
         return out
+
+
+class ReportConfig(BaseModel):
+    """Executive-report branding + output knobs. All optional with safe fallbacks
+    so an unconfigured run still produces a clean executive.html.
+
+    - org_name:      leadership-facing org name on the letterhead. Blank → falls
+                     back to the scanned root(s).
+    - classification: banner label (e.g. "Confidential"). Blank → omitted.
+    - logo_path:     a logo file base64-embedded into executive.html so it stays
+                     self-contained. Missing/unreadable → silently no logo.
+    - executive_pdf: also auto-render executive.pdf via the bundled Chromium
+                     (best-effort; degrades silently if the browser is unavailable).
+    """
+    org_name: str | None = None
+    classification: str = "Confidential"
+    logo_path: str | None = None
+    executive_pdf: bool = True
 
 
 class ToolsConfig(BaseModel):
@@ -330,6 +431,8 @@ class WatchTowerConfig(BaseModel):
     # Stealth identity (UA + headers) applied to httpx/nuclei/crawler.
     identity: IdentityConfig = Field(default_factory=IdentityConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
+    # Executive-report branding + PDF toggle (display-only; never gates a scan).
+    report: ReportConfig = Field(default_factory=ReportConfig)
 
     @model_validator(mode="after")
     def _apply_throttle(self) -> "WatchTowerConfig":

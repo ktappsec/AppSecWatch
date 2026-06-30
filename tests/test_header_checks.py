@@ -125,6 +125,34 @@ def test_cookie_secure_only_relevant_on_https():
     assert "cookie.httponly.a" in fs          # but HttpOnly still applies
 
 
+def test_infra_cookies_emit_no_findings():
+    # F5 BIG-IP / WAF / RUM cookies carry no app state → no flag findings, even
+    # bare (no Secure/HttpOnly/SameSite). f5avr*_session_ would otherwise match
+    # the session regex and escalate.
+    fs = _by_id(_run("https://h", _sig(set_cookies=[
+        "TS01a5e83e=deadbeef",
+        "BIGipServerpool=1.2.3.4",
+        "f5avraaaaaaaaaaaaaaaa_session_=x",
+        "ADRUM_BTa=y"])))
+    assert not any(k and k.startswith("cookie.") for k in fs)
+
+
+def test_real_session_cookie_still_flagged_alongside_infra():
+    fs = _by_id(_run("https://h", _sig(set_cookies=[
+        "TS0139ccaf=routing",          # infra → dropped
+        "JSESSIONID=abc"])))           # real session → still flagged
+    assert "cookie.httponly.JSESSIONID" in fs
+    assert fs["cookie.httponly.JSESSIONID"].severity == "medium"
+    assert not any(k.startswith("cookie.") and "TS0139ccaf" in k for k in fs)
+
+
+def test_infra_cookie_does_not_mark_page_sensitive():
+    # An f5avr*_session_ cookie alone must NOT trip the situational
+    # cross-origin-isolation checks (those fire only on apparently-sensitive pages).
+    fs = _by_id(_run("https://h", _sig(set_cookies=["f5avraaaaaaaaaaaaaaaa_session_=x"])))
+    assert "coop.missing" not in fs
+
+
 # --------------------------------------------------------------------------- #
 # information disclosure
 # --------------------------------------------------------------------------- #

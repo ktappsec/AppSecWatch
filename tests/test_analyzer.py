@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from watchtower.ai import analyzer
-from watchtower.ai.analyzer import _build_work_map, analyze_all, profile_all
+from watchtower.ai.analyzer import _build_work_map, analyze_all, profile_all, summarize_run
 from watchtower.config import LLMConfig
 from watchtower.models import AppProfile, CrawlerArtifact, LiveWebServer, PageSignals
 
@@ -23,7 +23,7 @@ def _make_fake_client(response: str, sink: list | None = None):
         def __init__(self, cfg):
             self.cfg = cfg
 
-        async def chat(self, system, user, *, temperature=0.0):
+        async def chat(self, system, user, *, temperature=0.0, label=None):
             if sink is not None:
                 sink.append((system, user))
             return response
@@ -75,6 +75,55 @@ async def test_profile_all_degrades_on_garbage(tmp_path, monkeypatch):
     assert profiles["x"].usable is False        # error set → downstream uses defaults
     assert profiles["x"].error
     assert (tmp_path / "x.json").is_file()
+
+
+# ---- summarize_run (ai.summary) ------------------------------------------
+
+def _make_label_capturing_client(response: str, labels: list):
+    class _Fake:
+        def __init__(self, cfg):
+            self.cfg = cfg
+
+        async def chat(self, system, user, *, temperature=0.0, label=None):
+            labels.append(label)
+            return response
+
+        async def close(self):
+            pass
+
+    return _Fake
+
+
+async def test_summarize_run_happy(monkeypatch):
+    resp = ('{"posture_narrative":"The estate is exposed.",'
+            '"risk_notes":[{"ref":0,"why":"Admin panel reachable."}],'
+            '"recommendations":["Restrict admin access."]}')
+    labels: list = []
+    monkeypatch.setattr(analyzer, "LLMClient", _make_label_capturing_client(resp, labels))
+    out = await summarize_run(
+        posture={"rating": "HIGH", "volume_note": "3 high-severity findings"},
+        counts={"critical": 0, "high": 3, "medium": 0, "low": 0, "info": 0},
+        scale={"live": 5, "live_servers": 3, "dead": 1},
+        risks=[{"ref": 0, "title": "Admin panel", "source": "nuclei",
+                "severity": "high", "host_count": 2}],
+        cfg=_llm(), log=_Log(),
+    )
+    assert out.usable is True
+    assert out.posture_narrative == "The estate is exposed."
+    assert out.risk_notes[0].ref == 0 and out.risk_notes[0].why == "Admin panel reachable."
+    assert out.recommendations == ["Restrict admin access."]
+    # call is labeled "summary" so the per-call models map can route it
+    assert labels == ["summary"]
+
+
+async def test_summarize_run_degrades_on_garbage(monkeypatch):
+    monkeypatch.setattr(analyzer, "LLMClient", _make_fake_client("not json"))
+    out = await summarize_run(
+        posture={"rating": "LOW", "volume_note": "no findings"},
+        counts={}, scale={}, risks=[], cfg=_llm(), log=_Log(),
+    )
+    assert out.usable is False and out.error          # degrade → renderer falls back
+    assert out.risk_notes == []
 
 
 # ---- analyze_all ---------------------------------------------------------
@@ -254,3 +303,51 @@ async def test_degraded_ai_suppresses_nothing(tmp_path, monkeypatch):
                                 profile=_hi_profile(), det=det)
     assert det[0].suppressed is False
     assert det[0].ai_verdict is None           # invariant: degrade leaves finding intact
+
+
+# --------------------------------------------------------------------------- #
+# AI finding shaping: stable check_id + non-vuln / infra-cookie drop
+# --------------------------------------------------------------------------- #
+def _ai_resp(*findings):
+    from watchtower.ai.schemas import AIFinding, AIResponse
+    return AIResponse(findings=[AIFinding(**f) for f in findings])
+
+
+def test_ai_finding_gets_stable_check_id():
+    resp = _ai_resp({"type": "cookie-missing-httponly-flag", "severity": "medium",
+                     "title": "Session cookie missing HttpOnly", "evidence": {"cookie": "JSESSIONID"}})
+    out = analyzer._ai_findings_to_findings("h", "ai_headers", resp)
+    assert len(out) == 1
+    assert out[0].check_id == "ai_headers.cookie-missing-httponly-flag"
+    # check_id drives grouping; two hosts with the same type collapse to one key
+    assert out[0].group_key == "ai_headers.cookie-missing-httponly-flag"
+
+
+def test_ai_check_id_slugifies_underscores_and_case():
+    assert analyzer._ai_check_id("ai_headers", "F5_Cookie_Missing_Flags") == \
+        "ai_headers.f5-cookie-missing-flags"
+    assert analyzer._ai_check_id("ai_headers", "  ") is None       # blank → None
+
+
+def test_ai_nonfinding_types_dropped():
+    resp = _ai_resp(
+        {"type": "positive-observation", "severity": "info", "title": "No scripts = good"},
+        {"type": "no-scripts-loaded", "severity": "info", "title": "No scripts detected"},
+        {"type": "best-practice-reminder", "severity": "medium", "title": "Verify HSTS"},
+        {"type": "sri-missing", "severity": "low", "title": "Real finding"},
+    )
+    out = analyzer._ai_findings_to_findings("h", "ai_supply_chain", resp)
+    assert [f.title for f in out] == ["Real finding"]
+
+
+def test_ai_infra_cookie_findings_dropped():
+    resp = _ai_resp(
+        {"type": "cookie-missing-httponly-flag", "severity": "medium",
+         "title": "F5 TS cookie missing HttpOnly", "evidence": {"cookie_name": "TS01a5e83e"}},
+        {"type": "server-technology-leak", "severity": "low",
+         "title": "F5 fingerprint", "evidence": {"cookie": "f5avraaaa_session_=x; HttpOnly"}},
+        {"type": "cookie-missing-httponly-flag", "severity": "high",
+         "title": "Real session cookie missing HttpOnly", "evidence": {"cookie": "JSESSIONID=abc"}},
+    )
+    out = analyzer._ai_findings_to_findings("h", "ai_headers", resp)
+    assert [f.title for f in out] == ["Real session cookie missing HttpOnly"]

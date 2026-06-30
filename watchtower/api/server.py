@@ -354,6 +354,22 @@ def _install(app: FastAPI, config: ServerConfig) -> None:
             and not ((f.get("ai_verdict") or {}).get("suppressed"))
         ]
 
+    @app.get("/assets/{fqdn}/screenshot", dependencies=[Depends(require_api_key)])
+    async def asset_screenshot(fqdn: str, request: Request):
+        """Per-host crawler screenshot from the asset's last scan (dashboard-only;
+        never embedded in report.html). 404 when screenshots were off / the host
+        wasn't crawled / it's an older scan."""
+        from watchtower.util.domains import host_to_filename
+
+        a = await asyncio.to_thread(assets_mgr(request).get, fqdn)
+        if not a or not a.get("last_scan_id"):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, error_response("not_found", "no screenshot"))
+        png = (Path(config.output_root) / a["last_scan_id"] / "02_audit" / "playwright"
+               / f"{host_to_filename(fqdn.lower().rstrip('.'))}.png")
+        if not png.is_file():
+            raise HTTPException(status.HTTP_404_NOT_FOUND, error_response("not_found", "no screenshot"))
+        return FileResponse(png, media_type="image/png")
+
     # ----- schedules ------------------------------------------------------ #
     @app.get("/schedules", dependencies=[Depends(require_api_key)])
     async def list_schedules(request: Request) -> list[Schedule]:
@@ -615,6 +631,39 @@ def _install(app: FastAPI, config: ServerConfig) -> None:
                 status.HTTP_409_CONFLICT, error_response("no_report", "report not yet rendered")
             )
         return FileResponse(report, media_type="text/html")
+
+    @app.get("/scans/{job_id}/executive", dependencies=[Depends(require_api_key)])
+    async def get_executive(job_id: str, request: Request):
+        mgr = manager(request)
+        rec = mgr.get(job_id)
+        if rec is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, error_response("not_found", "no such scan"))
+        run_dir = mgr.run_dir(job_id)
+        doc = (run_dir / "executive.html") if run_dir else None
+        if doc is None or not doc.is_file():
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                error_response("no_report", "executive summary not yet rendered"),
+            )
+        return FileResponse(doc, media_type="text/html")
+
+    @app.get("/scans/{job_id}/executive.pdf", dependencies=[Depends(require_api_key)])
+    async def get_executive_pdf(job_id: str, request: Request):
+        mgr = manager(request)
+        rec = mgr.get(job_id)
+        if rec is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, error_response("not_found", "no such scan"))
+        run_dir = mgr.run_dir(job_id)
+        pdf = (run_dir / "executive.pdf") if run_dir else None
+        if pdf is None or not pdf.is_file():
+            # Best-effort artifact: absent when the toggle is off or the render was
+            # skipped. 404 (not 409) — there is nothing to wait for.
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                error_response("not_found", "no executive PDF for this scan"),
+            )
+        return FileResponse(pdf, media_type="application/pdf",
+                            filename=f"{job_id}-executive.pdf")
 
     @app.get("/scans/{job_id}/log", dependencies=[Depends(require_api_key)])
     async def get_log(

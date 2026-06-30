@@ -140,6 +140,20 @@ export const api = {
     return key ? `${base}?api_key=${encodeURIComponent(key)}` : base;
   },
 
+  // Executive one-pager (HTML) — iframe/link target, so ?api_key= like reportUrl.
+  executiveUrl: (id: string) => {
+    const key = getApiKey();
+    const base = `${getApiBase()}/scans/${encodeURIComponent(id)}/executive`;
+    return key ? `${base}?api_key=${encodeURIComponent(key)}` : base;
+  },
+
+  // Executive PDF download link (best-effort artifact; the server 404s when absent).
+  executivePdfUrl: (id: string) => {
+    const key = getApiKey();
+    const base = `${getApiBase()}/scans/${encodeURIComponent(id)}/executive.pdf`;
+    return key ? `${base}?api_key=${encodeURIComponent(key)}` : base;
+  },
+
   submitScan: (req: ScanRequest, idempotencyKey?: string) =>
     request<JobStatus>(
       "/scans",
@@ -194,6 +208,23 @@ export const api = {
 
   assetFindings: (fqdn: string) =>
     request<Finding[]>(`/assets/${encodeURIComponent(fqdn)}/findings`),
+
+  // Per-host crawler screenshot. Binary + auth'd, so it can't be a plain <img src>
+  // (that can't send the Bearer header) — fetch as a blob → object URL. Returns
+  // null when there is no screenshot (disabled / not crawled / older scan).
+  assetScreenshot: async (fqdn: string): Promise<string | null> => {
+    const base = getApiBase();
+    const key = getApiKey();
+    const headers: Record<string, string> = {};
+    if (key) headers["Authorization"] = `Bearer ${key}`;
+    try {
+      const resp = await fetch(`${base}/assets/${encodeURIComponent(fqdn)}/screenshot`, { headers });
+      if (!resp.ok) return null;
+      return URL.createObjectURL(await resp.blob());
+    } catch {
+      return null;
+    }
+  },
 
   // --- scan templates (option presets) ---
   listScanTemplates: () => request<ScanTemplate[]>("/scan-templates"),

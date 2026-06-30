@@ -46,6 +46,8 @@ class ScanRequest(BaseModel):
     only: list[str] | None = Field(default=None, description="Capability tokens to run exclusively")
     skip: list[str] | None = Field(default=None, description="Capability tokens to exclude")
     throttle: ThrottleProfile | None = None
+    # Per-scan override of ai.profile.render (else the server config's value applies).
+    profile_render: Literal["auto", "always", "never"] | None = None
     compress: bool = True
     callback_url: str | None = Field(
         default=None, description="Optional webhook; host must be in callback_host_allowlist"
@@ -79,6 +81,7 @@ class JobRecord(BaseModel):
     only: list[str] | None = None
     skip: list[str] | None = None
     throttle: ThrottleProfile | None = None
+    profile_render: Literal["auto", "always", "never"] | None = None
     compress: bool = True
     source: str = "manual"               # manual | schedule
     schedule_id: str | None = None
@@ -153,6 +156,10 @@ class ScanResult(BaseModel):
     wildcards: list[str] = Field(default_factory=list)
     summary: dict[str, Any] | None = None
     report_url: str
+    # Executive one-pager (always written alongside report.html); the PDF URL is
+    # null when the PDF wasn't rendered (toggle off / best-effort render skipped).
+    executive_url: str | None = None
+    executive_pdf_url: str | None = None
 
 
 # --------------------------------------------------------------------------- #
@@ -171,6 +178,7 @@ class Asset(BaseModel):
     tech: list[dict[str, Any]] = Field(default_factory=list)
     profile: dict[str, Any] | None = None        # AI AppProfile (when ai.profile ran)
     finding_counts: dict[str, int] = Field(default_factory=dict)  # last scan, by severity
+    surface: dict[str, Any] | None = None        # curated EASM surface (names only) from last crawl
     notes: str | None = None
     first_seen: str | None = None
     last_seen: str | None = None

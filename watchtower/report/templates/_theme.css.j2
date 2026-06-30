@@ -1,0 +1,24 @@
+/* Shared palette for both reports. Dark is the baseline; light overrides via the
+   data-theme attribute the head theme-init script sets; print forces the light,
+   ink-friendly palette regardless of the on-screen toggle. No Jinja expressions
+   here — pure CSS, so autoescape never touches it. */
+:root, :root[data-theme="dark"] {
+  --bg:#0e1014; --panel:#161a22; --panel2:#1c2230; --border:#2a3142;
+  --text:#e6e8ee; --muted:#8b94a7; --accent:#5ea9ff;
+  --crit:#ff4d4f; --high:#ff8a3d; --med:#ffc83d; --low:#5ea9ff; --info:#7a8499;
+  --pass:#2bd4a5; --fail:#ff4d4f;
+}
+:root[data-theme="light"] {
+  --bg:#f6f7f9; --panel:#ffffff; --panel2:#eef1f6; --border:#d7dce5;
+  --text:#1a1f29; --muted:#5b6472; --accent:#1f6feb;
+  --crit:#d11a2a; --high:#c2410c; --med:#a16207; --low:#1f6feb; --info:#5b6472;
+  --pass:#0a8f6b; --fail:#d11a2a;
+}
+@media print {
+  :root, :root[data-theme="dark"], :root[data-theme="light"] {
+    --bg:#ffffff; --panel:#ffffff; --panel2:#f4f5f7; --border:#c8ced8;
+    --text:#11151c; --muted:#444b57; --accent:#0b5bd0;
+    --crit:#b3001b; --high:#9a3412; --med:#854d0e; --low:#0b5bd0; --info:#444b57;
+    --pass:#06795a; --fail:#b3001b;
+  }
+}

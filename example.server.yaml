@@ -48,3 +48,10 @@ base_config:
     base_url: https://openrouter.ai/api/v1
     model: minimax/minimax-m3
     # api_key comes from WATCHTOWER_LLM_API_KEY
+  # Everything else defaults and is editable at runtime via the Settings page, e.g.:
+  #   ai.profile.render: auto|always|never   (profiler input: rendered capture vs httpx)
+  #   tools.playwright.screenshot: true       (per-host screenshots for the dashboard)
+  #   report.org_name / report.classification / report.logo_path  (executive.html branding)
+  #   report.executive_pdf: true              (also render executive.pdf via bundled Chromium)
+  # A scan can also override render per-run (New Scan → Profile render, or the API's
+  # POST /scans "profile_render").

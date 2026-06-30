@@ -38,13 +38,32 @@ concurrency:
 paths_per_host:
   - "/"
 
-# OpenAI-compatible LLM endpoint. Tested with Ollama, llama.cpp server, vLLM, LM Studio.
+# OpenAI-compatible LLM endpoint. Tested with Ollama, llama.cpp server, vLLM, LM
+# Studio, and OpenRouter.
 llm:
   base_url: http://host.docker.internal:11434/v1
   api_key: ollama
   model: llama3.1:8b-instruct
   timeout_seconds: 120
   max_retries: 1
+  # Request attribution. OpenRouter shows these in its activity log so you can see
+  # which calls spent what. app_title -> the `X-Title` header (the request "name");
+  # app_url -> the optional `HTTP-Referer`. With tag_requests on, each call's
+  # purpose (profile / triage / supply / nuclei-gen) is appended to the title so
+  # spend groups by call type, and on OpenRouter the OpenAI `user` field carries
+  # the full per-host label. Harmless off OpenRouter (headers/field are ignored).
+  app_title: WatchTower
+  app_url: null            # e.g. https://watchtower.internal
+  tag_requests: true
+  # Optional per-call-type model overrides. Keys: profile, triage, supply,
+  # nuclei-gen. Anything unlisted uses `model` above. The per-host calls (profile/
+  # triage/supply) drive cost on a large estate — profiling tolerates a cheap/fast
+  # model; keep triage capable (it can suppress findings). Leave empty for one
+  # model everywhere.
+  models: {}
+  #  profile: openai/gpt-5-mini
+  #  triage: anthropic/claude-opus-4.8
+  #  supply: openai/gpt-5-mini
 
 # AI behavior.
 ai:
@@ -53,6 +72,16 @@ ai:
   # have, then calibrate findings to that. Adds one LLM call per host.
   # Set false to use the default context-light prompts (2 calls/host, no profile).
   profiling: true
+
+  profile:
+    # Profiler INPUT source:
+    #   auto   (default) - use the crawler's rendered text + curated surface
+    #          manifest when supply-chain ran for the host; else fall back to the
+    #          fast httpx pre-JS signals. Never spins up a browser just to profile.
+    #   always - render every profiled host in a headless browser even when
+    #            supply-chain is off (slower; a browser per host).
+    #   never  - httpx pre-JS signals only, even if a crawl is available.
+    render: auto
 
   # Cross-source false-positive suppression — the `ai.triage` step. The AI reviews
   # ALL deterministic findings (nuclei/TLS/js_lib/headers/takeover) for a host and
@@ -90,17 +119,29 @@ headers:
   # Skip checks by check_id or dotted prefix, e.g. [permissions-policy, cookie].
   disabled_checks: []
 
+# Executive report (executive.html one-pager) branding + output. All optional —
+# an unconfigured run still produces a clean exec report. The full technical
+# report.html is unaffected. Both reports share a light/dark theme toggle.
+report:
+  org_name: null           # letterhead org name (null = falls back to the scanned root)
+  classification: Confidential   # banner label (blank to omit)
+  logo_path: null          # optional logo, base64-embedded so the report stays self-contained
+  executive_pdf: true      # also auto-render executive.pdf via the bundled Chromium (best-effort)
+
 # Stealth identity applied to httpx, nuclei & the Playwright crawler. For
 # AUTHORIZED testing of your own assets. `preset` bundles a coherent browser
 # UA + headers + locale; user_agent/headers/locale override/extend it (decoys
 # like X-Forwarded-For go in headers). NB: defeats UA/header WAF rules, not
 # TLS/JA3 fingerprinting or IP-reputation — for those, get the scanner IP
-# allowlisted. preset 'off' (default) = each tool's own UA, unchanged behavior.
+# allowlisted. A browser preset also rotates a plausible cross-site Referer per
+# tool run (search-engine/social origins; coherent with Sec-Fetch-Site=cross-site);
+# pin one via headers.Referer to opt out. Default is chrome-win; set 'off' to
+# disable (each tool then uses its own UA, no injected headers/referrer).
 identity:
-  preset: "off"          # off | chrome-win | chrome-mac | firefox  (quote: YAML reads bare off as false)
+  preset: "chrome-win"   # off | chrome-win | chrome-mac | firefox  (quote: YAML reads bare off as false)
   user_agent: null       # override the preset's UA (null = use preset)
   locale: null           # e.g. tr-TR (crawler context locale)
-  headers: {}            # extra/decoy headers, e.g. {X-Forwarded-For: 203.0.113.7}
+  headers: {}            # extra/decoy headers, e.g. {X-Forwarded-For: 203.0.113.7, Referer: https://example/}
 
 # Per-tool config. Every tool accepts `extra_flags: []` for unsurfaced flags.
 tools:
@@ -152,3 +193,7 @@ tools:
     wait_until: networkidle    # one of: load, domcontentloaded, networkidle, commit
     timeout_ms: 30000
     user_agent: null           # null = default Chromium UA
+    # Per-host viewport screenshot, stored as a run artifact + shown in the UI
+    # (never sent to the LLM, never inlined into report.html). Disable for large
+    # inventories to save disk.
+    screenshot: true

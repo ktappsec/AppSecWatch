@@ -165,7 +165,7 @@ class CustomTemplateManager:
         client = LLMClient(llm_cfg)
         user = f"Write a Nuclei template for: {description}"
         try:
-            raw = await client.chat(_GEN_SYSTEM, user)
+            raw = await client.chat(_GEN_SYSTEM, user, label="nuclei-gen")
         except Exception as e:  # noqa: BLE001 — LLM error degrades gracefully
             return {"yaml": "", "valid": False, "error": f"LLM error: {e}"}
         finally:

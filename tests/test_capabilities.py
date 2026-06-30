@@ -25,7 +25,7 @@ def test_default_runs_everything():
     assert all(cov[t]["ran"] for t in ALL_TOKENS)
     # full spine, all ai steps, config-default nuclei severities
     assert plan.recon_steps == frozenset({"subfinder", "dns", "tlsx", "httpx"})
-    assert plan.ai_steps == frozenset({"profile", "triage", "supply-chain"})
+    assert plan.ai_steps == frozenset({"profile", "triage", "supply-chain", "summary"})
     assert plan.nuclei_severities is None
     assert cov["recon"]["partial"] is False
     assert cov["ai"]["partial"] is False
@@ -72,8 +72,8 @@ def test_skip_supply_chain_keeps_ai_but_drops_crawler():
     assert "ai" in active
     assert "supply-chain" not in active
     assert cov["supply-chain"]["ran"] is False
-    # ai keeps profile + triage, loses the supply step → partial
-    assert plan.ai_steps == frozenset({"profile", "triage"})
+    # ai keeps profile + triage + summary, loses the supply step → partial
+    assert plan.ai_steps == frozenset({"profile", "triage", "summary"})
     assert cov["ai"]["partial"] is True
 
 
@@ -122,7 +122,7 @@ def test_only_ai_profile_no_analysis_stage():
 def test_skip_ai_supply_chain_keeps_crawler():
     active, cov, _, plan = resolve_selection(skip={"ai.supply-chain"})
     assert "supply-chain" in active            # crawler still runs
-    assert plan.ai_steps == frozenset({"profile", "triage"})
+    assert plan.ai_steps == frozenset({"profile", "triage", "summary"})
     assert cov["ai"]["partial"] is True
 
 
