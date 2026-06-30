@@ -138,11 +138,25 @@ def parse_page_signals(obj: dict[str, Any], host: str) -> PageSignals:
         body = obj.get("body") or ""
         headers = {}
 
-    # Some httpx builds emit a structured headers map directly.
+    # httpx also emits the raw response-header block (correct wire-format names,
+    # one line per Set-Cookie) under `raw_header` — the most faithful source. It
+    # is headers-only (status line + header lines, no body), so parse it directly
+    # rather than via _split_head_body.
+    if not headers:
+        rh = obj.get("raw_header")
+        if isinstance(rh, str) and rh.strip():
+            headers, rc = _parse_headers(rh)
+            if rc and not set_cookies:
+                set_cookies = rc
+
+    # Some httpx builds expose a structured headers map. Its JSON keys use '_' for
+    # '-' (e.g. `strict_transport_security`), so normalize back to wire-format
+    # names — otherwise every hyphenated lookup in header_checks misses and a host
+    # that actually sets the header is reported as missing it.
     structured = obj.get("header") or obj.get("response_headers")
     if isinstance(structured, dict):
         for k, v in structured.items():
-            lk = str(k).lower()
+            lk = str(k).lower().replace("_", "-")
             headers.setdefault(lk, str(v))
             if lk == "set-cookie" and not set_cookies:
                 # structured set-cookie may be a list (multiple) or a single str.

@@ -66,6 +66,36 @@ def test_httpx_title_preferred_over_parsed():
     assert ps.title == "Cleaner Title"
 
 
+def test_structured_header_map_underscore_keys_normalized():
+    # httpx's structured `header` map uses '_' for '-'. They must be normalized to
+    # wire-format names so header_checks' hyphenated lookups find them (otherwise a
+    # host that sets HSTS/CSP/XFO is falsely reported as missing them).
+    obj = {"host": "h", "body": "<html></html>", "header": {
+        "strict_transport_security": "max-age=63072000; includeSubDomains",
+        "content_security_policy": "default-src 'self'",
+        "x_frame_options": "DENY",
+        "x_content_type_options": "nosniff",
+    }}
+    ps = parse_page_signals(obj, "h")
+    assert ps.headers["strict-transport-security"].startswith("max-age=")
+    assert ps.headers["content-security-policy"] == "default-src 'self'"
+    assert ps.headers["x-frame-options"] == "DENY"
+    assert ps.headers.get("strict_transport_security") is None   # underscore key gone
+
+
+def test_parses_from_raw_header_field():
+    # `raw_header` (headers-only block, status line first) is the faithful source
+    # and preserves the real hyphenated names + Set-Cookie line.
+    obj = {"host": "h", "body": "<html></html>", "raw_header": (
+        "HTTP/1.1 200 OK\r\n"
+        "Strict-Transport-Security: max-age=31536000\r\n"
+        "Set-Cookie: JSESSIONID=abc; HttpOnly\r\n"
+    )}
+    ps = parse_page_signals(obj, "h")
+    assert ps.headers["strict-transport-security"] == "max-age=31536000"
+    assert ps.set_cookies == ["JSESSIONID=abc; HttpOnly"]
+
+
 def test_parse_httpx_records_builds_servers_and_signals():
     import json
     line = json.dumps({
