@@ -29,5 +29,21 @@ services:
       - ./mmdb:/data/mmdb:ro                            # GeoLite2-ASN.mmdb (set mmdb_path in the UI)
     restart: unless-stopped
 
+  # OPTIONAL OWASP ZAP sidecar — only needed for the opt-in `zap` active-scan
+  # capability. The heavy Java daemon stays OUT of the watchtower image; watchtower
+  # drives it over REST at http://zap:8090. NOT published to the host (internal
+  # only). To enable: set ZAP_API_KEY, then in the UI Settings set the zap config
+  # (enabled: true, base_url: http://zap:8090, api_key: <ZAP_API_KEY>).
+  # Remove this service entirely if you don't use active scanning.
+  zap:
+    image: ghcr.io/zaproxy/zaproxy:stable
+    command: >-
+      zap.sh -daemon -host 0.0.0.0 -port 8090
+      -config api.key=${ZAP_API_KEY:-changeme}
+      -config api.addrs.addr.name=.* -config api.addrs.addr.regex=true
+    expose:
+      - "8090"
+    restart: unless-stopped
+
 volumes:
   watchtower-data:

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from urllib.parse import urlparse
 
 from watchtower.audit.nuclei_runner import run_nuclei
 from watchtower.audit.sslscan_runner import run_sslscan
@@ -155,3 +156,42 @@ class CrawlerStage(Stage):
         return StageResult(
             [(art.host, msg) for art in state.crawler_artifacts for msg in art.errors]
         )
+
+
+class ZapStage(Stage):
+    """OWASP ZAP active scan (the opt-in `zap` capability).
+
+    Drives the ZAP sidecar daemon over REST (audit/zap_runner.run_zap) against the
+    operator-specified, scope-locked `cfg.zap.targets`. Runs in the audit phase
+    (parallel with sslscan/nuclei) but internally serializes its per-target scans
+    through the single daemon. Re-validates target scope as defense-in-depth: the
+    Web API 409s out-of-scope targets at submit, but the CLI has no such gate.
+    """
+    name = "audit.zap"
+
+    def _dir(self, run_dir: Path) -> Path:
+        return run_dir / "02_audit" / "zap"
+
+    async def run(self, state, run_dir, cfg, ipinfo, log):
+        from watchtower.audit.zap_runner import run_zap
+
+        z = cfg.zap
+        in_scope: list[str] = []
+        dropped: list[str] = []
+        for t in z.targets:
+            host = urlparse(t if "://" in t else f"//{t}").hostname or t
+            (in_scope if under_any_root(host, cfg.roots) else dropped).append(t)
+        if dropped:
+            log.warn(f"zap: dropping {len(dropped)} out-of-scope target(s): {dropped}",
+                     event="zap_out_of_scope")
+        dropped_errs = [(t, "out of scope (dropped)") for t in dropped]
+        if not in_scope:
+            return StageResult([(None, "zap: no in-scope targets")] + dropped_errs)
+
+        # run_zap owns cancellation cleanup (stop scans + remove context) and
+        # re-raises CancelledError — which ParallelStage lets propagate.
+        findings, errors = await run_zap(
+            in_scope, self._dir(run_dir), z, log, run_id=run_dir.name,
+        )
+        state.zap_findings = findings
+        return StageResult(list(errors) + dropped_errs)

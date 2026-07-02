@@ -17,12 +17,15 @@ from watchtower.stages.capabilities import (
 # --------------------------------------------------------------------------- #
 # parent-level behavior (back-compat)
 # --------------------------------------------------------------------------- #
-def test_default_runs_everything():
+def test_default_runs_everything_except_opt_in():
     active, cov, discovery, plan = resolve_selection()
-    assert active == set(ALL_TOKENS)
+    # zap is opt-in: a default scan runs every capability EXCEPT zap.
+    assert active == set(ALL_TOKENS) - {"zap"}
+    assert "zap" not in active
+    assert cov["zap"]["ran"] is False and cov["zap"]["reason"] == "not run"
     assert discovery is False
     assert cov["recon"]["ran"] is True and cov["recon"]["reason"] == "prerequisite"
-    assert all(cov[t]["ran"] for t in ALL_TOKENS)
+    assert all(cov[t]["ran"] for t in ALL_TOKENS if t != "zap")
     # full spine, all ai steps, config-default nuclei severities
     assert plan.recon_steps == frozenset({"subfinder", "dns", "tlsx", "httpx"})
     assert plan.ai_steps == frozenset({"profile", "triage", "supply-chain", "summary"})
@@ -63,8 +66,24 @@ def test_only_recon_is_discovery_only():
 def test_skip_nuclei():
     active, cov, _, _ = resolve_selection(skip={"nuclei"})
     assert "nuclei" not in active
-    assert active == set(ALL_TOKENS) - {"nuclei"}
+    # zap stays out too: opt-in caps never ride along on a --skip selection.
+    assert active == set(ALL_TOKENS) - {"nuclei", "zap"}
     assert cov["nuclei"]["ran"] is False and cov["nuclei"]["reason"] == "skipped by --skip"
+
+
+def test_zap_is_opt_in():
+    # Default + skip never activate zap.
+    assert "zap" not in resolve_selection()[0]
+    assert "zap" not in resolve_selection(skip={"nuclei"})[0]
+    assert "zap" not in resolve_selection(skip={"zap"})[0]
+    # Only an explicit --only zap turns it on, and keeps the recon spine.
+    active, cov, discovery, _ = resolve_selection(only={"zap"})
+    assert active == {"recon", "zap"}
+    assert discovery is False
+    assert cov["zap"] == {"ran": True, "reason": "user-selected"}  # not a sub-tokened cap
+    # zap composes with other audit caps in one --only.
+    active2, _, _, _ = resolve_selection(only={"zap", "tls"})
+    assert active2 == {"recon", "zap", "tls"}
 
 
 def test_skip_supply_chain_keeps_ai_but_drops_crawler():

@@ -12,6 +12,8 @@
 #   WATCHTOWER_WEBHOOK_SECRET  HMAC-SHA256 signing secret for webhook callbacks
 #   WATCHTOWER_LLM_API_KEY     SEEDS base_config.llm.api_key on first boot only
 #   WATCHTOWER_CONFIG_STORE    path to the writable runtime store (optional override)
+#   ZAP_API_KEY                ZAP daemon api.key (docker-compose zap sidecar) — set the
+#                              matching base_config.zap.api_key in the UI to enable active scans
 #
 # Run:  watchtower serve -c example.server.yaml --host 127.0.0.1 --port 8080
 # If WATCHTOWER_API_KEYS is unset the API runs OPEN (handy for local UI dev).
@@ -48,6 +50,12 @@ base_config:
     base_url: https://openrouter.ai/api/v1
     model: minimax/minimax-m3
     # api_key comes from WATCHTOWER_LLM_API_KEY
+  # OWASP ZAP active scan (opt-in). Disabled by default — enable + point at the
+  # sidecar daemon (docker-compose `zap` service) to allow `--only zap` scans:
+  #   zap:
+  #     enabled: true
+  #     base_url: http://zap:8090
+  #     api_key: ********            # set to ${ZAP_API_KEY}; masked + persisted in the store
   # Everything else defaults and is editable at runtime via the Settings page, e.g.:
   #   ai.profile.render: auto|always|never   (profiler input: rendered capture vs httpx)
   #   tools.playwright.screenshot: true       (per-host screenshots for the dashboard)

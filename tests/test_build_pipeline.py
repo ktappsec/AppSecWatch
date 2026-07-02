@@ -256,3 +256,40 @@ def test_default_assembles_full_spine_plus_audit():
     ]
     assert _stage(stages, "audit.headers") is not None
     assert coverage["recon"]["reason"] == "prerequisite"
+
+
+def _cfg_zap() -> WatchTowerConfig:
+    cfg = _cfg()
+    cfg.zap.enabled = True
+    cfg.zap.base_url = "http://zap:8090"
+    cfg.zap.targets = ["https://app.example.com"]
+    return cfg
+
+
+def test_zap_built_when_selected_and_configured():
+    stages, cov = build_pipeline(
+        _cfg_zap(), only={"zap"},
+        include_report=_DummyReport(), include_compress=None,
+    )
+    assert _stage(stages, "audit.zap") is not None
+    assert cov["zap"]["ran"] is True and cov["zap"]["reason"] == "user-selected"
+
+
+def test_zap_absent_by_default_even_when_configured():
+    # Opt-in: a default scan never builds the ZAP stage, even with the daemon set.
+    stages, cov = build_pipeline(
+        _cfg_zap(), include_report=_DummyReport(), include_compress=None,
+    )
+    assert _stage(stages, "audit.zap") is None
+    assert cov["zap"]["ran"] is False
+
+
+def test_zap_selected_but_unconfigured_builds_no_stage():
+    # only=zap but the daemon is disabled → factory returns None (no stage),
+    # even though coverage marks it user-selected.
+    stages, cov = build_pipeline(
+        _cfg(), only={"zap"},
+        include_report=_DummyReport(), include_compress=None,
+    )
+    assert _stage(stages, "audit.zap") is None
+    assert cov["zap"]["ran"] is True  # selected, but the factory no-op'd

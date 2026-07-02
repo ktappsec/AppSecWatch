@@ -318,15 +318,30 @@ def test_ai_finding_gets_stable_check_id():
                      "title": "Session cookie missing HttpOnly", "evidence": {"cookie": "JSESSIONID"}})
     out = analyzer._ai_findings_to_findings("h", "ai_headers", resp)
     assert len(out) == 1
-    assert out[0].check_id == "ai_headers.cookie-missing-httponly-flag"
-    # check_id drives grouping; two hosts with the same type collapse to one key
-    assert out[0].group_key == "ai_headers.cookie-missing-httponly-flag"
+    # The grouping id is derived from the TITLE (cross-host-stable), not the type.
+    assert out[0].check_id == "ai_headers.session-cookie-missing-httponly"
+    assert out[0].group_key == "ai_headers.session-cookie-missing-httponly"
 
 
-def test_ai_check_id_slugifies_underscores_and_case():
-    assert analyzer._ai_check_id("ai_headers", "F5_Cookie_Missing_Flags") == \
-        "ai_headers.f5-cookie-missing-flags"
+def test_ai_finding_same_title_collapses_despite_differing_type():
+    """Regression: the per-host LLM calls keep the human title identical but can
+    emit a different `type` slug. Grouping on the title (not the type) keeps the
+    two visibly-identical findings on one key so they collapse to one report row."""
+    title = "Third-party script loaded without Subresource Integrity (SRI)"
+    a = analyzer._ai_findings_to_findings(
+        "apex.com", "ai_supply_chain", _ai_resp({"type": "missing-sri", "severity": "medium", "title": title}))
+    b = analyzer._ai_findings_to_findings(
+        "www.apex.com", "ai_supply_chain", _ai_resp({"type": "sri-not-applied", "severity": "medium", "title": title}))
+    assert a[0].group_key == b[0].group_key      # same title → same key → one row
+
+
+def test_ai_check_id_slugifies_punctuation_and_case():
+    assert analyzer._ai_check_id("ai_headers", "Session cookies lack SameSite attribute") == \
+        "ai_headers.session-cookies-lack-samesite-attribute"
     assert analyzer._ai_check_id("ai_headers", "  ") is None       # blank → None
+    # Very long titles are length-capped (still deterministic + collapsing).
+    long_id = analyzer._ai_check_id("ai_supply_chain", "x " * 80)
+    assert long_id is not None and len(long_id.split(".", 1)[1]) <= 80
 
 
 def test_ai_nonfinding_types_dropped():

@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import tarfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -33,7 +34,7 @@ from watchtower.api.auth import require_api_key
 from watchtower.api.config import ConfigError, ConfigManager, ServerConfig
 from watchtower.api.db import Database, default_db_path
 from watchtower.api.history import ScanHistory
-from watchtower.api.jobs import JobManager, NotConfigured, QueueFull
+from watchtower.api.jobs import JobManager, NotConfigured, QueueFull, ZapRejected
 from watchtower.api.nuclei_catalog import NucleiCatalog, default_templates_dir
 from watchtower.api.nuclei_custom import CustomTemplateManager
 from watchtower.api.scan_templates import ScanTemplateManager
@@ -82,6 +83,31 @@ _STATUS_CODE_NAMES = {
     400: "bad_request", 401: "unauthorized", 403: "forbidden",
     404: "not_found", 409: "conflict", 422: "unprocessable", 429: "rate_limited",
 }
+
+
+def _read_artifact_bytes(run_dir: Path, rel: str) -> bytes | None:
+    """Read a per-stage artifact by its run-relative path (e.g.
+    ``02_audit/playwright/host.png``) from either the loose file OR, when the run
+    was compressed (the default — `CompressStage` tars `01_recon`/`02_audit`/
+    `03_ai` and deletes the originals), the matching ``<subdir>.tar.gz``. Returns
+    None when the artifact exists in neither place. Off-loop callers should wrap
+    this in `asyncio.to_thread` (it does blocking I/O + gzip)."""
+    loose = run_dir / rel
+    if loose.is_file():
+        try:
+            return loose.read_bytes()
+        except OSError:
+            return None
+    sub = rel.split("/", 1)[0]
+    tgz = run_dir / f"{sub}.tar.gz"
+    if not tgz.is_file():
+        return None
+    try:
+        with tarfile.open(tgz, "r:gz") as tar:
+            member = tar.extractfile(rel)
+            return member.read() if member is not None else None
+    except (KeyError, tarfile.TarError, OSError):
+        return None
 
 
 class _AssetImport(BaseModel):
@@ -358,17 +384,20 @@ def _install(app: FastAPI, config: ServerConfig) -> None:
     async def asset_screenshot(fqdn: str, request: Request):
         """Per-host crawler screenshot from the asset's last scan (dashboard-only;
         never embedded in report.html). 404 when screenshots were off / the host
-        wasn't crawled / it's an older scan."""
+        wasn't crawled / it's an older scan. Reads from the loose file OR the
+        compressed `02_audit.tar.gz` (compression is the default, so the loose
+        `playwright/` dir is gone for almost every run)."""
         from watchtower.util.domains import host_to_filename
 
         a = await asyncio.to_thread(assets_mgr(request).get, fqdn)
         if not a or not a.get("last_scan_id"):
             raise HTTPException(status.HTTP_404_NOT_FOUND, error_response("not_found", "no screenshot"))
-        png = (Path(config.output_root) / a["last_scan_id"] / "02_audit" / "playwright"
-               / f"{host_to_filename(fqdn.lower().rstrip('.'))}.png")
-        if not png.is_file():
+        run_dir = Path(config.output_root) / a["last_scan_id"]
+        rel = f"02_audit/playwright/{host_to_filename(fqdn.lower().rstrip('.'))}.png"
+        data = await asyncio.to_thread(_read_artifact_bytes, run_dir, rel)
+        if data is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, error_response("not_found", "no screenshot"))
-        return FileResponse(png, media_type="image/png")
+        return Response(content=data, media_type="image/png")
 
     # ----- schedules ------------------------------------------------------ #
     @app.get("/schedules", dependencies=[Depends(require_api_key)])
@@ -526,9 +555,14 @@ def _install(app: FastAPI, config: ServerConfig) -> None:
     @app.get("/capabilities", dependencies=[Depends(require_api_key)])
     async def capabilities(request: Request):
         from watchtower.config import THROTTLE_PROFILE_NAMES, throttle_profile_details
+        # The opt-in `zap` capability is advertised ONLY when the daemon is enabled
+        # + configured, so the UI never offers it on a deployment that can't run it.
+        zap_cfg = config_manager(request).config.base_config_raw.get("zap") or {}
+        zap_on = bool(zap_cfg.get("enabled")) and bool(zap_cfg.get("base_url"))
+        caps_list = [t for t in ALL_TOKENS if t != "zap" or zap_on]
         return {
             "version": __version__,
-            "capabilities": ALL_TOKENS,
+            "capabilities": caps_list,
             "subtokens": {parent: list(subs) for parent, subs in SUBTOKENS.items()},
             "throttle_profiles": list(THROTTLE_PROFILE_NAMES),
             # Per-profile knob summary so the UI can SHOW what each tier does.
@@ -566,6 +600,10 @@ def _install(app: FastAPI, config: ServerConfig) -> None:
         except NotConfigured as e:
             raise HTTPException(
                 status.HTTP_409_CONFLICT, error_response("not_configured", str(e))
+            )
+        except ZapRejected as e:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT, error_response("zap_rejected", str(e))
             )
         except SelectionError as e:
             raise HTTPException(

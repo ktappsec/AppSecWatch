@@ -48,6 +48,13 @@ class ScanRequest(BaseModel):
     throttle: ThrottleProfile | None = None
     # Per-scan override of ai.profile.render (else the server config's value applies).
     profile_render: Literal["auto", "always", "never"] | None = None
+    # Explicit, scope-locked targets for the opt-in `zap` active scan (hosts or
+    # URLs). Required (and validated for scope) when `zap` is selected; the
+    # enabled/scope checks are 409 at submit (see JobManager.submit).
+    zap_targets: list[str] = Field(default_factory=list, description="Targets for the opt-in zap active scan")
+    # Per-scan override of zap.ajax_spider (null = use the server-config default).
+    # Handy to flip ON for a one-off SPA target without editing the server config.
+    zap_ajax_spider: bool | None = Field(default=None, description="Override zap.ajax_spider for this scan")
     compress: bool = True
     callback_url: str | None = Field(
         default=None, description="Optional webhook; host must be in callback_host_allowlist"
@@ -62,6 +69,10 @@ class ScanRequest(BaseModel):
             raise ValueError(
                 "exactly one target required: roots | group | assets | all_assets"
             )
+        # Shape rule (422): zap_targets only make sense when zap is selected. The
+        # enabled/empty/out-of-scope checks happen at submit (409).
+        if self.zap_targets and "zap" not in (self.only or []):
+            raise ValueError("zap_targets given but 'zap' is not in `only`")
         return self
 
 
@@ -82,6 +93,10 @@ class JobRecord(BaseModel):
     skip: list[str] | None = None
     throttle: ThrottleProfile | None = None
     profile_render: Literal["auto", "always", "never"] | None = None
+    # Scope-locked targets for the opt-in zap active scan (persisted so a restart
+    # can rebuild the merged config).
+    zap_targets: list[str] = Field(default_factory=list)
+    zap_ajax_spider: bool | None = None
     compress: bool = True
     source: str = "manual"               # manual | schedule
     schedule_id: str | None = None

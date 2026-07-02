@@ -85,6 +85,7 @@ export const CAPABILITY_TOKENS: CapabilityToken[] = [
     ],
   },
   { token: "supply-chain", label: "Supply chain", description: "Playwright crawler — scripts + headers" },
+  { token: "zap", label: "Active scan (ZAP)", description: "OWASP ZAP active scan of explicit in-scope targets — intrusive, opt-in" },
   {
     token: "ai",
     label: "AI analysis",

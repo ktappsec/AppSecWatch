@@ -351,6 +351,55 @@ class ReportConfig(BaseModel):
     executive_pdf: bool = True
 
 
+class ZapConfig(BaseModel):
+    """OWASP ZAP active-scan capability (the opt-in `zap` capability).
+
+    ZAP is NOT bundled in the WatchTower image and is NOT a `run_tool` subprocess —
+    it runs as a separate sidecar daemon (`ghcr.io/zaproxy/zaproxy`) that
+    `audit/zap_runner.py` drives over the ZAP REST API. The capability is
+    active-scan only (it fires live SQLi/XSS/traversal payloads), so it is OFF by
+    default and never part of any preset: it runs only when explicitly enabled here
+    AND selected per-scan with in-scope `targets`.
+
+    Safety gate: `enabled` AND `base_url` must both be set or the capability is
+    unavailable (omitted from /capabilities; scan submit → 409). `api_key` is a
+    secret — masked on GET /config and redacted from the config snapshot, exactly
+    like `llm.api_key`.
+
+    Deliberately a TOP-LEVEL config section (like `llm`), NOT a `ToolBlock` under
+    `tools`: it is a REST service with a base_url + secret, and it does not
+    participate in `_apply_throttle` (ZAP self-paces; the Python poll-deadline is
+    the only WatchTower-side bound).
+    """
+    # Safety gate — both must be set for the capability to be available.
+    enabled: bool = False
+    base_url: str = ""            # e.g. http://zap:8090 — admin/deploy decision
+    api_key: str = ""            # ZAP API key (secret → masked/redacted like llm.api_key)
+
+    # Per-request, scope-locked targets (each must be under_any_root(cfg.roots)).
+    # Empty on the CLI unless set in YAML; the Web API injects ScanRequest.zap_targets
+    # here at config-merge time. ZapStage re-validates scope as defense-in-depth.
+    targets: list[str] = Field(default_factory=list)
+
+    # Time bounding. The Python status-poll deadline is primary (ZAP has no
+    # run_tool timeout); the same values are also pushed to ZAP's spider/ascan
+    # max-duration options. On expiry the scan is stopped and partial alerts kept.
+    max_minutes_total: int = 60
+    max_minutes_per_host: int = 20
+    spider_max_minutes: int = 5
+
+    # Engine knobs.
+    ajax_spider: bool = False            # the zaproxy image ships a browser; slower/noisier
+    scan_policy: str = "Default Policy"  # ZAP scan-policy name
+    poll_interval_seconds: float = 5.0   # status-poll cadence
+    request_timeout: int = 30            # per-HTTP-call timeout to the daemon
+    alert_cap: int = 5000                # max alert instances pulled per target
+
+    # Future-auth seam (unused in v1). When populated later these feed a ZAP
+    # Replacer/HttpSender header-injection rule for authenticated scanning.
+    auth_headers: dict[str, str] = Field(default_factory=dict)
+
+
 class ToolsConfig(BaseModel):
     subfinder: ToolBlock = Field(default_factory=ToolBlock)
     dnsx: DnsxConfig = Field(default_factory=DnsxConfig)
@@ -433,6 +482,9 @@ class WatchTowerConfig(BaseModel):
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     # Executive-report branding + PDF toggle (display-only; never gates a scan).
     report: ReportConfig = Field(default_factory=ReportConfig)
+    # OWASP ZAP active-scan capability (opt-in; sidecar daemon over REST). Disabled
+    # by default — see ZapConfig. NOT a `tools.*` block (not in _apply_throttle).
+    zap: ZapConfig = Field(default_factory=ZapConfig)
 
     @model_validator(mode="after")
     def _apply_throttle(self) -> "WatchTowerConfig":

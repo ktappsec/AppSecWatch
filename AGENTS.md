@@ -33,7 +33,8 @@ watchtower/              Python package (the engine)
 ├── stages/            Stage protocol, pipeline assembly, capability registry, ScanState
 ├── recon/ audit/ ai/  tool wrappers (subfinder/dnsx/tlsx/httpx, sslscan/nuclei/crawler, LLM).
 │                      audit/ also: header_checks, js_libs (retire.js-style),
-│                      suppress (manual fingerprints), tech (httpx+AI merge)
+│                      suppress (manual fingerprints), tech (httpx+AI merge),
+│                      zap_runner (OWASP ZAP active scan over REST — opt-in)
 ├── report/            aggregator + Jinja renderer; two self-contained docs from a
 │                      shared themeable base (report.html technical + executive.html
 │                      one-pager) + optional executive.pdf
@@ -112,7 +113,7 @@ docker run --rm -p 8080:8080 -e WATCHTOWER_API_KEYS=key \
   self-signed/wildcard, derived in Python) into `state.tls_certs`. Inventory only
   (no findings); surfaced in report.html + `ScanResult.tls_certs` + the UI Certs tab.
 - The recon spine always runs as a prerequisite. Capability tokens
-  (`recon, takeovers, tls, nuclei, headers, supply-chain, ai`) are the stable
+  (`recon, takeovers, tls, nuclei, headers, supply-chain, zap, ai`) are the stable
   user-facing names; the token→stage mapping + dependency resolution live **only**
   in `stages/capabilities.py` / `stages/pipeline.py`. Four of them split into
   dotted **sub-tokens** (`recon.subfinder|dns|tlsx|httpx`, `ai.profile|triage|
@@ -227,9 +228,15 @@ docker run --rm -p 8080:8080 -e WATCHTOWER_API_KEYS=key \
   none (false-positive, N/A here, or accepted by-design). The supply-chain prompts
   use the same harm framing (brand-damage from a compromised third-party script is
   explicit). The old "prefer FEW / when unsure omit" volume heuristics were removed.
-  **AI findings now get a stable `check_id`** derived from the model's `type` tag
-  (`ai/analyzer.py::_ai_check_id`, e.g. `ai_headers.cookie-missing-httponly-flag`)
-  so they dedup/group/suppress by class via `group_key`. A code-level guard in
+  **AI findings now get a stable `check_id`** derived from the finding's **title**
+  (slugified + length-capped; `ai/analyzer.py::_ai_check_id`, e.g.
+  `ai_headers.session-cookie-missing-httponly`) so they dedup/group/suppress by
+  class via `group_key`. **It keys on the title, NOT the model's `type` tag**: the
+  independent per-host LLM calls keep the human title consistent for the same issue
+  but routinely emit a *different* `type` slug, so a type-derived id split two
+  visibly-identical cross-host findings into separate report rows (the regression
+  this replaced). The non-finding drop guard still keys on `type` (a class name),
+  not the grouping id. A code-level guard in
   `_ai_findings_to_findings` **drops** AI non-findings (`type` in
   `positive-observation`/`no-scripts-loaded`/`best-practice-reminder`/
   `missing-control-check`/`server-config-concern`) and infra-cookie findings
@@ -254,6 +261,40 @@ docker run --rm -p 8080:8080 -e WATCHTOWER_API_KEYS=key \
   can-i-take-over-xyz) over the stored `cname_chain` — the class nuclei
   structurally can't reach. Both emit `source='takeover'`; deterministic findings
   carry `check_id=takeover.<service>`.
+- **`zap` is the OPT-IN active-DAST capability** (OWASP ZAP). It is the ONE thing
+  that breaks the otherwise-passive posture, so it is gated hard. ZAP is NOT
+  bundled and NOT a `run_tool` subprocess: it runs as a **sidecar daemon**
+  (`ghcr.io/zaproxy/zaproxy`, `docker-compose.yml` `zap` service) and
+  `audit/zap_runner.py` drives it over the **REST API** with `httpx` (already a
+  dep — no new package). `ZapStage` (`audit.zap`, in `stages/audit.py`) lazy-imports
+  `run_zap`; the flow per target is spider → (optional ajax) → active scan, polled
+  against a Python deadline (`ZapConfig.max_minutes_per_host/_total/spider_max_minutes`;
+  ZAP self-paces, so it is **exempt from the throttle profiles** — top-level
+  `cfg.zap`, NOT a `tools.*` `ToolBlock`). On a deadline or `/cancel`
+  (`CancelledError`) it stops the scans + removes the context in `finally` and
+  re-raises; an unreachable daemon **degrades** (no findings, run continues).
+  **Opt-in is enforced in three layers**: `OPT_IN_TOKENS={"zap"}` is subtracted
+  from the default + `--skip` caps seeds in `capabilities.py` (so `zap` runs ONLY
+  via explicit `--only zap`, never on a preset); `/capabilities` omits `zap` unless
+  `zap.enabled && base_url`; and `submit` 409s (`ZapRejected`/`zap_rejected`) when
+  zap is selected but the daemon is off, targets are empty, or any target is not
+  `under_any_root(cfg.roots)`. **Targets are operator-specified + scope-locked**:
+  `ScanRequest.zap_targets` rides on `cfg.zap.targets` (injected in
+  `jobs._build_config`, persisted on `JobRecord`), and `ZapStage` re-filters scope
+  as defense-in-depth. Alerts → `Finding(source='zap')`, grouped by
+  `(pluginId, host)`, risk→severity (High→high … Informational→info, **no
+  critical**), `check_id=zap.<pluginId>`; raw report under `02_audit/zap/`. ZAP
+  findings flow through `ai.triage` for normal FP suppression but there is
+  **deliberately no cross-source dedup** — ZAP passive overlap with
+  headers/nuclei/js_lib is tolerated as separate source-labeled rows (zap is rare).
+  `zap.api_key` is a secret (masked like `llm.api_key`; `_mask_secrets` in
+  `api/config.py`, redacted in `runner._snapshot_config`). v1 is **unauthenticated**
+  (the `auth_headers` config field is a future header-injection seam). UI: `zap`
+  config is a **promoted friendly card** in `web/.../settings/scan-config.tsx`
+  (enable/url/key/ajax/policy/time-caps; spreads the loaded block so un-exposed
+  knobs survive); `ScanRequest.zap_ajax_spider` (`bool | null`) is a **per-scan
+  override** of `zap.ajax_spider` plumbed exactly like `profile_render` (a New Scan
+  form checkbox → injected into the merged `cfg.zap` in `jobs._build_config`).
 - A completed scan exits `0` even with recorded errors; `--strict` → exit `3`.
 - **subfinder is OPTIONAL** (`RECON_REQUIRED=(dns,httpx)`, `RECON_OPTIONAL=(subfinder,tlsx)`).
   `DnsxAndTriageStage` always seeds `cfg.roots` as candidates, so `--skip recon.subfinder`
@@ -335,6 +376,12 @@ docker run --rm -p 8080:8080 -e WATCHTOWER_API_KEYS=key \
   serves the last scan's per-host PNG (`02_audit/playwright/<host>.png`), 404 when
   absent — dashboard only, never in report.html; the UI fetches it as an
   authenticated blob → object URL (an `<img src>` can't send the Bearer header).
+  **Compression is the default**, so by the time the endpoint runs the loose
+  `02_audit/playwright/` dir has been tar+gzipped and deleted by `CompressStage` —
+  the endpoint reads the PNG back out of `02_audit.tar.gz` via
+  `server._read_artifact_bytes(run_dir, rel)` (loose file first, then the matching
+  `<subdir>.tar.gz` member), off-loop in a thread. (Older scans that predate the
+  screenshot feature have no PNG at all → 404; re-scan to populate.)
   UI: Findings column (severity dots) + a Details dialog (profile · tech · findings ·
   **surface/connections + screenshot thumbnail**, all lazy-loaded on expand).
 - **Scan templates** (`api/scan_templates.py`, `scan_templates` table): reusable

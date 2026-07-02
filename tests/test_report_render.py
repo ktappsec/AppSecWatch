@@ -64,6 +64,37 @@ def test_report_html_extends_base_and_keeps_hooks(tmp_path):
     assert "Exposed admin panel" in html
 
 
+def _zap_ctx(*, ran: bool):
+    return build_report_context(
+        run_meta=_RUN, triaged=[], wildcards=[], live_servers=[],
+        nuclei_findings=[], takeover_findings=[], tls_findings=[], tls_reports=[],
+        ai_headers_findings=[], ai_supply_findings=[], crawler_artifacts=[],
+        errors=[], versions={},
+        zap_findings=[Finding(source="zap", host="app.example.com", severity="high",
+                              title="SQL Injection", check_id="zap.40018",
+                              evidence={"plugin_id": "40018", "risk": "High",
+                                        "instance_count": 2})],
+        coverage={"recon": {"ran": True, "reason": "prerequisite"},
+                  "zap": {"ran": ran, "reason": "user-selected" if ran else "not run"}},
+    )
+
+
+def test_report_renders_zap_section_when_run(tmp_path):
+    out = tmp_path / "report.html"
+    render_report(_zap_ctx(ran=True), out)
+    html = out.read_text()
+    assert 'id="zap"' in html
+    assert "Active Scan (OWASP ZAP)" in html
+    assert "SQL Injection" in html
+    assert 'data-table="zap"' in html
+
+
+def test_report_hides_zap_section_when_not_run(tmp_path):
+    out = tmp_path / "report.html"
+    render_report(_zap_ctx(ran=False), out)
+    assert 'id="zap"' not in out.read_text()
+
+
 def test_executive_html_renders_deterministic_only(tmp_path):
     out = tmp_path / "executive.html"
     render_executive(_ctx(exec_summary=None), out)

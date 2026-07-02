@@ -26,10 +26,14 @@ class AIStage(Stage):
         # Group ALL deterministic findings by host so the per-host triage call can
         # reference them (context + cross-source soft-suppression). The same
         # Finding objects live in state, so a suppression verdict attaches in place.
+        # ZAP findings join triage too — for NORMAL false-positive suppression
+        # only (no cross-source dedup; ZAP overlap with headers/nuclei is tolerated
+        # as separate source-labeled rows). High/critical ZAP actives sit above the
+        # suppression max_severity ceiling, so they always stay visible.
         findings_map: dict[str, list] = {}
         for f in (
             state.nuclei_findings + state.takeover_findings + state.tls_findings
-            + state.header_findings + state.js_lib_findings
+            + state.header_findings + state.js_lib_findings + state.zap_findings
         ):
             if f.host:
                 findings_map.setdefault(f.host, []).append(f)

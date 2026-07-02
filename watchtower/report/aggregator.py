@@ -36,6 +36,7 @@ _WHY_BY_SOURCE = {
     "headers": "A missing or weak security header removes a browser-side defense against common web attacks.",
     "csp": "Content-Security-Policy gaps weaken protection against cross-site scripting and injection.",
     "js_lib": "A known-vulnerable JavaScript library is loaded; update it to a patched version.",
+    "zap": "An active scan exercised the application and confirmed an exploitable weakness; remediate on the affected endpoints.",
     "ai_headers": "Identified during analysis as a header/configuration weakness worth attention.",
     "ai_supply_chain": "A third-party script dependency widens the supply-chain attack surface.",
 }
@@ -49,6 +50,7 @@ _RECO_BY_SOURCE = {
     "takeover": "Remove or reclaim dangling DNS records pointing at unclaimed third-party services.",
     "js_lib": "Upgrade outdated or vulnerable JavaScript libraries.",
     "nuclei": "Triage and patch the vulnerabilities surfaced by active scanning.",
+    "zap": "Remediate the exploitable issues confirmed by the ZAP active scan (injection, XSS, etc.).",
     "ai_headers": "Address the configuration weaknesses surfaced during analysis.",
     "ai_supply_chain": "Review third-party script dependencies and remove the unused ones.",
 }
@@ -271,6 +273,7 @@ def build_run_summary(
     all_findings = (
         list(state.nuclei_findings) + list(state.takeover_findings)
         + list(state.tls_findings) + list(state.header_findings)
+        + list(state.zap_findings)
         + list(state.ai_headers_findings) + list(state.ai_supply_findings)
     )
     # Soft-suppressed findings are excluded from the severity rollup (but kept on
@@ -349,6 +352,7 @@ def build_report_context(
     versions: dict[str, Any],
     header_findings: list[Finding] | None = None,
     js_lib_findings: list[Finding] | None = None,
+    zap_findings: list[Finding] | None = None,
     page_signals: dict | None = None,
     tls_certs: list | None = None,
     app_profiles: dict[str, AppProfile] | None = None,
@@ -362,12 +366,14 @@ def build_report_context(
 
     header_findings = list(header_findings or [])
     js_lib_findings = list(js_lib_findings or [])
+    zap_findings = list(zap_findings or [])
     all_findings: list[Finding] = (
         list(nuclei_findings)
         + list(takeover_findings)
         + list(tls_findings)
         + header_findings
         + js_lib_findings
+        + zap_findings
         + list(ai_headers_findings)
         + list(ai_supply_findings)
     )
@@ -389,7 +395,7 @@ def build_report_context(
     coverage = coverage or {}
     coverage_strip = [
         {"token": tok, **coverage[tok]}
-        for tok in ("recon", "takeovers", "tls", "nuclei", "headers", "supply-chain", "ai")
+        for tok in ("recon", "takeovers", "tls", "nuclei", "headers", "supply-chain", "zap", "ai")
         if tok in coverage
     ]
 
@@ -429,6 +435,7 @@ def build_report_context(
             "nuclei": _ran("nuclei"),
             "headers": _ran("headers"),
             "supply_chain": _ran("supply-chain"),
+            "zap": _ran("zap"),
             "ai": _ran("ai"),
         },
         "app_profiles": app_profiles or {},
@@ -445,6 +452,7 @@ def build_report_context(
             "headers": [f for f in header_visible if f.source == "headers"],
             "csp": [f for f in header_visible if f.source == "csp"],
             "js_lib": [f for f in js_lib_findings if not f.suppressed],
+            "zap": [f for f in zap_findings if not f.suppressed],
             "ai_headers": ai_headers_findings,
             "ai_supply_chain": ai_supply_findings,
             "suppressed": suppressed,

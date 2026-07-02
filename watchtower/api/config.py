@@ -147,13 +147,24 @@ def save_config_store(path: Path, data: dict[str, Any]) -> None:
         pass
 
 
-def _mask_llm_key(base: dict[str, Any]) -> dict[str, Any]:
+# Config sections whose `api_key` is a write-only secret (masked on GET, preserved
+# on a blank/masked PUT, redacted from snapshots). llm + zap.
+_SECRET_PATHS = (("llm", "api_key"), ("zap", "api_key"))
+
+
+def _mask_secrets(base: dict[str, Any]) -> dict[str, Any]:
+    """Mask every write-only secret (llm.api_key, zap.api_key) for GET /config."""
     out = dict(base)
-    llm = dict(out.get("llm") or {})
-    if llm.get("api_key"):
-        llm["api_key"] = CONFIG_KEY_MASK
-        out["llm"] = llm
+    for section, key in _SECRET_PATHS:
+        node = dict(out.get(section) or {})
+        if node.get(key):
+            node[key] = CONFIG_KEY_MASK
+            out[section] = node
     return out
+
+
+# Back-compat alias (was llm-only).
+_mask_llm_key = _mask_secrets
 
 
 class ConfigManager:
@@ -182,8 +193,8 @@ class ConfigManager:
             self.config.base_config_raw = base
 
     def effective(self) -> dict[str, Any]:
-        """The current config for GET /config, with llm.api_key masked."""
-        return {"base_config": _mask_llm_key(self.config.base_config_raw)}
+        """The current config for GET /config, with secret api_keys (llm, zap) masked."""
+        return {"base_config": _mask_secrets(self.config.base_config_raw)}
 
     def update(self, base_config: dict[str, Any]) -> dict[str, Any]:
         """Validate + persist + apply a full replacement of the base scan config.
@@ -199,6 +210,19 @@ class ConfigManager:
             else:
                 llm.pop("api_key", None)
         new_base["llm"] = llm
+
+        # Same write-only handling for zap.api_key, but zap is optional → only touch
+        # it when the incoming config carries a zap section or there's a stored key.
+        stored_zap_key = (self.config.base_config_raw.get("zap") or {}).get("api_key")
+        if "zap" in new_base or stored_zap_key:
+            zap = dict(new_base.get("zap") or {})
+            z_incoming = zap.get("api_key")
+            if not z_incoming or z_incoming == CONFIG_KEY_MASK:
+                if stored_zap_key:
+                    zap["api_key"] = stored_zap_key
+                else:
+                    zap.pop("api_key", None)
+            new_base["zap"] = zap
 
         # Validate the scan config (roots are per-request → placeholder).
         probe = dict(new_base)

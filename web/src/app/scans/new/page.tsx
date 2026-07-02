@@ -58,6 +58,8 @@ export default function NewScanPage() {
   const [caps, setCaps] = React.useState<Capabilities | null>(null);
   const [compress, setCompress] = React.useState(true);
   const [callbackUrl, setCallbackUrl] = React.useState("");
+  const [zapTargets, setZapTargets] = React.useState("");
+  const [zapAjax, setZapAjax] = React.useState(false);
   const [templates, setTemplates] = React.useState<ScanTemplate[]>([]);
   const [submitting, setSubmitting] = React.useState(false);
 
@@ -138,6 +140,14 @@ export default function NewScanPage() {
     if (selection === "only" && tokens.length) req.only = tokens;
     else if (selection === "skip" && tokens.length) req.skip = tokens;
 
+    // ZAP active scan (opt-in) only runs via `only` + explicit in-scope targets.
+    if (selection === "only" && tokens.includes("zap")) {
+      const zt = split(zapTargets);
+      if (!zt.length) return toast.error("ZAP active scan needs at least one in-scope target");
+      req.zap_targets = zt;
+      if (zapAjax) req.zap_ajax_spider = true;   // null/unchecked = server default
+    }
+
     setSubmitting(true);
     try {
       const job = await api.submitScan(req);
@@ -150,6 +160,12 @@ export default function NewScanPage() {
   };
 
   const details = caps?.throttle_details?.[throttle];
+  // The opt-in `zap` capability is only offered when the server advertises it
+  // (daemon enabled + configured) via /capabilities.
+  const advertised = new Set(caps?.capabilities ?? []);
+  const visibleTokens = CAPABILITY_TOKENS.filter(
+    (t) => t.token !== "zap" || advertised.has("zap"),
+  );
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -267,7 +283,7 @@ export default function NewScanPage() {
           </p>
           {selection !== "all" && (
             <div className="space-y-2">
-              {CAPABILITY_TOKENS.map((t) => (
+              {visibleTokens.map((t) => (
                 <div key={t.token} className="rounded-lg border border-border p-3">
                   <button type="button" onClick={() => toggleToken(t.token)}
                     className="flex w-full items-start gap-3 text-left">
@@ -295,6 +311,26 @@ export default function NewScanPage() {
                   )}
                 </div>
               ))}
+            </div>
+          )}
+          {selection === "only" && tokens.includes("zap") && (
+            <div className="space-y-1.5 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3">
+              <Label>ZAP active-scan targets</Label>
+              <p className="text-xs text-muted-foreground">
+                Intrusive active scan — sends live payloads (SQLi/XSS/…). One host or URL per
+                line; each must be in scope (under a scan root) or the scan is rejected.
+              </p>
+              <Textarea value={zapTargets} onChange={(e) => setZapTargets(e.target.value)}
+                className="min-h-[70px] font-mono text-xs"
+                placeholder={"app.example.com\nhttps://api.example.com/v2"} />
+              <label className="flex cursor-pointer items-center gap-3 pt-1">
+                <input type="checkbox" checked={zapAjax} onChange={(e) => setZapAjax(e.target.checked)}
+                  className="h-4 w-4 accent-[var(--primary)]" />
+                <span className="text-sm">
+                  Run AJAX spider{" "}
+                  <span className="text-muted-foreground">(SPA discovery — overrides the server default for this scan)</span>
+                </span>
+              </label>
             </div>
           )}
         </Card>

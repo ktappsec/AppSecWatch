@@ -269,6 +269,7 @@ stage names:
 | `nuclei` | main `nuclei` web-CVE scan | |
 | `headers` | deterministic header + CSP analysis (§2.2.1) | Passive over httpx headers; sub-tokens `headers.csp`, `headers.best-practice`. Full-scan only. |
 | `supply-chain` | the Playwright crawler | |
+| `zap` | OWASP ZAP **active scan** (sidecar daemon over REST) | **OPT-IN** — the one capability that breaks WatchTower's otherwise-passive posture. It is NEVER part of a default/preset/`--skip` selection (`OPT_IN_TOKENS` is subtracted from those caps seeds); it runs only via explicit `--only zap`, against operator-specified, scope-locked targets (`cfg.zap.targets` / `ScanRequest.zap_targets`, each `under_any_root`). The daemon is a sidecar (not bundled, not `run_tool` — driven over REST by `audit/zap_runner.py`); time-bounded by `zap.max_minutes_*`, exempt from `throttle`. Findings are `source='zap'` (risk→severity, no `critical`; `check_id=zap.<pluginId>`); they flow through `ai.triage` for FP suppression but there is **no cross-source dedup** (overlap with `headers`/`nuclei` is tolerated). Gated three ways: `/capabilities` omits it when the daemon is off, `submit` 409s (`zap_rejected`) on disabled/empty/out-of-scope, and the stage factory no-ops when unconfigured. Unauthenticated in v1. |
 | `ai` | `ai.profile` + cross-source triage + supply-chain analysis + executive summary | Supply-chain *analysis* requires the crawler (see resolution). `ai.triage` (formerly `ai.headers`) soft-suppresses false-positives across **all** deterministic findings + adds header-gap findings. `ai.summary` makes one whole-run LLM call at the **tail** of the AI phase for the `executive.html` narrative (§2.5); degrades to deterministic prose. |
 
 #### 2.8.2 Selection flags
@@ -394,11 +395,14 @@ runs/2026-05-26T10-24-00Z-prod-fleet/
 │   │   └── findings.jsonl
 │   ├── headers/
 │   │   └── <host>.json          # deterministic header/CSP findings (sources headers/csp)
-│   └── playwright/
-│       ├── <host>.json          # CrawlerArtifact (§5): url/status/headers + scripts,
-│       │                        #   resources, cookies (names+flags), *_storage_keys,
-│       │                        #   rendered_text — structure only, never values
-│       └── <host>.png           # optional per-host screenshot (tools.playwright.screenshot)
+│   ├── playwright/
+│   │   ├── <host>.json          # CrawlerArtifact (§5): url/status/headers + scripts,
+│   │   │                        #   resources, cookies (names+flags), *_storage_keys,
+│   │   │                        #   rendered_text — structure only, never values
+│   │   └── <host>.png           # optional per-host screenshot (tools.playwright.screenshot)
+│   └── zap/                     # opt-in OWASP ZAP active scan (only when --only zap ran)
+│       ├── zap-report.json      # raw ZAP JSON report
+│       └── alerts-<host>.json   # per-target grouped alert instances
 ├── 03_ai/
 │   ├── profile/
 │   │   └── <host>.json          # AppProfile (omitted when ai.profiling: false)

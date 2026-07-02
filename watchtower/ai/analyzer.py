@@ -48,9 +48,13 @@ _JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(\{.*\})\s*```", re.DOTALL)
 _CONF_RANK = {"low": 0, "medium": 1, "high": 2}
 _SEV_RANK = {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
 
-# AI findings carry no rule check_id; we derive a stable one from the model's
-# `type` tag (slugified) so identical issues dedup/group across hosts and become
-# class-suppressible. A blank type → None (falls back to title-based grouping).
+# AI findings carry no rule check_id; we derive a stable one from the finding's
+# TITLE (slugified) so identical issues dedup/group across hosts and become
+# class-suppressible. The title — not the model's free-form `type` tag — is the
+# cross-host-stable signal: the per-host LLM calls keep the human title consistent
+# for the same issue but routinely emit a *different* `type` slug, which (when used
+# as the key) split two visibly-identical findings into separate report rows. A
+# blank title → None (falls back to raw-title grouping).
 _AI_CHECK_SLUG_RE = re.compile(r"[^a-z0-9]+")
 # Slugified `type` tags that are NOT vulnerabilities — positive/absence
 # observations and analyst "verify X" reminders. Dropped outright (LLM-fabricated,
@@ -203,8 +207,17 @@ def _apply_suppressions(
     return hidden
 
 
-def _ai_check_id(source: str, type_tag: str) -> str | None:
-    slug = _AI_CHECK_SLUG_RE.sub("-", (type_tag or "").strip().lower()).strip("-")
+def _ai_slug(text: str) -> str:
+    return _AI_CHECK_SLUG_RE.sub("-", (text or "").strip().lower()).strip("-")
+
+
+def _ai_check_id(source: str, title: str) -> str | None:
+    """Stable per-issue id for an AI finding, derived from its TITLE (slugified,
+    length-capped). Two hosts reporting the same issue get the same title → the
+    same id → they collapse to one grouped row. (Deriving it from the model's
+    `type` tag instead splits them whenever the LLM varies the slug between the
+    independent per-host calls.) Blank title → None."""
+    slug = _ai_slug(title)[:80].strip("-")
     return f"{source}.{slug}" if slug else None
 
 
@@ -221,11 +234,11 @@ def _ai_evidence_cookie(ev: dict[str, Any]) -> str | None:
 def _ai_findings_to_findings(host: str, source: str, ai_resp: AIResponse) -> list[Finding]:
     out: list[Finding] = []
     for f in ai_resp.findings:
-        check_id = _ai_check_id(source, f.type)
-        slug = check_id.split(".", 1)[1] if check_id else ""
         # Drop AI-fabricated non-findings (positive/absence observations, analyst
         # reminders) and load-balancer/WAF/RUM cookie noise — high-signal only.
-        if slug in _AI_NONFINDING_TYPES:
+        # The non-finding gate keys on the model's `type` class (not the grouping
+        # id, which is now title-derived).
+        if _ai_slug(f.type) in _AI_NONFINDING_TYPES:
             continue
         cookie = _ai_evidence_cookie(f.evidence)
         if cookie and is_infra_cookie(cookie):
@@ -237,7 +250,7 @@ def _ai_findings_to_findings(host: str, source: str, ai_resp: AIResponse) -> lis
             title=f.title,
             description=f.description,
             evidence=f.evidence | {"type": f.type},
-            check_id=check_id,
+            check_id=_ai_check_id(source, f.title),
         ))
     return out
 

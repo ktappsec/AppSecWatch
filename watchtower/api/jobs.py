@@ -63,6 +63,7 @@ def _fingerprint(req: ScanRequest) -> str:
             "only": sorted(req.only or []),
             "skip": sorted(req.skip or []),
             "throttle": req.throttle,
+            "zap_targets": sorted(req.zap_targets or []),
         },
         sort_keys=True,
     )
@@ -87,6 +88,11 @@ class QueueFull(Exception):
 class NotConfigured(Exception):
     """The base scan config is missing/invalid (e.g. UI-only boot before the
     operator set the llm endpoint) → 409 with the validation detail."""
+
+
+class ZapRejected(Exception):
+    """An opt-in ZAP active scan was requested but the safety gate refused it:
+    daemon not enabled/configured, no targets, or targets out of scope → 409."""
 
 
 class JobManager:
@@ -187,9 +193,17 @@ class JobManager:
         # On a UI-only boot before the operator configured anything, this is how a
         # scan is refused — there is no scan-target allowlist (roots is the scope).
         try:
-            self._build_config(req.roots, req.throttle)
+            cfg = self._build_config(req.roots, req.throttle,
+                                     zap_targets=req.zap_targets,
+                                     zap_ajax_spider=req.zap_ajax_spider)
         except ValidationError as e:
             raise NotConfigured(_first_error(e))
+
+        # Opt-in ZAP active-scan gate (→ 409): only when zap is selected. Enforces
+        # the admin enable + in-scope-targets contract; /capabilities already hides
+        # zap when disabled, this is the authoritative server-side check.
+        if "zap" in (req.only or []):
+            self._check_zap(cfg, req.zap_targets)
 
         # In-flight dedupe by (roots + params).
         fp = _fingerprint(req)
@@ -220,6 +234,8 @@ class JobManager:
             skip=req.skip,
             throttle=req.throttle,
             profile_render=req.profile_render,
+            zap_targets=req.zap_targets,
+            zap_ajax_spider=req.zap_ajax_spider,
             compress=req.compress,
             source=source,
             schedule_id=schedule_id,
@@ -336,7 +352,8 @@ class JobManager:
             self.semaphore.release()
             self.tasks.pop(job_id, None)
 
-    def _build_config(self, roots, throttle, profile_render=None) -> WatchTowerConfig:
+    def _build_config(self, roots, throttle, profile_render=None,
+                      zap_targets=None, zap_ajax_spider=None) -> WatchTowerConfig:
         """Merge per-request params over the live base config + validate. Raises
         ValidationError when the base config is missing/invalid (→ NotConfigured).
         Re-validating re-applies the throttle profile cleanly (config._apply_throttle
@@ -349,10 +366,43 @@ class JobManager:
             ai = dict(raw.get("ai") or {})
             ai["profile"] = {**dict(ai.get("profile") or {}), "render": profile_render}
             raw["ai"] = ai
+        # Per-request zap overrides ride on cfg.zap.* so the (cfg, plan)-built
+        # ZapStage reads them without a stage-factory signature change. ajax_spider
+        # is a nullable override (None = use the server-config default).
+        zap_over: dict = {}
+        if zap_targets:
+            zap_over["targets"] = list(zap_targets)
+        if zap_ajax_spider is not None:
+            zap_over["ajax_spider"] = zap_ajax_spider
+        if zap_over:
+            raw["zap"] = {**dict(raw.get("zap") or {}), **zap_over}
         return WatchTowerConfig.model_validate(raw)
 
     def _merged_config(self, rec: JobRecord) -> WatchTowerConfig:
-        return self._build_config(rec.roots, rec.throttle, rec.profile_render)
+        return self._build_config(rec.roots, rec.throttle, rec.profile_render,
+                                  zap_targets=rec.zap_targets,
+                                  zap_ajax_spider=rec.zap_ajax_spider)
+
+    @staticmethod
+    def _check_zap(cfg: WatchTowerConfig, zap_targets: list[str]) -> None:
+        """Authoritative ZAP active-scan gate (→ ZapRejected → 409): the daemon must
+        be enabled + configured, and every target must be in scope (under a scan
+        root). Mirrors the defense-in-depth filter in ZapStage."""
+        if not (cfg.zap.enabled and cfg.zap.base_url):
+            raise ZapRejected("zap active scan is not enabled/configured on this server")
+        if not zap_targets:
+            raise ZapRejected("zap selected but no zap_targets provided")
+        from urllib.parse import urlparse
+
+        from watchtower.util.domains import under_any_root
+        oos = [
+            t for t in zap_targets
+            if not under_any_root(
+                urlparse(t if "://" in t else f"//{t}").hostname or t, cfg.roots)
+        ]
+        if oos:
+            raise ZapRejected(
+                f"zap_targets out of scope (not under the scan roots): {', '.join(oos)}")
 
     async def _sync_assets(self, rec: JobRecord, state: ScanState) -> None:
         """Write discovered (triaged) assets back into the inventory. Best-effort:

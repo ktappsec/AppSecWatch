@@ -54,7 +54,7 @@ type ReportShape = {
 // only the long tail: tools, concurrency, anything unrecognized).
 const PROMOTED = [
   "llm", "mmdb_path", "throttle", "ai", "headers", "identity",
-  "paths_per_host", "report",
+  "paths_per_host", "report", "zap",
 ];
 
 const IDENTITY_PRESETS = ["off", "chrome-win", "chrome-mac", "firefox"];
@@ -98,6 +98,11 @@ export function ScanConfigCard() {
   const [idBlock, setIdBlock] = React.useState<Dict>({});
   // Executive-report branding + PDF toggle (cfg.report).
   const [report, setReport] = React.useState<ReportShape>({});
+  // ZAP active-scan config (opt-in). Whole block kept so un-exposed sub-keys
+  // (auth_headers, poll/timeout/alert_cap) survive a round-trip; api_key is a
+  // separate write-only field (never prefilled from the masked value).
+  const [zap, setZap] = React.useState<Dict>({});
+  const [zapApiKey, setZapApiKey] = React.useState("");
   const [restJson, setRestJson] = React.useState("");
   const [jsonError, setJsonError] = React.useState<string | null>(null);
   const [paths, setPaths] = React.useState<{ config_store: string; db: string } | null>(null);
@@ -132,6 +137,8 @@ export function ScanConfigCard() {
     setIdLocale((id.locale as string) || "");
     setIdHeaders(headersToText((id.headers as Record<string, string>) || {}));
     setReport((base.report as ReportShape) || {});
+    setZap((base.zap as Dict) || {});
+    setZapApiKey(""); // never prefill the masked secret
     for (const k of PROMOTED) delete base[k];
     setRestJson(Object.keys(base).length ? JSON.stringify(base, null, 2) : "");
   }
@@ -170,6 +177,11 @@ export function ScanConfigCard() {
     if (report.classification?.trim()) reportOut.classification = report.classification.trim();
     if (report.logo_path?.trim()) reportOut.logo_path = report.logo_path.trim();
 
+    // ZAP: spread the loaded block first so un-exposed knobs survive; api_key only
+    // when re-typed (else the stored/masked key is preserved by the backend).
+    const zapOut: Dict = { ...zap };
+    if (zapApiKey.trim()) zapOut.api_key = zapApiKey.trim();
+
     const paths = splitList(pathsPerHost);
     const body: ServerConfigView = {
       base_config: {
@@ -188,6 +200,7 @@ export function ScanConfigCard() {
         },
         paths_per_host: paths.length ? paths : ["/"],
         report: reportOut,
+        zap: zapOut,
       },
     };
 
@@ -393,6 +406,69 @@ export function ScanConfigCard() {
                 placeholder={"X-Forwarded-For: 203.0.113.7\nReferer: https://www.google.com/"}
                 className="min-h-[72px] font-mono text-xs" />
             </Field>
+          </Section>
+
+          <Separator />
+
+          {/* ZAP active scan (opt-in) */}
+          <Section title="ZAP active scan">
+            <p className="text-xs text-muted-foreground">
+              The opt-in active scanner (OWASP ZAP sidecar). <span className="font-medium">Intrusive</span> —
+              it fires live payloads, so it runs only via the New Scan form&apos;s{" "}
+              <span className="font-mono">zap</span> capability with explicit, in-scope targets. Enable it
+              and point it at the daemon here.
+            </p>
+            <Field label="Enabled" hint="advertise + allow the zap capability">
+              <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                <input type="checkbox" className="h-4 w-4 accent-accent"
+                  checked={zap.enabled === true}
+                  onChange={(e) => setZap({ ...zap, enabled: e.target.checked })} />
+                Allow active scans
+              </label>
+            </Field>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <Field label="Daemon base URL" hint="the ZAP sidecar">
+                <Input value={(zap.base_url as string) ?? ""}
+                  onChange={(e) => setZap({ ...zap, base_url: e.target.value })}
+                  placeholder="http://zap:8090" className="font-mono text-xs" />
+              </Field>
+              <Field label="API key">
+                <Input type="password" value={zapApiKey} onChange={(e) => setZapApiKey(e.target.value)}
+                  placeholder="•••••• (leave blank to keep current)" />
+              </Field>
+            </div>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <Field label="Scan policy" hint="ZAP scan-policy name">
+                <Input value={(zap.scan_policy as string) ?? ""}
+                  onChange={(e) => setZap({ ...zap, scan_policy: e.target.value })}
+                  placeholder="Default Policy" />
+              </Field>
+              <Field label="AJAX spider" hint="default for SPAs (slower); per-scan overridable on New Scan">
+                <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <input type="checkbox" className="h-4 w-4 accent-accent"
+                    checked={zap.ajax_spider === true}
+                    onChange={(e) => setZap({ ...zap, ajax_spider: e.target.checked })} />
+                  Run the AJAX spider
+                </label>
+              </Field>
+            </div>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <Field label="Max min · total">
+                <Input type="number" value={(zap.max_minutes_total as number) ?? ""}
+                  onChange={(e) => setZap({ ...zap, max_minutes_total: e.target.value === "" ? undefined : Number(e.target.value) })}
+                  placeholder="60" />
+              </Field>
+              <Field label="Max min · per host">
+                <Input type="number" value={(zap.max_minutes_per_host as number) ?? ""}
+                  onChange={(e) => setZap({ ...zap, max_minutes_per_host: e.target.value === "" ? undefined : Number(e.target.value) })}
+                  placeholder="20" />
+              </Field>
+              <Field label="Max min · spider">
+                <Input type="number" value={(zap.spider_max_minutes as number) ?? ""}
+                  onChange={(e) => setZap({ ...zap, spider_max_minutes: e.target.value === "" ? undefined : Number(e.target.value) })}
+                  placeholder="5" />
+              </Field>
+            </div>
           </Section>
 
           <Separator />

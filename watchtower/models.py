@@ -11,6 +11,7 @@ FindingSource = Literal[
     "nuclei", "takeover", "sslscan",
     "headers", "csp",                       # deterministic security-header checks
     "js_lib",                               # vulnerable JS library (retire.js-style)
+    "zap",                                  # OWASP ZAP active scan (opt-in)
     "ai_headers", "ai_supply_chain",
 ]
 
@@ -78,10 +79,12 @@ class Finding(BaseModel):
     def group_key(self) -> str:
         """Stable identity for dedup/grouping + manual-suppression fingerprints:
         the rule ``check_id`` when present (AI findings now derive one from their
-        ``type`` tag), else a source-specific natural key, else the title. Reused
+        ``title``, the cross-host-stable signal), else a source-specific natural
+        key, else the title. Reused
         by ``suppress.finding_key``, ``select_top_risks``, and the report's
         per-source grouping so the same issue collapses across hosts instead of
         emitting one row per host."""
+        # check_id covers headers/csp/js_lib + AI (title-derived) + zap (zap.<pluginId>).
         if self.check_id:
             return self.check_id
         ev = self.evidence or {}
@@ -107,6 +110,16 @@ class Finding(BaseModel):
             rows = [("template", ev.get("template_id")), ("matched", ev.get("matched_at"))]
         elif self.source == "sslscan":
             rows = [("check", ev.get("check")), ("detail", ev.get("detail"))]
+        elif self.source == "zap":
+            rows = [
+                ("plugin", ev.get("plugin_id")),
+                ("risk", ev.get("risk")),
+                ("confidence", ev.get("confidence")),
+                ("cwe", ev.get("cwe")),
+                ("instances", ev.get("instance_count")),
+                ("params", ", ".join(ev.get("params") or [])),
+                ("solution", ev.get("solution")),
+            ]
         else:  # headers / csp / ai_headers / ai_supply_chain — "type"/"check_id" internal
             rows = [(k, v) for k, v in ev.items() if k not in ("type", "check_id")]
         return [(k, str(v)) for k, v in rows if v not in (None, "", [], {})]

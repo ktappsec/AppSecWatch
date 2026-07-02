@@ -47,7 +47,7 @@ def _slug(roots: list[str]) -> str:
 _RUN_SUBDIRS = (
     "01_recon",
     "02_audit/takeovers", "02_audit/sslscan",
-    "02_audit/nuclei", "02_audit/playwright",
+    "02_audit/nuclei", "02_audit/playwright", "02_audit/zap",
     "03_ai/profile", "03_ai/triage", "03_ai/supply_chain", "03_ai/exec_summary",
 )
 
@@ -83,10 +83,11 @@ async def collect_versions(cfg: WatchTowerConfig) -> dict[str, Any]:
 
 
 def _snapshot_config(cfg: WatchTowerConfig, run_dir: Path) -> None:
-    """Write config.snapshot.yaml with the LLM api_key redacted."""
+    """Write config.snapshot.yaml with secret api_keys (llm, zap) redacted."""
     dump = cfg.model_dump()
-    if dump.get("llm", {}).get("api_key"):
-        dump["llm"]["api_key"] = "***REDACTED***"
+    for section in ("llm", "zap"):
+        if dump.get(section, {}).get("api_key"):
+            dump[section]["api_key"] = "***REDACTED***"
     (run_dir / "config.snapshot.yaml").write_text(yaml.safe_dump(dump, sort_keys=False))
 
 

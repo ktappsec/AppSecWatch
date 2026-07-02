@@ -71,6 +71,12 @@ SUBTOKENS: dict[str, tuple[str, ...]] = {
 
 AUDIT_CAPS = frozenset({"takeovers", "tls", "nuclei", "supply-chain", "ai", "headers"})
 
+# Opt-in capabilities: registered + selectable, but NEVER activated by a default
+# scan or a `--skip` selection — only by an explicit `--only`. `zap` fires live
+# active-scan payloads, so it must never ride along on a preset. Subtracted from
+# the default + skip caps seeds; added back only when named in `--only`.
+OPT_IN_TOKENS = frozenset({"zap"})
+
 
 @dataclass(frozen=True)
 class Capability:
@@ -137,12 +143,22 @@ def _ai(cfg: WatchTowerConfig, plan: SelectionPlan) -> Stage | None:
     return AIStage(do_triage=do_triage, do_supply=do_supply)
 
 
+def _zap(cfg: WatchTowerConfig, plan: SelectionPlan) -> Stage | None:
+    # Built only when the daemon is configured AND there are targets to attack —
+    # a third backstop behind the /capabilities gating + the submit-time 409.
+    if not (cfg.zap.enabled and cfg.zap.base_url and cfg.zap.targets):
+        return None
+    from watchtower.stages.audit import ZapStage
+    return ZapStage()
+
+
 CAPABILITIES: dict[str, Capability] = {
     "takeovers":    Capability(_takeovers, "takeovers"),
     "tls":          Capability(_tls, "audit"),
     "nuclei":       Capability(_nuclei, "audit"),
     "supply-chain": Capability(_crawler, "audit"),
     "headers":      Capability(_headers, "audit"),
+    "zap":          Capability(_zap, "audit"),
     "ai":           Capability(_ai, "ai-analyze", depends_on=("supply-chain",)),
 }
 
@@ -219,13 +235,15 @@ def _resolve_only(only: set[str]):
     supply_on = "supply-chain" in parents
     headers_on = bool(header_steps)
     ai_on = bool(ai_steps)
+    zap_on = "zap" in parents  # opt-in: only ever activates via explicit --only
 
     auto: set[str] = set()
     if "supply-chain" in ai_steps and not supply_on:  # ai.supply-chain needs the crawler
         supply_on = True
         auto.add("supply-chain")
 
-    audit_active = takeovers_on or tls_on or nuclei_on or supply_on or headers_on or ai_on
+    audit_active = (takeovers_on or tls_on or nuclei_on or supply_on
+                    or headers_on or ai_on or zap_on)
 
     if not audit_active:
         # Discovery-only: run exactly the selected recon slice (full spine if the
@@ -249,6 +267,8 @@ def _resolve_only(only: set[str]):
         caps.add("supply-chain")
     if headers_on:
         caps.add("headers")
+    if zap_on:
+        caps.add("zap")
     if ai_on:
         caps.add("ai")
     return recon_steps, ai_steps, header_steps, nuclei_sev, caps, False, auto
@@ -270,7 +290,8 @@ def _resolve_skip(skip: set[str]):
     ai_steps = set(AI_STEPS)
     header_steps = set(HEADER_STEPS)
     nuclei_sev: set[str] | None = None
-    caps = set(ALL_TOKENS)
+    # Opt-in caps (zap) never ride along on a --skip selection.
+    caps = set(ALL_TOKENS) - OPT_IN_TOKENS
 
     for p in parents_skip:
         caps.discard(p)
@@ -419,7 +440,9 @@ def resolve_selection(
     else:
         recon_steps, ai_steps, header_steps, nuclei_sev = \
             set(RECON_STEPS), set(AI_STEPS), set(HEADER_STEPS), None
-        caps, discovery_only, auto = set(ALL_TOKENS), False, set()
+        # Default scan = every capability EXCEPT opt-in ones (zap). zap must be
+        # named explicitly in --only; it never rides along on a default run.
+        caps, discovery_only, auto = set(ALL_TOKENS) - OPT_IN_TOKENS, False, set()
 
     plan = SelectionPlan(
         recon_steps=frozenset(recon_steps),

@@ -19,6 +19,7 @@ export type FindingSource =
   | "headers"
   | "csp"
   | "js_lib"
+  | "zap"
   | "ai_headers"
   | "ai_supply_chain";
 
@@ -171,6 +172,10 @@ export interface ScanRequest {
   skip?: string[] | null;
   throttle?: ThrottleProfile | null;
   profile_render?: "auto" | "always" | "never" | null;
+  /** Scope-locked targets for the opt-in `zap` active scan (required when zap is selected). */
+  zap_targets?: string[] | null;
+  /** Per-scan override of zap.ajax_spider (null = server-config default). */
+  zap_ajax_spider?: boolean | null;
   compress?: boolean;
   callback_url?: string | null;
 }

@@ -187,9 +187,25 @@ Two base-config keys back the rendering features above and, like the rest of
 All endpoints require auth except `GET /healthz`. Errors use a consistent
 `{ "error": { "code": "...", "message": "..." } }` body.
 
+**OWASP ZAP active scan (opt-in).** `ScanRequest.zap_targets: list[str]` carries the
+scope-locked hosts/URLs for the `zap` capability. It is offered only when the
+daemon is configured: `GET /capabilities` **omits** `zap` unless `base_config.zap`
+has `enabled: true` + a `base_url`. Submitting `only:["zap"]` is gated server-side
+(→ `409 zap_rejected`) when the daemon is off, `zap_targets` is empty, or any target
+is not under a scan root; supplying `zap_targets` without `"zap"` in `only` is a
+`422`. `ScanRequest.zap_ajax_spider` (`bool | null`) is a per-scan override of
+`zap.ajax_spider` (null = server-config default) — handy to flip the AJAX spider on
+for a one-off SPA target; it is plumbed like `profile_render` (injected into the
+merged `cfg.zap` at build time). `base_config.zap.api_key` is a write-only secret
+(masked on `GET /config`, preserved on a blank/masked `PUT`, exactly like
+`llm.api_key`). ZAP config (enable / base_url / api_key / ajax / scan policy / time
+caps) is editable as a friendly card on the Settings page. The heavy ZAP daemon
+runs as a separate sidecar (`docker-compose.yml`), driven over REST — it is never
+bundled into the server image.
+
 | Method | Path | Body / params | Success | Errors |
 |---|---|---|---|---|
-| `POST` | `/scans` | `ScanRequest` (+ `Idempotency-Key`, optional `callback_url`) | `202 {id, state, links}` (or `200` if deduped) | 401, 409 (not_configured), 422 (validation), 429 (full) |
+| `POST` | `/scans` | `ScanRequest` (+ `Idempotency-Key`, optional `callback_url`) | `202 {id, state, links}` (or `200` if deduped) | 401, 409 (not_configured / **zap_rejected**), 422 (validation), 429 (full) |
 | `GET` | `/scans` | `?state=&limit=&offset=` | `200 {jobs:[JobStatus], total}` | 401 |
 | `GET` | `/scans/{id}` | — | `200 JobStatus` | 401, 404 |
 | `GET` | `/scans/{id}/result` | — | `200 ScanResult` (JSON) | 401, 404, 409 (not finished) |
@@ -254,7 +270,10 @@ Endpoints are `"METHOD host/path"`; query strings and all values/bodies are
 excluded. `_sync_assets` persists it on the assets row — latest snapshot only (no
 over-time history). `GET /assets/{fqdn}/screenshot` serves the asset's last-scan
 per-host PNG (`image/png`), or `404 not_found` when there is no screenshot
-(screenshots disabled / host not crawled / older scan). It is **dashboard-only** —
+(screenshots disabled / host not crawled / older scan). Because compression is the
+default, the PNG normally lives inside `02_audit.tar.gz` (the loose `playwright/`
+dir is deleted post-run) — the endpoint reads it back out of the tarball (loose
+file first, then the archive member). It is **dashboard-only** —
 the screenshot is NEVER embedded in `report.html`; the UI fetches it as an
 authenticated blob (an `<img src>` can't send the `Authorization` header).
 

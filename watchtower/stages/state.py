@@ -44,6 +44,8 @@ class ScanState(BaseModel):
     header_findings: list[Finding] = Field(default_factory=list)
     # Vulnerable JS libraries (retire.js-style) over crawler scripts.
     js_lib_findings: list[Finding] = Field(default_factory=list)
+    # OWASP ZAP active-scan findings (the opt-in `zap` capability; source='zap').
+    zap_findings: list[Finding] = Field(default_factory=list)
 
     # AI
     ai_headers_findings: list[Finding] = Field(default_factory=list)
@@ -69,6 +71,7 @@ class ScanState(BaseModel):
             + list(self.tls_findings)
             + list(self.header_findings)
             + list(self.js_lib_findings)
+            + list(self.zap_findings)
             + list(self.ai_headers_findings)
             + list(self.ai_supply_findings)
         )

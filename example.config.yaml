@@ -197,3 +197,22 @@ tools:
     # (never sent to the LLM, never inlined into report.html). Disable for large
     # inventories to save disk.
     screenshot: true
+
+# OWASP ZAP active-scan capability (the opt-in `zap` token). TOP-LEVEL, not under
+# `tools:` — ZAP is a sidecar REST service, not a run_tool binary, and is exempt
+# from the throttle profiles (it self-paces; the per-host/total minute caps below
+# are the bound). Disabled by default: it fires live attack payloads, so it only
+# runs when enabled here AND selected per-scan (`--only zap`) with explicit,
+# in-scope targets. See docker-compose.yml for the sidecar service.
+zap:
+  enabled: false
+  base_url: ""              # e.g. http://zap:8090 (the sidecar daemon)
+  api_key: ""               # ZAP API key (X-ZAP-API-Key); a secret — masked in the UI
+  max_minutes_total: 60     # overall ceiling across all targets
+  max_minutes_per_host: 20  # per-target active-scan cap
+  spider_max_minutes: 5     # per-target spider cap
+  ajax_spider: false        # also run ZAP's AJAX spider (slower; for SPAs)
+  scan_policy: "Default Policy"
+  poll_interval_seconds: 5.0
+  request_timeout: 30
+  alert_cap: 5000

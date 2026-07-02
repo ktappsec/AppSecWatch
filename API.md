@@ -84,7 +84,8 @@ docker run --rm \
 | `nuclei` | main nuclei web-CVE scan | |
 | `headers` | deterministic OWASP header + CSP analysis | Passive — evaluates the headers httpx already captured (no new requests). |
 | `supply-chain` | Playwright crawler | |
-| `ai` | `ai.profile` + cross-source triage + supply-chain analysis | Supply-chain analysis auto-enables the crawler. `ai.triage` reviews **all** deterministic findings and may soft-suppress false-positives. |
+| `zap` | OWASP ZAP **active scan** (sidecar daemon over REST) | **Opt-in**: never runs on a preset/default or via `--skip` — only via explicit `--only zap`. Requires the daemon (`cfg.zap.enabled` + `base_url`) and operator-specified, scope-locked targets (`cfg.zap.targets`, or the Web API's `ScanRequest.zap_targets`). Intrusive (sends payloads); fires `Finding(source='zap')`. Exempt from the throttle profiles (time-bounded by `zap.max_minutes_*`). |
+| `ai` | `ai.profile` + cross-source triage + supply-chain analysis | Supply-chain analysis auto-enables the crawler. `ai.triage` reviews **all** deterministic findings (including `zap`) and may soft-suppress false-positives. |
 
 Rules:
 
@@ -252,6 +253,24 @@ The config file is parsed with PyYAML and validated against `watchtower.config.W
 | `llm` | object | ✓ | — | OpenAI-compatible LLM endpoint. |
 | `ai` | object | ✗ | see below | AI behavior, incl. context-aware profiling. |
 | `tools` | object | ✗ | defaults | Per-tool config blocks. |
+| `zap` | object | ✗ | disabled | OWASP ZAP active-scan capability (top-level, NOT under `tools` — it's a REST sidecar, not a `run_tool` binary, and is exempt from `throttle`). Disabled by default. See [`zap`](#zap). |
+
+<a id="zap"></a>
+#### `zap`
+
+The opt-in `zap` capability (active DAST via an OWASP ZAP **sidecar daemon** over REST; see `docker-compose.yml`). Off by default — even when configured it runs only via `--only zap` with explicit, in-scope targets.
+
+| Key | Type | Default | Notes |
+|---|---|---|---|
+| `enabled` | bool | `false` | Gate: with `base_url`, both must be set or the capability is unavailable (omitted from `/capabilities`; submit → 409). |
+| `base_url` | str | `""` | Daemon URL, e.g. `http://zap:8090`. |
+| `api_key` | str | `""` | ZAP API key (sent as `X-ZAP-API-Key`). **Secret** — masked on `GET /config`, redacted from the config snapshot. |
+| `targets` | `list[str]` | `[]` | Scope-locked hosts/URLs to attack (each must be `under_any_root(roots)`). The Web API injects `ScanRequest.zap_targets` here. |
+| `max_minutes_total` / `max_minutes_per_host` / `spider_max_minutes` | int | `60` / `20` / `5` | Python poll-deadline bounds (also pushed to ZAP's own max-duration options); on expiry the scan stops and partial alerts are kept. |
+| `ajax_spider` | bool | `false` | Also run ZAP's AJAX spider (slower; for SPAs). The Web API's `ScanRequest.zap_ajax_spider` (`bool \| null`) overrides this per-scan (null = this default). |
+| `scan_policy` | str | `"Default Policy"` | ZAP scan-policy name. |
+| `poll_interval_seconds` / `request_timeout` / `alert_cap` | num | `5.0` / `30` / `5000` | Status-poll cadence, per-call HTTP timeout, max alert instances pulled per target. |
+| `auth_headers` | `dict` | `{}` | Future header/token-injection seam (unused in v1 — unauthenticated scanning). |
 
 > **Removed keys (back-compat).** The old ownership model is gone: `sanctioned_cidrs` and `sanctioned_asns` no longer exist, and there is no `in_scope`/`shadow_it`/`dead` bucketing — assets now carry a single `status` of `live` (resolves to ≥1 A record) or `dead` (NXDOMAIN / no A records). Config files (or JSON) that still contain `sanctioned_*` keys load cleanly; unknown keys are ignored.
 

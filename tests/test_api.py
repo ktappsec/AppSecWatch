@@ -217,6 +217,39 @@ def test_asset_screenshot_404_when_absent(tmp_path, monkeypatch):
         assert client.get("/assets/nope.example.com/screenshot", headers=H).status_code == 404
 
 
+def test_asset_screenshot_served_from_compressed_run(tmp_path, monkeypatch):
+    """Compression is the default → the loose `02_audit/playwright/` dir is gone;
+    the endpoint must read the PNG back out of `02_audit.tar.gz`."""
+    import io
+    import tarfile as _tarfile
+    from pathlib import Path
+
+    png = b"\x89PNG\r\n\x1a\n" + b"fake-image-bytes"
+    with _client(tmp_path, monkeypatch) as client:
+        client.post("/assets", json={"fqdn": "shot.example.com"}, headers=H)
+        scan_id = "2026-06-30T00-00-00Z-shot"
+        client.app.state.assets.db.execute(
+            "UPDATE assets SET last_scan_id=? WHERE fqdn=?", (scan_id, "shot.example.com"))
+        run_dir = Path(client.app.state.config.output_root) / scan_id
+        run_dir.mkdir(parents=True, exist_ok=True)
+        with _tarfile.open(run_dir / "02_audit.tar.gz", "w:gz") as tar:
+            info = _tarfile.TarInfo("02_audit/playwright/shot.example.com.png")
+            info.size = len(png)
+            tar.addfile(info, io.BytesIO(png))
+
+        r = client.get("/assets/shot.example.com/screenshot", headers=H)
+        assert r.status_code == 200
+        assert r.headers["content-type"] == "image/png"
+        assert r.content == png
+
+        # A loose PNG (an uncompressed `--no-compress` run) is served directly too.
+        loose = run_dir / "02_audit" / "playwright"
+        loose.mkdir(parents=True, exist_ok=True)
+        (loose / "shot.example.com.png").write_bytes(png + b"-loose")
+        r2 = client.get("/assets/shot.example.com/screenshot", headers=H)
+        assert r2.status_code == 200 and r2.content == png + b"-loose"
+
+
 def test_bad_subtoken_422(tmp_path, monkeypatch):
     with _client(tmp_path, monkeypatch) as client:
         r = client.post("/scans", json={**REQ, "only": ["nuclei.bogus"]}, headers=H)
@@ -788,3 +821,109 @@ def test_webhook_fired_on_completion(tmp_path, monkeypatch):
             time.sleep(0.03)
         assert calls and calls[0][1] == "scan.completed"
         assert calls[0][2]["id"] == job_id
+
+
+# --------------------------------------------------------------------------- #
+# OWASP ZAP active-scan capability (opt-in + gated)
+# --------------------------------------------------------------------------- #
+def _zap_base(*, enabled=True, base_url="http://zap:8090"):
+    return {
+        "mmdb_path": "/dev/null",
+        "llm": {"base_url": "http://llm.local", "model": "test-model"},
+        "zap": {"enabled": enabled, "base_url": base_url, "api_key": "zk"},
+    }
+
+
+def test_capabilities_omits_zap_when_disabled(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:  # default config has no zap
+        caps = client.get("/capabilities", headers=H).json()["capabilities"]
+        assert "zap" not in caps
+
+
+def test_capabilities_advertises_zap_when_enabled(tmp_path, monkeypatch):
+    cfg = _server_config(tmp_path, base_config=_zap_base())
+    with _client(tmp_path, monkeypatch, config=cfg) as client:
+        caps = client.get("/capabilities", headers=H).json()["capabilities"]
+        assert "zap" in caps
+
+
+def test_zap_targets_without_selecting_zap_422(tmp_path, monkeypatch):
+    cfg = _server_config(tmp_path, base_config=_zap_base())
+    with _client(tmp_path, monkeypatch, config=cfg) as client:
+        r = client.post("/scans", headers=H, json={
+            "roots": ["example.com"], "zap_targets": ["https://app.example.com"]})
+        assert r.status_code == 422
+
+
+def test_zap_selected_but_disabled_409(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:  # no zap in config
+        r = client.post("/scans", headers=H, json={
+            "roots": ["example.com"], "only": ["zap"],
+            "zap_targets": ["https://app.example.com"]})
+        assert r.status_code == 409
+        assert r.json()["error"]["code"] == "zap_rejected"
+
+
+def test_zap_selected_without_targets_409(tmp_path, monkeypatch):
+    cfg = _server_config(tmp_path, base_config=_zap_base())
+    with _client(tmp_path, monkeypatch, config=cfg) as client:
+        r = client.post("/scans", headers=H, json={
+            "roots": ["example.com"], "only": ["zap"]})
+        assert r.status_code == 409
+        assert r.json()["error"]["code"] == "zap_rejected"
+
+
+def test_zap_out_of_scope_targets_409(tmp_path, monkeypatch):
+    cfg = _server_config(tmp_path, base_config=_zap_base())
+    with _client(tmp_path, monkeypatch, config=cfg) as client:
+        r = client.post("/scans", headers=H, json={
+            "roots": ["example.com"], "only": ["zap"],
+            "zap_targets": ["https://evil.test/x"]})
+        assert r.status_code == 409
+        assert "out of scope" in r.json()["error"]["message"]
+
+
+def test_zap_valid_request_202(tmp_path, monkeypatch):
+    cfg = _server_config(tmp_path, base_config=_zap_base())
+    with _client(tmp_path, monkeypatch, config=cfg) as client:
+        r = client.post("/scans", headers=H, json={
+            "roots": ["example.com"], "only": ["zap"],
+            "zap_targets": ["https://app.example.com", "api.example.com"]})
+        assert r.status_code == 202, r.text
+        body = r.json()
+        assert body["state"] == "queued"
+        _wait_state(client, body["id"], "completed")
+
+
+def test_zap_ajax_spider_override_threads_into_config(tmp_path, monkeypatch):
+    captured: dict = {}
+
+    async def fake_run(*args, **kwargs):
+        cfg = args[0]
+        captured["ajax"] = cfg.zap.ajax_spider
+        captured["targets"] = list(cfg.zap.targets)
+        run_dir = kwargs["run_dir"]
+        (run_dir / "report.html").write_text("<html>r</html>")
+        (run_dir / "executive.html").write_text("<html>e</html>")
+        return run_dir / "report.html"
+
+    cfg = _server_config(tmp_path, base_config=_zap_base())  # ajax_spider defaults False
+    with _client(tmp_path, monkeypatch, fake_run=fake_run, config=cfg) as client:
+        r = client.post("/scans", headers=H, json={
+            "roots": ["example.com"], "only": ["zap"],
+            "zap_targets": ["https://app.example.com"], "zap_ajax_spider": True})
+        assert r.status_code == 202, r.text
+        _wait_state(client, r.json()["id"], "completed")
+        assert captured["ajax"] is True   # per-scan override won
+        assert captured["targets"] == ["https://app.example.com"]
+
+
+def test_config_masks_zap_api_key(tmp_path, monkeypatch):
+    cfg = _server_config(tmp_path, base_config=_zap_base())
+    with _client(tmp_path, monkeypatch, config=cfg) as client:
+        got = client.get("/config", headers=H).json()["base_config"]
+        assert got["zap"]["api_key"] == "********"
+        # A masked PUT preserves the stored key.
+        got["zap"]["api_key"] = "********"
+        put = client.put("/config", headers=H, json={"base_config": got})
+        assert put.status_code == 200

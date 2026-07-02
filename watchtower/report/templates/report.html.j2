@@ -268,6 +268,42 @@
     </div>
   </section>
 
+  <!-- Active scan (OWASP ZAP) — only shown when the opt-in zap capability ran -->
+  {% if ran.zap %}
+  <section id="zap">
+    <div class="head" onclick="toggleSection(this)"><h2>Active Scan (OWASP ZAP)</h2><span class="toggle">▾</span></div>
+    <div class="body">
+      {% if findings.zap %}
+      <div class="controls">
+        <input type="text" data-search="zap" placeholder="filter by host / title…">
+        <select data-sevfilter="zap">
+          <option value="">all severities</option>
+          {% for sev in ["critical","high","medium","low","info"] %}
+          <option value="{{ sev }}">{{ sev }}</option>
+          {% endfor %}
+        </select>
+        <span class="count" data-count="zap"></span>
+      </div>
+      <table data-table="zap">
+        <thead><tr>
+          <th class="sortable">Severity</th><th class="sortable">Hosts</th><th class="sortable">Title</th><th>Evidence</th>
+        </tr></thead>
+        <tbody>
+        {% for ttl, items in findings.zap | groupby('group_key') %}
+          <tr data-row data-severity="{{ items[0].severity }}">
+            <td><span class="{{ items[0].severity | sev_class }}">{{ items[0].severity }}</span></td>
+            <td title="{{ items | map(attribute='host') | join(', ') }}">{{ items | length }} host{{ '' if items|length == 1 else 's' }}</td>
+            <td>{{ items[0].title }}</td>
+            <td class="evidence">{{ items[0].evidence_summary }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}<div class="empty">Active scan ran; no findings.</div>{% endif %}
+    </div>
+  </section>
+  {% endif %}
+
   <!-- Vulnerable JS libraries (retire.js-style, over crawler scripts) -->
   {% if findings.js_lib %}
   <section id="jslibs">
