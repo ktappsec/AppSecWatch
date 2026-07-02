@@ -3,11 +3,11 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "watchtower"
+name = "appsecwatch"
 version = "0.1.0"
 description = "Point-in-time external AppSec audit orchestrator"
 requires-python = ">=3.11"
-authors = [{name = "WatchTower"}]
+authors = [{name = "AppSecWatch"}]
 license = {text = "Proprietary"}
 dependencies = [
     "pydantic>=2.6",
@@ -33,14 +33,14 @@ dev = [
 ]
 
 [project.scripts]
-watchtower = "watchtower.cli:main"
+appsecwatch = "appsecwatch.cli:main"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 
 [tool.setuptools.packages.find]
-include = ["watchtower*"]
+include = ["appsecwatch*"]
 
 [tool.setuptools.package-data]
-watchtower = ["report/templates/*.j2", "audit/data/*.json"]
+appsecwatch = ["report/templates/*.j2", "audit/data/*.json"]

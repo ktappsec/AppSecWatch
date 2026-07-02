@@ -54,14 +54,15 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
         key={entry.href}
         href={entry.href}
         onClick={onNavigate}
+        aria-current={active ? "page" : undefined}
         className={cn(
-          "flex items-center gap-3 rounded-lg px-4 py-2.5 text-sm transition-smooth",
+          "relative flex items-center gap-3 rounded-md px-3.5 py-2 text-sm transition-smooth",
           active
-            ? "bg-accent/20 text-accent font-medium"
-            : "text-muted-foreground hover:bg-accent/10 hover:text-foreground"
+            ? "bg-primary/10 font-medium text-primary before:absolute before:inset-y-1.5 before:left-0 before:w-0.5 before:rounded-full before:bg-primary"
+            : "text-muted-foreground hover:bg-muted hover:text-foreground"
         )}
       >
-        <Icon className="h-5 w-5 shrink-0" />
+        <Icon className={cn("h-[18px] w-[18px] shrink-0", active ? "text-primary" : "text-muted-foreground")} />
         <span>{entry.label}</span>
       </Link>
     );
@@ -71,11 +72,11 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
     <aside className="flex h-full w-64 shrink-0 flex-col border-r border-sidebar-border bg-sidebar">
       {/* Logo */}
       <div className="flex items-center gap-3 px-5 py-5">
-        <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br from-primary to-accent text-primary-foreground shadow-md">
-          <ShieldCheck className="h-6 w-6" />
+        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-sm">
+          <ShieldCheck className="h-5 w-5" />
         </div>
         <div className="leading-tight">
-          <p className="text-lg font-bold">WatchTower</p>
+          <p className="text-[15px] font-semibold tracking-tight">AppSecWatch</p>
           <p className="text-[11px] text-muted-foreground">AppSec Orchestrator</p>
         </div>
       </div>

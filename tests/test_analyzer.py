@@ -1,10 +1,10 @@
 """Analyzer: work-map merge + profile/analysis flow with a stubbed LLM client."""
 from __future__ import annotations
 
-from watchtower.ai import analyzer
-from watchtower.ai.analyzer import _build_work_map, analyze_all, profile_all, summarize_run
-from watchtower.config import LLMConfig
-from watchtower.models import AppProfile, CrawlerArtifact, LiveWebServer, PageSignals
+from appsecwatch.ai import analyzer
+from appsecwatch.ai.analyzer import _build_work_map, analyze_all, profile_all, summarize_run
+from appsecwatch.config import LLMConfig
+from appsecwatch.models import AppProfile, CrawlerArtifact, LiveWebServer, PageSignals
 
 
 class _Log:
@@ -199,7 +199,7 @@ async def test_analyze_uses_profiled_prompt(tmp_path, monkeypatch):
 # ---- AI cross-source soft-suppression (the ai.triage pass) ----------------
 
 def _det_finding(check_id="hsts.missing", host="h", severity="medium", source="headers"):
-    from watchtower.models import Finding
+    from appsecwatch.models import Finding
     return Finding(source=source, host=host, severity=severity,
                    title="Missing HSTS", check_id=check_id,
                    evidence={"check_id": check_id, "header": "strict-transport-security"})
@@ -309,7 +309,7 @@ async def test_degraded_ai_suppresses_nothing(tmp_path, monkeypatch):
 # AI finding shaping: stable check_id + non-vuln / infra-cookie drop
 # --------------------------------------------------------------------------- #
 def _ai_resp(*findings):
-    from watchtower.ai.schemas import AIFinding, AIResponse
+    from appsecwatch.ai.schemas import AIFinding, AIResponse
     return AIResponse(findings=[AIFinding(**f) for f in findings])
 
 

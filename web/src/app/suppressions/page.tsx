@@ -9,6 +9,8 @@ import {
   Table, TableHeader, TableBody, TableRow, TableHead, TableCell,
 } from "@/components/ui/table";
 import { toast } from "@/components/ui/sonner";
+import { ListSkeleton } from "@/components/ui/skeleton";
+import { InlineError } from "@/components/api-error-state";
 import { api, ApiError } from "@/lib/api";
 import { useMounted } from "@/lib/hooks";
 import { relativeTime } from "@/lib/format";
@@ -41,7 +43,7 @@ export default function SuppressionsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Suppressions</h1>
+          <h1 className="text-xl font-semibold tracking-tight">Suppressions</h1>
           <p className="text-sm text-muted-foreground">
             Manually-suppressed findings. Hidden + uncounted on every scan until removed here.
           </p>
@@ -51,8 +53,8 @@ export default function SuppressionsPage() {
         </Button>
       </div>
 
-      <Card className="flex gap-3 border-accent/30 bg-accent/5 p-4 text-sm">
-        <Info className="mt-0.5 h-4 w-4 shrink-0 text-accent" />
+      <Card className="flex gap-3 border-primary/30 bg-primary/5 p-4 text-sm">
+        <Info className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
         <div className="space-y-1 text-muted-foreground">
           <p>
             These are <span className="font-medium text-foreground">manual</span> suppressions —
@@ -64,7 +66,7 @@ export default function SuppressionsPage() {
           <p>
             Distinct from <span className="font-medium text-foreground">AI false-positive</span>{" "}
             suppression, which is judged fresh each scan and shown inline in the findings table.{" "}
-            <Link href="/docs#suppression" className="text-accent hover:underline">
+            <Link href="/docs#suppression" className="text-primary hover:underline">
               Learn more
             </Link>
             .
@@ -73,9 +75,7 @@ export default function SuppressionsPage() {
       </Card>
 
       {!loaded ? (
-        <Card className="p-6 text-sm text-muted-foreground">
-          {err ? <>Couldn&apos;t load — <span className="text-destructive">{err}</span>.</> : "Loading…"}
-        </Card>
+        err ? <InlineError message={err} onRetry={load} /> : <ListSkeleton />
       ) : items.length === 0 ? (
         <Card className="flex flex-col items-center gap-2 p-12 text-center">
           <EyeOff className="h-10 w-10 text-muted-foreground" />
@@ -113,7 +113,7 @@ export default function SuppressionsPage() {
                     <span className="inline-flex items-center gap-1.5">
                       {isGlobal ? (
                         <>
-                          <Globe className="h-3.5 w-3.5 text-[#ff8a3d]" />
+                          <Globe className="h-3.5 w-3.5 text-warning" />
                           <span>Everywhere</span>
                         </>
                       ) : (

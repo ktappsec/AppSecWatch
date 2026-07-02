@@ -8,9 +8,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from watchtower.audit.crawler import _capture_state, _dedup_by_url
-from watchtower.config import PlaywrightConfig
-from watchtower.models import CrawlerArtifact
+from appsecwatch.audit.crawler import _capture_state, _dedup_by_url
+from appsecwatch.config import PlaywrightConfig
+from appsecwatch.models import CrawlerArtifact
 
 
 class _FakeContext:

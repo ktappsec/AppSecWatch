@@ -59,6 +59,31 @@ export function FindingsTable({
 }) {
   const [sev, setSev] = React.useState<Severity | "all">("all");
   const [expanded, setExpanded] = React.useState<Set<string>>(new Set());
+  // Optimistic local suppression: a manual-suppress call re-fetches nothing, so
+  // we hide the row immediately. A global key hides every host; a host key hides
+  // just that host. Cleared naturally when the parent hands us fresh findings.
+  const [locallySuppressed, setLocallySuppressed] = React.useState<Set<string>>(new Set());
+  React.useEffect(() => setLocallySuppressed(new Set()), [findings]);
+
+  const isLocallySuppressed = React.useCallback(
+    (f: Finding) =>
+      locallySuppressed.has(`${f.source}|${findingKey(f)}`) ||
+      locallySuppressed.has(`${f.source}|${findingKey(f)}|${f.host ?? ""}`),
+    [locallySuppressed]
+  );
+
+  const handleSuppress = React.useCallback(
+    (f: Finding, scope?: "host" | "global") => {
+      const key =
+        scope === "global"
+          ? `${f.source}|${findingKey(f)}`
+          : `${f.source}|${findingKey(f)}|${f.host ?? ""}`;
+      setLocallySuppressed((prev) => new Set(prev).add(key));
+      onSuppress?.(f, scope);
+    },
+    [onSuppress]
+  );
+
   const toggle = (id: string) =>
     setExpanded((prev) => {
       const next = new Set(prev);
@@ -69,9 +94,10 @@ export function FindingsTable({
 
   // Soft-suppressed findings (AI-judged false-positives) are split out: hidden
   // from the main table + counts, shown in a collapsible section, never dropped.
+  // Optimistically-suppressed rows are also filtered out of the visible set.
   const visible = React.useMemo(
-    () => findings.filter((f) => !f.ai_verdict?.suppressed),
-    [findings]
+    () => findings.filter((f) => !f.ai_verdict?.suppressed && !isLocallySuppressed(f)),
+    [findings, isLocallySuppressed]
   );
   const suppressed = React.useMemo(
     () => findings.filter((f) => f.ai_verdict?.suppressed),
@@ -111,7 +137,7 @@ export function FindingsTable({
   if (visible.length === 0 && suppressed.length === 0) {
     return (
       <div className="flex flex-col items-center gap-2 py-12 text-center">
-        <ShieldCheck className="h-10 w-10 text-[#00c853]" />
+        <ShieldCheck className="h-10 w-10 text-success" />
         <p className="text-sm text-muted-foreground">No findings recorded.</p>
       </div>
     );
@@ -161,8 +187,24 @@ export function FindingsTable({
             return (
               <React.Fragment key={g.id}>
                 <TableRow
-                  className={cn(canExpand && "cursor-pointer")}
+                  className={cn(
+                    canExpand &&
+                      "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+                  )}
                   onClick={canExpand ? () => toggle(g.id) : undefined}
+                  role={canExpand ? "button" : undefined}
+                  tabIndex={canExpand ? 0 : undefined}
+                  aria-expanded={canExpand ? isOpen : undefined}
+                  onKeyDown={
+                    canExpand
+                      ? (e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            toggle(g.id);
+                          }
+                        }
+                      : undefined
+                  }
                 >
                   <TableCell className="w-8 text-muted-foreground">
                     {canExpand &&
@@ -193,7 +235,7 @@ export function FindingsTable({
                         title={g.hosts.length > 1 ? "Suppress everywhere (all hosts)" : "Suppress this finding (future scans)"}
                         onClick={(e) => {
                           e.stopPropagation();
-                          onSuppress(g.rep, g.hosts.length > 1 ? "global" : "host");
+                          handleSuppress(g.rep, g.hosts.length > 1 ? "global" : "host");
                         }}>
                         <EyeOff className="h-3.5 w-3.5" />
                       </Button>
@@ -213,7 +255,7 @@ export function FindingsTable({
                               <Link
                                 href={`/assets?q=${encodeURIComponent(item.host)}`}
                                 onClick={(e) => e.stopPropagation()}
-                                className="shrink-0 font-mono text-accent hover:underline"
+                                className="shrink-0 font-mono text-primary hover:underline"
                                 title="Open this asset"
                               >
                                 {item.host}
@@ -230,7 +272,7 @@ export function FindingsTable({
                                 title="Suppress on this host only (future scans)"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  onSuppress(item, "host");
+                                  handleSuppress(item, "host");
                                 }}>
                                 <EyeOff className="h-3.5 w-3.5" />
                               </Button>
@@ -311,11 +353,13 @@ function FilterChip({
   return (
     <button
       onClick={onClick}
+      aria-pressed={active}
       className={cn(
         "rounded-lg border px-3 py-1.5 text-xs font-medium transition-smooth",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
         active
-          ? "border-accent/40 bg-accent/15 text-accent"
-          : "border-border text-muted-foreground hover:bg-accent/5"
+          ? "border-primary/40 bg-primary/10 text-primary"
+          : "border-border text-muted-foreground hover:bg-muted"
       )}
     >
       {children}

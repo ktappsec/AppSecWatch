@@ -6,6 +6,11 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
+} from "@/components/ui/select";
+import { ListSkeleton } from "@/components/ui/skeleton";
+import { InlineError } from "@/components/api-error-state";
 import { toast } from "@/components/ui/sonner";
 import { cn } from "@/lib/utils";
 import { api, ApiError } from "@/lib/api";
@@ -82,7 +87,7 @@ export default function SchedulesPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Schedules</h1>
+          <h1 className="text-xl font-semibold tracking-tight">Schedules</h1>
           <p className="text-sm text-muted-foreground">Recurring scans of an iştirak (times are UTC).</p>
         </div>
         <Button variant="outline" size="icon-sm" onClick={load} aria-label="Reload">
@@ -99,28 +104,35 @@ export default function SchedulesPage() {
           </div>
           <div className="space-y-1.5">
             <Label>Target group</Label>
-            <select value={group} onChange={(e) => setGroup(e.target.value)}
-              className="h-9 w-44 rounded-md border border-border bg-input px-2 text-sm">
-              <option value="">select iştirak…</option>
-              {groups.map((g) => <option key={g.group} value={g.group ?? ""}>{g.group} ({g.count})</option>)}
-            </select>
+            <Select value={group || undefined} onValueChange={setGroup}>
+              <SelectTrigger className="w-44"><SelectValue placeholder="select iştirak…" /></SelectTrigger>
+              <SelectContent>
+                {groups.map((g) => (
+                  <SelectItem key={g.group} value={g.group ?? ""}>{g.group} ({g.count})</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           <div className="space-y-1.5">
             <Label>Cadence</Label>
-            <select value={cadence} onChange={(e) => setCadence(e.target.value as typeof cadence)}
-              className="h-9 w-32 rounded-md border border-border bg-input px-2 text-sm">
-              <option value="hourly">hourly</option>
-              <option value="daily">daily</option>
-              <option value="weekly">weekly</option>
-            </select>
+            <Select value={cadence} onValueChange={(v) => setCadence(v as typeof cadence)}>
+              <SelectTrigger className="w-32"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="hourly">hourly</SelectItem>
+                <SelectItem value="daily">daily</SelectItem>
+                <SelectItem value="weekly">weekly</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
           {cadence === "weekly" && (
             <div className="space-y-1.5">
               <Label>Weekday</Label>
-              <select value={weekday} onChange={(e) => setWeekday(Number(e.target.value))}
-                className="h-9 w-28 rounded-md border border-border bg-input px-2 text-sm">
-                {WEEKDAYS.map((d, i) => <option key={d} value={i}>{d}</option>)}
-              </select>
+              <Select value={String(weekday)} onValueChange={(v) => setWeekday(Number(v))}>
+                <SelectTrigger className="w-28"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {WEEKDAYS.map((d, i) => <SelectItem key={d} value={String(i)}>{d}</SelectItem>)}
+                </SelectContent>
+              </Select>
             </div>
           )}
           <div className="space-y-1.5">
@@ -132,9 +144,7 @@ export default function SchedulesPage() {
       </Card>
 
       {!loaded ? (
-        <Card className="p-6 text-sm text-muted-foreground">
-          {err ? <>Couldn&apos;t load — <span className="text-destructive">{err}</span>.</> : "Loading…"}
-        </Card>
+        err ? <InlineError message={err} onRetry={load} /> : <ListSkeleton />
       ) : items.length === 0 ? (
         <Card className="flex flex-col items-center gap-2 p-12 text-center">
           <CalendarClock className="h-10 w-10 text-muted-foreground" />
@@ -159,7 +169,7 @@ export default function SchedulesPage() {
               </div>
               <div className="flex items-center gap-1">
                 <Button variant="ghost" size="icon-sm" aria-label="Toggle" onClick={() => toggle(s)}>
-                  <Power className={cn("h-4 w-4", s.enabled ? "text-[#00c853]" : "text-muted-foreground")} />
+                  <Power className={cn("h-4 w-4", s.enabled ? "text-success" : "text-muted-foreground")} />
                 </Button>
                 <Button variant="ghost" size="icon-sm" aria-label="Delete" onClick={() => del(s.id)}>
                   <Trash2 className="h-4 w-4 text-destructive" />

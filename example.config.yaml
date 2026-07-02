@@ -1,9 +1,9 @@
-# WatchTower configuration example
+# AppSecWatch configuration example
 #
 # Required top-level keys: roots, llm
 # Everything else has sensible defaults.
 #
-# WatchTower is a Layer-7 AppSec tool: the configured `roots` are the ONLY scope.
+# AppSecWatch is a Layer-7 AppSec tool: the configured `roots` are the ONLY scope.
 # Every name that resolves under a root is scanned, regardless of where it is
 # hosted. Resolution splits assets on a single liveness axis — `live` (has A
 # records → fully scanned) vs `dead` (NXDOMAIN/no A → takeover watch only).
@@ -52,8 +52,8 @@ llm:
   # purpose (profile / triage / supply / nuclei-gen) is appended to the title so
   # spend groups by call type, and on OpenRouter the OpenAI `user` field carries
   # the full per-host label. Harmless off OpenRouter (headers/field are ignored).
-  app_title: WatchTower
-  app_url: null            # e.g. https://watchtower.internal
+  app_title: AppSecWatch
+  app_url: null            # e.g. https://appsecwatch.internal
   tag_requests: true
   # Optional per-call-type model overrides. Keys: profile, triage, supply,
   # nuclei-gen. Anything unlisted uses `model` above. The per-host calls (profile/
@@ -175,7 +175,7 @@ tools:
     auto_scan: true       # use wappalyzer detection to limit templates to relevant tech
     rate_limit: 100
     timeout: 5
-    user_agent: "WatchTower/0.1"
+    user_agent: "AppSecWatch/0.1"
     extra_flags: []
 
   takeovers:

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import random
 
-from watchtower.models import ExecutiveSummary, ExecRiskNote, Finding
-from watchtower.report.aggregator import (
+from appsecwatch.models import ExecutiveSummary, ExecRiskNote, Finding
+from appsecwatch.report.aggregator import (
     build_executive_context,
     posture_rating,
     select_top_risks,

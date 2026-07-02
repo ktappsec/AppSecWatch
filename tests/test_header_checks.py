@@ -4,9 +4,9 @@ Pure functions over PageSignals — no network, no mocks needed.
 """
 from __future__ import annotations
 
-from watchtower.audit.header_checks import parse_csp, run_header_checks
-from watchtower.config import HeadersConfig
-from watchtower.models import PageSignals
+from appsecwatch.audit.header_checks import parse_csp, run_header_checks
+from appsecwatch.config import HeadersConfig
+from appsecwatch.models import PageSignals
 
 
 def _sig(host="h", headers=None, set_cookies=None, **kw) -> PageSignals:

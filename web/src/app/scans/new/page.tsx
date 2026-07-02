@@ -9,6 +9,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
+} from "@/components/ui/dialog";
 import {
   Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
 } from "@/components/ui/select";
@@ -98,12 +102,16 @@ export default function NewScanPage() {
     setCompress(t.compress);
   };
 
+  const [templateOpen, setTemplateOpen] = React.useState(false);
+  const [templateName, setTemplateName] = React.useState("");
+
   const saveTemplate = async () => {
-    const name = window.prompt("Template name:");
-    if (!name?.trim()) return;
+    const name = templateName.trim();
+    if (!name) return;
+    setTemplateOpen(false);
     try {
       await api.createScanTemplate({
-        name: name.trim(),
+        name,
         only: selection === "only" ? tokens : null,
         skip: selection === "skip" ? tokens : null,
         throttle: (throttle || null) as ScanTemplate["throttle"],
@@ -228,16 +236,18 @@ export default function NewScanPage() {
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             {SCAN_PRESETS.map((p) => (
               <button key={p.id} type="button" onClick={() => applyPreset(p)}
+                aria-pressed={activePreset === p.id}
                 className={cn("rounded-lg border p-3 text-left transition-smooth",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
                   activePreset === p.id
-                    ? "border-accent/50 bg-accent/10"
-                    : "border-border hover:bg-accent/5")}>
+                    ? "border-primary/50 bg-primary/10"
+                    : "border-border hover:bg-muted")}>
                 <span className="block text-sm font-medium">{p.label}</span>
                 <span className="block text-xs text-muted-foreground">{p.hint}</span>
               </button>
             ))}
             <div className={cn("rounded-lg border p-3",
-              activePreset === "custom" ? "border-accent/50 bg-accent/10" : "border-dashed border-border")}>
+              activePreset === "custom" ? "border-primary/50 bg-primary/10" : "border-dashed border-border")}>
               <span className="block text-sm font-medium">Custom</span>
               <span className="block text-xs text-muted-foreground">
                 {activePreset === "custom" ? "Hand-picked below" : "Edit the capabilities below"}
@@ -266,7 +276,8 @@ export default function NewScanPage() {
                   </SelectContent>
                 </Select>
               )}
-              <Button type="button" variant="outline" size="sm" onClick={saveTemplate}>
+              <Button type="button" variant="outline" size="sm"
+                onClick={() => { setTemplateName(""); setTemplateOpen(true); }}>
                 Save as template
               </Button>
             </div>
@@ -286,9 +297,10 @@ export default function NewScanPage() {
               {visibleTokens.map((t) => (
                 <div key={t.token} className="rounded-lg border border-border p-3">
                   <button type="button" onClick={() => toggleToken(t.token)}
-                    className="flex w-full items-start gap-3 text-left">
+                    aria-pressed={tokens.includes(t.token)}
+                    className="flex w-full items-start gap-3 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background">
                     <span className={cn("mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border",
-                      tokens.includes(t.token) ? "border-accent bg-accent text-accent-foreground" : "border-border")}>
+                      tokens.includes(t.token) ? "border-primary bg-primary text-primary-foreground" : "border-border")}>
                       {tokens.includes(t.token) && <span className="h-2 w-2 rounded-sm bg-current" />}
                     </span>
                     <span>
@@ -301,9 +313,11 @@ export default function NewScanPage() {
                       {t.children.map((c) => (
                         <button key={c.token} type="button" title={c.description}
                           onClick={() => toggleToken(c.token)}
+                          aria-pressed={tokens.includes(c.token)}
                           className={cn("rounded-md border px-2 py-1 text-xs transition-smooth",
-                            tokens.includes(c.token) ? "border-accent/50 bg-accent/15 text-accent"
-                              : "border-border text-muted-foreground hover:bg-accent/5")}>
+                            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
+                            tokens.includes(c.token) ? "border-primary/50 bg-primary/10 text-primary"
+                              : "border-border text-muted-foreground hover:bg-muted")}>
                           {c.label}
                         </button>
                       ))}
@@ -323,14 +337,14 @@ export default function NewScanPage() {
               <Textarea value={zapTargets} onChange={(e) => setZapTargets(e.target.value)}
                 className="min-h-[70px] font-mono text-xs"
                 placeholder={"app.example.com\nhttps://api.example.com/v2"} />
-              <label className="flex cursor-pointer items-center gap-3 pt-1">
-                <input type="checkbox" checked={zapAjax} onChange={(e) => setZapAjax(e.target.checked)}
-                  className="h-4 w-4 accent-[var(--primary)]" />
-                <span className="text-sm">
+              <div className="flex items-center gap-3 pt-1">
+                <Checkbox id="zap-ajax" checked={zapAjax}
+                  onCheckedChange={(c) => setZapAjax(c === true)} />
+                <Label htmlFor="zap-ajax" className="cursor-pointer text-sm font-normal">
                   Run AJAX spider{" "}
                   <span className="text-muted-foreground">(SPA discovery — overrides the server default for this scan)</span>
-                </span>
-              </label>
+                </Label>
+              </div>
             </div>
           )}
         </Card>
@@ -377,11 +391,13 @@ export default function NewScanPage() {
               nuclei {String(details.nuclei_rl)} rps · tlsx conc {String(details.tlsx_conc)} · dnsx {String(details.dnsx_rl)} rps
             </p>
           )}
-          <label className="flex cursor-pointer items-center gap-3">
-            <input type="checkbox" checked={compress} onChange={(e) => setCompress(e.target.checked)}
-              className="h-4 w-4 accent-[var(--primary)]" />
-            <span className="text-sm">Compress artifact directories at end of run</span>
-          </label>
+          <div className="flex items-center gap-3">
+            <Checkbox id="compress" checked={compress}
+              onCheckedChange={(c) => setCompress(c === true)} />
+            <Label htmlFor="compress" className="cursor-pointer text-sm font-normal">
+              Compress artifact directories at end of run
+            </Label>
+          </div>
         </Card>
 
         <div className="flex justify-end gap-2">
@@ -392,15 +408,38 @@ export default function NewScanPage() {
           </Button>
         </div>
       </form>
+
+      <Dialog open={templateOpen} onOpenChange={setTemplateOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Save as template</DialogTitle>
+            <DialogDescription>
+              Save the current capability selection, throttle, and compress options as a reusable preset.
+            </DialogDescription>
+          </DialogHeader>
+          <Input
+            autoFocus
+            value={templateName}
+            onChange={(e) => setTemplateName(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && saveTemplate()}
+            placeholder="template name"
+          />
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setTemplateOpen(false)}>Cancel</Button>
+            <Button type="button" onClick={saveTemplate} disabled={!templateName.trim()}>Save</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
 
 function Chip({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
   return (
-    <button type="button" onClick={onClick}
+    <button type="button" onClick={onClick} aria-pressed={active}
       className={cn("rounded-lg border px-3 py-1.5 text-xs font-medium capitalize transition-smooth",
-        active ? "border-accent/40 bg-accent/15 text-accent" : "border-border text-muted-foreground hover:bg-accent/5")}>
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
+        active ? "border-primary/40 bg-primary/10 text-primary" : "border-border text-muted-foreground hover:bg-muted")}>
       {children}
     </button>
   );
@@ -409,7 +448,7 @@ function Chip({ active, onClick, children }: { active: boolean; onClick: () => v
 function InfoHint({ href, label }: { href: string; label?: string }) {
   return (
     <Link href={href} title={label ?? "Learn more"} aria-label={label ?? "Learn more"}
-      className="text-muted-foreground transition-smooth hover:text-accent">
+      className="text-muted-foreground transition-smooth hover:text-primary">
       <Info className="h-3.5 w-3.5" />
     </Link>
   );

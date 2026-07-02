@@ -3,9 +3,9 @@ from __future__ import annotations
 
 import pytest
 
-from watchtower.api.assets import AssetManager
-from watchtower.api.db import Database
-from watchtower.models import TriagedAsset
+from appsecwatch.api.assets import AssetManager
+from appsecwatch.api.db import Database
+from appsecwatch.models import TriagedAsset
 
 
 def _am(tmp_path) -> AssetManager:

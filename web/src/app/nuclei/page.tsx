@@ -6,6 +6,9 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
+} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Table, TableHeader, TableBody, TableRow, TableHead, TableCell,
@@ -90,7 +93,7 @@ export default function NucleiPage() {
 
       {/* Custom + generator */}
       <Card className="gap-4 p-6">
-        <h3 className="flex items-center gap-2 text-lg font-bold"><FileCode className="h-5 w-5 text-accent" /> Custom templates</h3>
+        <h3 className="flex items-center gap-2 text-lg font-semibold"><FileCode className="h-5 w-5 text-primary" /> Custom templates</h3>
         <div className="flex flex-wrap items-end gap-2">
           <div className="flex-1 space-y-1.5">
             <Label>Generate from a description (AI)</Label>
@@ -127,7 +130,7 @@ export default function NucleiPage() {
                   <TableCell className="text-sm font-medium">{t.name || t.id}</TableCell>
                   <TableCell>
                     <span className={cn("rounded border px-1.5 py-0.5 text-[10px]",
-                      t.valid ? "border-[#00c853]/40 text-[#00c853]" : "border-destructive/40 text-destructive")}>
+                      t.valid ? "border-success/40 text-success" : "border-destructive/40 text-destructive")}>
                       {t.valid ? "valid" : "invalid"}
                     </span>
                   </TableCell>
@@ -135,7 +138,7 @@ export default function NucleiPage() {
                   <TableCell className="text-right">
                     <div className="flex items-center justify-end gap-1">
                       <Button variant="ghost" size="icon-sm" aria-label="Toggle" onClick={() => toggle(t)}>
-                        <Power className={cn("h-4 w-4", t.enabled ? "text-[#00c853]" : "text-muted-foreground")} />
+                        <Power className={cn("h-4 w-4", t.enabled ? "text-success" : "text-muted-foreground")} />
                       </Button>
                       <Button variant="ghost" size="icon-sm" aria-label="Delete" onClick={() => del(t.id)}>
                         <Trash2 className="h-4 w-4 text-destructive" />
@@ -152,7 +155,7 @@ export default function NucleiPage() {
       {/* Catalog */}
       <Card className="gap-4 p-6">
         <div className="flex items-center justify-between">
-          <h3 className="text-lg font-bold">Template catalog</h3>
+          <h3 className="text-lg font-semibold">Template catalog</h3>
           <Button variant="outline" size="sm" className="gap-1.5" onClick={reindex}>
             <RefreshCw className="h-3.5 w-3.5" /> Reindex
           </Button>
@@ -164,11 +167,15 @@ export default function NucleiPage() {
               onKeyDown={(e) => e.key === "Enter" && searchCatalog()}
               placeholder="search id / name…" className="pl-8" />
           </div>
-          <select value={severity} onChange={(e) => setSeverity(e.target.value)}
-            className="h-9 rounded-md border border-border bg-input px-2 text-sm">
-            <option value="">all severities</option>
-            {["critical", "high", "medium", "low", "info"].map((s) => <option key={s} value={s}>{s}</option>)}
-          </select>
+          <Select value={severity || "all"} onValueChange={(v) => setSeverity(v === "all" ? "" : v)}>
+            <SelectTrigger className="w-40" aria-label="Severity filter"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">all severities</SelectItem>
+              {["critical", "high", "medium", "low", "info"].map((s) => (
+                <SelectItem key={s} value={s}>{s}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           <Button variant="outline" onClick={searchCatalog}>Search</Button>
         </div>
         {templates.length === 0 ? (

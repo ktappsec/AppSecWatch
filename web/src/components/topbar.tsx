@@ -52,10 +52,6 @@ export function TopBar({ onOpenSidebar }: { onOpenSidebar?: () => void }) {
           <SettingsIcon className="h-5 w-5" />
         </Link>
       </Button>
-
-      <div className="ml-1 flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-primary to-accent text-sm font-semibold text-primary-foreground">
-        SS
-      </div>
     </header>
   );
 }

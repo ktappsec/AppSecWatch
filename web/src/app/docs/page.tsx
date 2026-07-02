@@ -5,8 +5,8 @@ import { CAPABILITY_TOKENS, THROTTLE_PROFILES } from "@/lib/constants";
 import { Arrow, Badge, Callout, DocsLangToggle, Figure, FlowNode, Mono, Section } from "@/components/docs/ui";
 
 export const metadata: Metadata = {
-  title: "Docs · WatchTower",
-  description: "How WatchTower scans, classifies, and reports.",
+  title: "Docs · AppSecWatch",
+  description: "How AppSecWatch scans, classifies, and reports.",
 };
 
 const TOC: { id: string; label: string }[] = [
@@ -33,7 +33,7 @@ const THROTTLE_NOTES: Record<string, string> = {
   insane: "Fastest and loudest (httpx threads 200) — WILL trip WAFs.",
 };
 
-// Exact per-tier knob values — mirrors watchtower/config.py `_PROFILES`.
+// Exact per-tier knob values — mirrors appsecwatch/config.py `_PROFILES`.
 const THROTTLE_DETAIL: {
   tier: string; httpx: string; nuclei: number; takeovers: number; dnsx: number; tlsx: number; tls: string; conc: string;
 }[] = [
@@ -44,7 +44,7 @@ const THROTTLE_DETAIL: {
   { tier: "insane", httpx: "1000 / 200", nuclei: 1000, takeovers: 300, dnsx: 10000, tlsx: 500, tls: "120 s", conc: "40 / 20 / 15" },
 ];
 
-// Stealth identity presets — mirrors watchtower/config.py `IDENTITY_PRESETS`.
+// Stealth identity presets — mirrors appsecwatch/config.py `IDENTITY_PRESETS`.
 const IDENTITY_PRESETS: { name: string; ua: string; platform: string; hints: string; isDefault?: boolean }[] = [
   { name: "chrome-win", ua: "Chrome/149 · Windows NT 10.0", platform: '"Windows"', hints: "low-entropy only", isDefault: true },
   { name: "chrome-mac", ua: "Chrome/149 · Intel Mac OS X 10_15_7", platform: '"macOS"', hints: "low-entropy only" },
@@ -62,11 +62,11 @@ export default function DocsPage() {
     <div className="mx-auto max-w-4xl space-y-8">
       <header className="space-y-2">
         <div className="flex items-start justify-between gap-4">
-          <h1 className="text-3xl font-bold">WatchTower documentation</h1>
+          <h1 className="text-3xl font-bold">AppSecWatch documentation</h1>
           <DocsLangToggle active="en" />
         </div>
         <p className="text-sm text-muted-foreground">
-          WatchTower is a point-in-time external <span className="font-medium">Layer-7 AppSec</span>{" "}
+          AppSecWatch is a point-in-time external <span className="font-medium">Layer-7 AppSec</span>{" "}
           audit orchestrator. Each scan writes a complete, standalone artifact set — there is no
           database and no state carried across runs.
         </p>
@@ -80,7 +80,7 @@ export default function DocsPage() {
         <nav className="flex flex-wrap gap-2">
           {TOC.map((t) => (
             <a key={t.id} href={`#${t.id}`}
-              className="rounded-lg border border-border px-3 py-1.5 text-xs text-muted-foreground transition-smooth hover:border-accent/40 hover:text-accent">
+              className="rounded-lg border border-border px-3 py-1.5 text-xs text-muted-foreground transition-smooth hover:border-primary/40 hover:text-primary">
               {t.label}
             </a>
           ))}
@@ -130,7 +130,7 @@ export default function DocsPage() {
 
       <Section id="liveness" title="Live vs dead assets">
         <p>
-          WatchTower classifies every discovered name on a single <strong>liveness</strong> axis —
+          AppSecWatch classifies every discovered name on a single <strong>liveness</strong> axis —
           there is no ownership / “in-scope vs shadow-IT” bucketing. What matters for an L7 audit is
           whether a host answers, not which network hosts its IP.
         </p>
@@ -142,7 +142,7 @@ export default function DocsPage() {
           <li>
             <Badge tone="muted">dead</Badge> — NXDOMAIN or no A records (e.g. a dangling{" "}
             <Mono>CNAME</Mono>). Not actively scanned, but watched for{" "}
-            <a href="#audit" className="text-accent hover:underline">subdomain takeover</a> via the
+            <a href="#audit" className="text-primary hover:underline">subdomain takeover</a> via the
             offline provider-fingerprint DB.
           </li>
         </ul>
@@ -157,17 +157,17 @@ export default function DocsPage() {
         <p>
           Five independent capabilities run in parallel against the live set (the dead set only
           feeds the offline takeover check). Each is bounded by the concurrency caps and the
-          chosen <a href="#throttle" className="text-accent hover:underline">throttle tier</a>.
+          chosen <a href="#throttle" className="text-primary hover:underline">throttle tier</a>.
         </p>
         <Figure caption="The audit phase. Five nodes run concurrently; none depends on another.">
           <AuditFanout />
         </Figure>
         <ul className="ml-4 list-disc space-y-1.5">
           <li><strong>Takeovers</strong> — two halves: live hosts whose CNAME chain leaves the roots are checked with <Mono>nuclei -t http/takeovers/</Mono>; the dead / dangling class is matched <strong>offline</strong> against a bundled provider-fingerprint DB (can-i-take-over-xyz) — a class nuclei structurally can&apos;t reach.</li>
-          <li><strong>TLS</strong> — <Mono>sslscan</Mono> → a per-host pass/fail <a href="#tls" className="text-accent hover:underline">scorecard</a>. Passive, so it doesn&apos;t trip WAFs.</li>
+          <li><strong>TLS</strong> — <Mono>sslscan</Mono> → a per-host pass/fail <a href="#tls" className="text-primary hover:underline">scorecard</a>. Passive, so it doesn&apos;t trip WAFs.</li>
           <li><strong>Web CVEs</strong> — <Mono>nuclei</Mono> auto-scan (templates limited to detected tech) against live web servers.</li>
           <li><strong>Security headers</strong> — deterministic, passive analysis of the response headers httpx already captured: the OWASP best-practice catalog plus a structured CSP weakness pass. No new requests.</li>
-          <li><strong>Supply chain</strong> — the Playwright/Chromium <a href="#profiling" className="text-accent hover:underline">crawler</a> (structure-only capture).</li>
+          <li><strong>Supply chain</strong> — the Playwright/Chromium <a href="#profiling" className="text-primary hover:underline">crawler</a> (structure-only capture).</li>
         </ul>
       </Section>
 
@@ -181,8 +181,8 @@ export default function DocsPage() {
           <AiFlow />
         </Figure>
         <ul className="ml-4 list-disc space-y-1.5">
-          <li><strong>ai.profile</strong> — infers what each app is (login portal, API, marketing site…) and the controls it ought to have. Input is set by <a href="#profiling" className="text-accent hover:underline"><Mono>ai.profile.render</Mono></a>.</li>
-          <li><strong>ai.triage</strong> — reviews <em>all</em> deterministic findings (nuclei / TLS / js_lib / headers / takeover) per host, soft-suppresses likely false-positives, and adds header issues the rules miss. See <a href="#suppression" className="text-accent hover:underline">Suppression</a>.</li>
+          <li><strong>ai.profile</strong> — infers what each app is (login portal, API, marketing site…) and the controls it ought to have. Input is set by <a href="#profiling" className="text-primary hover:underline"><Mono>ai.profile.render</Mono></a>.</li>
+          <li><strong>ai.triage</strong> — reviews <em>all</em> deterministic findings (nuclei / TLS / js_lib / headers / takeover) per host, soft-suppresses likely false-positives, and adds header issues the rules miss. See <a href="#suppression" className="text-primary hover:underline">Suppression</a>.</li>
           <li><strong>ai.supply-chain</strong> — risk reasoning over the crawler&apos;s scripts, each pre-labeled 1st/3rd-party <strong>in Python</strong> (the LLM never decides party-ness), weighted by the profile.</li>
         </ul>
         <Callout>
@@ -326,7 +326,7 @@ export default function DocsPage() {
                 <tr key={p.name} className="border-b border-border/50">
                   <td>
                     <Mono>{p.name}</Mono>
-                    {p.isDefault && <span className="ml-1.5 text-[10px] text-accent">default</span>}
+                    {p.isDefault && <span className="ml-1.5 text-[10px] text-primary">default</span>}
                   </td>
                   <td className="text-muted-foreground">{p.ua}</td>
                   <td className="font-mono">{p.platform}</td>
@@ -502,16 +502,16 @@ function ReconFlow() {
       <Arrow dir="down" />
 
       {/* the DNS → TLS re-discovery loop, drawn as a cycle with a return wire */}
-      <div className="relative w-full max-w-sm rounded-lg border border-dashed border-accent/50 px-3 pb-3 pt-4">
-        <span className="absolute -top-2 left-1/2 -translate-x-1/2 whitespace-nowrap bg-card px-1.5 text-[10px] font-medium text-accent">
+      <div className="relative w-full max-w-sm rounded-lg border border-dashed border-primary/50 px-3 pb-3 pt-4">
+        <span className="absolute -top-2 left-1/2 -translate-x-1/2 whitespace-nowrap bg-card px-1.5 text-[10px] font-medium text-primary">
           🔁 DNS → TLS re-discovery loop · ≤ 3×
         </span>
         <div className="flex items-stretch gap-3">
           {/* return wire: tlsx (bottom) → dnsx (top) */}
           <div className="relative flex w-5 flex-col items-center">
-            <span className="text-sm leading-none text-accent">▲</span>
-            <div className="w-px flex-1 bg-accent/50" />
-            <span className="absolute top-1/2 -translate-y-1/2 text-[9px] uppercase tracking-wide text-accent [writing-mode:vertical-rl] rotate-180">
+            <span className="text-sm leading-none text-primary">▲</span>
+            <div className="w-px flex-1 bg-primary/50" />
+            <span className="absolute top-1/2 -translate-y-1/2 text-[9px] uppercase tracking-wide text-primary [writing-mode:vertical-rl] rotate-180">
               new SANs
             </span>
           </div>

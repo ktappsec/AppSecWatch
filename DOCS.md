@@ -1,6 +1,6 @@
-# WatchTower — Overview
+# AppSecWatch — Overview
 
-WatchTower is an automated, **point-in-time, single-run** external AppSec audit
+AppSecWatch is an automated, **point-in-time, single-run** external AppSec audit
 orchestrator. It runs a modular async pipeline of recon and audit tools, augments
 the results with a pluggable local LLM, and renders everything into a single
 self-contained HTML report. There is **no database, no delta tracking, and no
@@ -38,7 +38,7 @@ set under `runs/<id>/`.
 
 ## What it is (and is not)
 
-WatchTower answers one question per run: **"what does my external attack surface
+AppSecWatch answers one question per run: **"what does my external attack surface
 look like right now, and what's wrong with it?"** It is a **Layer-7 AppSec tool** —
 it cares whether a host *answers* and what that host *exposes*, not which network
 owns the IP behind it.
@@ -50,7 +50,7 @@ owns the IP behind it.
 | Passive / low-touch by default (no exploitation) | A pen-test framework or active exploit runner |
 | LLM-augmented, but **LLM never gates a scanner** | LLM-driven (deterministic tools always run; AI only annotates / suppresses) |
 
-The **Web API + UI** layer (`watchtower/api/`, `web/`) adds a cross-run relational
+The **Web API + UI** layer (`appsecwatch/api/`, `web/`) adds a cross-run relational
 layer on top — assets, schedules, suppressions, history — in SQLite. The engine
 and CLI stay DB-free; only the server writes to the DB.
 
@@ -156,7 +156,7 @@ reachable estate — bounded to 3 iterations to guarantee termination.
 
 ## Liveness model — `live` vs `dead`
 
-WatchTower classifies every discovered name on a **single liveness axis**. There is
+AppSecWatch classifies every discovered name on a **single liveness axis**. There is
 deliberately *no* ownership bucketing — what matters for an L7 audit is whether a
 host answers, not whose network hosts its IP.
 
@@ -327,9 +327,9 @@ only the AI annotations were missing.) System prompts are overridable via
 override can't break the contract.
 
 **Cost attribution.** Every LLM request is named for the provider's logs via the
-`X-Title` header (`llm.app_title`, default `WatchTower`) and an optional
+`X-Title` header (`llm.app_title`, default `AppSecWatch`) and an optional
 `HTTP-Referer` (`llm.app_url`). With `llm.tag_requests` on (default), the call's
-purpose is appended to the title — `WatchTower: profile` / `: triage` / `: supply`
+purpose is appended to the title — `AppSecWatch: profile` / `: triage` / `: supply`
 / `: nuclei-gen` — so on **OpenRouter** you can see exactly which call type spent
 what; on an `openrouter.ai` endpoint the OpenAI `user` field also carries the full
 per-host label for per-target breakdown. The headers are ignored by backends that
@@ -512,7 +512,7 @@ with `--compress` (default) only the bulk per-stage subdirectories are tar+gzipp
 ```
 runs/<id>/
 ├── config.snapshot.yaml          # the exact resolved config for this run
-├── versions.json                 # tool versions, model, MMDB path, watchtower sha
+├── versions.json                 # tool versions, model, MMDB path, appsecwatch sha
 ├── manifest.json                 # capability coverage: ran / skipped + reason
 ├── run.log.jsonl                 # always-on structured event log (incl. run_summary)
 ├── errors.json                   # consolidated failures: stage crashes + per-host
@@ -571,7 +571,7 @@ nuclei), sslscan, Playwright + Chromium, and the Python deps.
 > in the image, not from memory.
 
 A MaxMind GeoLite2-ASN MMDB can be **bind-mounted** to enable ASN/org enrichment, but
-it is **optional** — scans run without it. `watchtower verify-deps` checks the
+it is **optional** — scans run without it. `appsecwatch verify-deps` checks the
 toolchain, Python modules, and (optionally) the MMDB + LLM endpoint before a run.
 
 See **`API.md`** for the full CLI (`scan`, `serve`, `init-config`, `verify-deps`), the
@@ -581,20 +581,20 @@ YAML config schema, the run-directory layout, and the Python API.
 
 ## Web API & UI
 
-WatchTower can also run as an authenticated HTTP service exposing the same engine to
+AppSecWatch can also run as an authenticated HTTP service exposing the same engine to
 other systems and to a web UI.
 
 ```mermaid
 flowchart LR
     UI[web/ Next.js UI] -->|Bearer key| API
     EXT[other systems] -->|REST| API
-    API["watchtower serve<br/>(FastAPI, /api)"] --> ENGINE[run_scan engine]
+    API["appsecwatch serve<br/>(FastAPI, /api)"] --> ENGINE[run_scan engine]
     ENGINE --> RUNS[(runs/&lt;id&gt;/)]
     API --> DB[("SQLite:<br/>assets · scans · schedules ·<br/>suppressions · nuclei catalog")]
     SCHED[scheduler loop] --> API
 ```
 
-- **`watchtower serve -c server.yaml`** — a FastAPI app shipped in the same image
+- **`appsecwatch serve -c server.yaml`** — a FastAPI app shipped in the same image
   (`pip install '.[web]'`). It reuses the async runner **in-process** with an injected
   `run_dir` + shared `ScanState` for live progress, keeps `runs/` as the durable
   record, and rebuilds its job index from disk on startup. Endpoints include
@@ -607,9 +607,9 @@ flowchart LR
   config is editable; `llm.api_key` persists in the store (write-only — masked on GET).
 - **No scan-target allowlist** — the per-request `roots` is the only scope. A scan is
   gated at submit on a *valid* base config (LLM endpoint; MMDB is optional) →
-  `409 not_configured` until set. With auth **OPEN** (no `WATCHTOWER_API_KEYS`) there
+  `409 not_configured` until set. With auth **OPEN** (no `APPSECWATCH_API_KEYS`) there
   is **no** server-side scope ceiling, so keep API keys set before exposing it.
-- **SQLite** (`<output_root>/watchtower.db`) is the cross-run relational layer
+- **SQLite** (`<output_root>/appsecwatch.db`) is the cross-run relational layer
   (server-only; engine + CLI stay DB-free): `assets` (FQDN-keyed inventory with
   liveness, profile, finding counts, EASM surface), `scans` (history index),
   `schedules`, `suppressions`, and the nuclei template catalog / custom templates.
@@ -621,7 +621,7 @@ flowchart LR
   Assets / Suppressions / Schedules / AI-Tuning / Settings pages, and an in-app docs
   page. It must stay **static-export-safe** so FastAPI can serve the built `out/` from
   one image.
-- **Single image** — the `Dockerfile` statically exports the UI and `watchtower serve`
+- **Single image** — the `Dockerfile` statically exports the UI and `appsecwatch serve`
   serves it at `/` with the API under `/api` (same origin). One `docker run … serve`
   ships both; the UI can also run standalone against a remote API.
 

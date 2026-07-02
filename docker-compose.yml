@@ -1,36 +1,36 @@
-# WatchTower single-image deployment with PERSISTENT state.
+# AppSecWatch single-image deployment with PERSISTENT state.
 #
-# The named volume `watchtower-data` is mounted at /data/runs (the output_root) —
+# The named volume `appsecwatch-data` is mounted at /data/runs (the output_root) —
 # it holds runs/<id>/ artifacts, the config store (.config/server-config.json),
-# and watchtower.db. A named volume survives `docker compose up --build` and
+# and appsecwatch.db. A named volume survives `docker compose up --build` and
 # `docker rm`, so config + assets are NOT wiped on rebuild (the common gotcha).
 #
 # Usage:
-#   echo "my-secret-key" > api.key   (or set WATCHTOWER_API_KEYS inline)
+#   echo "my-secret-key" > api.key   (or set APPSECWATCH_API_KEYS inline)
 #   docker compose up --build
 #   → UI at http://localhost:8080/ , API at /api/...
 #
 # Bind-mount the MMDB (GeoLite2-ASN) read-only so triage/ASN lookups work.
 
 services:
-  watchtower:
+  appsecwatch:
     build: .
-    image: watchtower
+    image: appsecwatch
     command: ["serve", "--host", "0.0.0.0", "--port", "8080"]
     ports:
       - "8080:8080"
     environment:
       # REQUIRED before exposing the server — without it auth is OPEN (no scope ceiling).
-      WATCHTOWER_API_KEYS: "${WATCHTOWER_API_KEYS:?set WATCHTOWER_API_KEYS}"
+      APPSECWATCH_API_KEYS: "${APPSECWATCH_API_KEYS:?set APPSECWATCH_API_KEYS}"
       # Optional webhook HMAC secret.
-      # WATCHTOWER_WEBHOOK_SECRET: "..."
+      # APPSECWATCH_WEBHOOK_SECRET: "..."
     volumes:
-      - watchtower-data:/data/runs                       # persistent: runs + .config + watchtower.db
+      - appsecwatch-data:/data/runs                       # persistent: runs + .config + appsecwatch.db
       - ./mmdb:/data/mmdb:ro                            # GeoLite2-ASN.mmdb (set mmdb_path in the UI)
     restart: unless-stopped
 
   # OPTIONAL OWASP ZAP sidecar — only needed for the opt-in `zap` active-scan
-  # capability. The heavy Java daemon stays OUT of the watchtower image; watchtower
+  # capability. The heavy Java daemon stays OUT of the appsecwatch image; appsecwatch
   # drives it over REST at http://zap:8090. NOT published to the host (internal
   # only). To enable: set ZAP_API_KEY, then in the UI Settings set the zap config
   # (enabled: true, base_url: http://zap:8090, api_key: <ZAP_API_KEY>).
@@ -46,4 +46,4 @@ services:
     restart: unless-stopped
 
 volumes:
-  watchtower-data:
+  appsecwatch-data:

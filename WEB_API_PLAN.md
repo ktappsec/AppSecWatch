@@ -1,13 +1,13 @@
-# WatchTower Web API — Implementation Plan
+# AppSecWatch Web API — Implementation Plan
 
-> **Status:** Implemented in `watchtower/api/` (+ `watchtower serve`, tests in
+> **Status:** Implemented in `appsecwatch/api/` (+ `appsecwatch serve`, tests in
 > `tests/test_api.py`). A Next.js UI over this API lives in `web/`. This document
 > remains the design reference; where it and the code disagree, the code wins.
-> **Goal:** Expose WatchTower as an authenticated HTTP service so other systems can
+> **Goal:** Expose AppSecWatch as an authenticated HTTP service so other systems can
 > submit scans, track progress, and retrieve results/reports remotely.
 > **Scope:** v1. Reuses the existing async runner (`run_scan`)
 > and Pydantic config/models. Ships in the **same Docker image** via a new
-> `watchtower serve` subcommand.
+> `appsecwatch serve` subcommand.
 
 The tool is currently CLI + Python-API only: an asyncio runner over subprocess
 tools, single-run, writing to a `runs/` directory and rendering a single-file
@@ -25,14 +25,14 @@ change the scan engine.
 | 3 | Job state | **`job.json` per run dir** + in-memory index. On startup, glob `runs/*/job.json`; a record left `running` with no live task → `interrupted`. | Keeps the "no DB, `runs/` is truth" ethos; each run is self-describing. |
 | 4 | Config delivery | **Server-side base config + minimal per-request params** (mode, target/roots, only/skip, throttle, compress). | Secrets (LLM api_key) and the optional MMDB path stay server-side; callers send tiny payloads. |
 | 5 | Auth | **Static API key(s)** via `Authorization: Bearer <key>` (also accept `X-API-Key`); constant-time compare; multiple keys for per-caller revocation; 401 on missing/invalid. | Simple, sufficient for service-to-service; no identity provider. |
-| 6 | Scan scope | **No scan-target allowlist (REVISED).** The per-request `roots` is the only scope (the UI specifies the domain per scan). A scan is gated only on a *valid* base config (the llm endpoint set; mmdb is optional and not part of the gate) → `409 not_configured`, not on a target allowlist. | Operator chose ZAP-like UX (UI-only, scope = the domain you enter). Trade-off: with auth OPEN there is no server-side scope ceiling — keep `WATCHTOWER_API_KEYS` set. |
+| 6 | Scan scope | **No scan-target allowlist (REVISED).** The per-request `roots` is the only scope (the UI specifies the domain per scan). A scan is gated only on a *valid* base config (the llm endpoint set; mmdb is optional and not part of the gate) → `409 not_configured`, not on a target allowlist. | Operator chose ZAP-like UX (UI-only, scope = the domain you enter). Trade-off: with auth OPEN there is no server-side scope ceiling — keep `APPSECWATCH_API_KEYS` set. |
 | 7 | Endpoints | Standard REST + **machine-readable JSON result**. | Callers consume findings as JSON, not by scraping HTML. |
 | 8 | Progress | **Polling** — rich status (state, current stage, completed_stages, elapsed, finding count); `GET /scans/{id}/log?tail=N`. | Most robust/proxy-friendly; no long-lived connections. SSE is a documented follow-on. |
 | 9 | Callbacks | **Optional HMAC-signed webhook** on terminal state + SSRF guards (callback-host allowlist, short timeout, no redirect-following, failures logged not retried forever); callers without `callback_url` just poll. | Fire-and-forget for long scans without an SSRF foot-gun. |
 | 10 | Backpressure | **Bounded concurrency (`max_concurrent_scans`, default 2) + bounded queue (`max_queue_depth`)**; 429 + `Retry-After` only when **both** are full. | Each scan is itself highly parallel; smooth backpressure without callers babysitting retries. |
 | 11 | Cancel | `POST /scans/{id}/cancel`: queued → dropped; running → **cancel task + kill child process group** (so nuclei/sslscan actually stop), then render a **partial** report + manifest. | Kill-switch for a scan that starts tripping a target's WAF; keeps what ran. |
-| 12 | Packaging | **`watchtower serve` subcommand, same image** (+ `fastapi`, `uvicorn[standard]` deps). | Server runs scans in-process, so it needs the full toolchain the image already bundles. |
-| 13 | Server config | **UI-managed, store-primary** (REVISED — see §4). `serve -c` is optional; `server.yaml` only *seeds* first boot; a writable JSON store (`WATCHTOWER_CONFIG_STORE`) is the source of truth, editable at runtime via `GET`/`PUT /config`. The full scan config is UI-editable; `llm.api_key` is UI-managed and persists in the store (masked on read). Only `WATCHTOWER_API_KEYS` + `WATCHTOWER_WEBHOOK_SECRET` stay env-only. | Operator chose the UI as the primary manager; the YAML is a bootstrap seed that may later be dropped. Trade-off: the LLM secret sits at rest in the store. |
+| 12 | Packaging | **`appsecwatch serve` subcommand, same image** (+ `fastapi`, `uvicorn[standard]` deps). | Server runs scans in-process, so it needs the full toolchain the image already bundles. |
+| 13 | Server config | **UI-managed, store-primary** (REVISED — see §4). `serve -c` is optional; `server.yaml` only *seeds* first boot; a writable JSON store (`APPSECWATCH_CONFIG_STORE`) is the source of truth, editable at runtime via `GET`/`PUT /config`. The full scan config is UI-editable; `llm.api_key` is UI-managed and persists in the store (masked on read). Only `APPSECWATCH_API_KEYS` + `APPSECWATCH_WEBHOOK_SECRET` stay env-only. | Operator chose the UI as the primary manager; the YAML is a bootstrap seed that may later be dropped. Trade-off: the LLM secret sits at rest in the store. |
 | 14 | Idempotency | **`Idempotency-Key` header** → repeat returns the same job (200, not a new 202); plus **in-flight dedupe** by (target + params) for identical queued/running scans. | Retry-safe; prevents a retry storm becoming N concurrent scans of the same target. |
 
 ---
@@ -52,7 +52,7 @@ POST /scans  (Authorization: Bearer <key>, optional Idempotency-Key, optional ca
   │
   └─ create job:
        • make run dir, write job.json {state: queued}
-       • merge per-request params over server base config → WatchTowerConfig
+       • merge per-request params over server base config → AppSecWatchConfig
        • enqueue; asyncio task started when a semaphore slot frees
        • 202 Accepted { id, state, links{self, result, report, log, cancel} }
 ```
@@ -126,14 +126,14 @@ running ─(process restart mid-scan)───▶ interrupted   (set at next sta
 
 ## 4. Server configuration
 
-`ServerConfig` (new Pydantic model, `watchtower/api/config.py`):
+`ServerConfig` (new Pydantic model, `appsecwatch/api/config.py`):
 
 `serve -c` is **optional**. With no file the server boots UI-managed (config from
 the store / UI). When given, the YAML only *seeds* first boot:
 
 ```yaml
 # server.yaml — OPTIONAL bootstrap seed (the store is authoritative afterward)
-base_config: /etc/watchtower/scan.yaml   # path to a WatchTowerConfig (mmdb/llm/tools) — optional
+base_config: /etc/appsecwatch/scan.yaml   # path to a AppSecWatchConfig (mmdb/llm/tools) — optional
 # — or — inline base config under `base_config:` as a mapping
 bind:
   host: 0.0.0.0
@@ -151,13 +151,13 @@ docs_enabled: true                      # expose /docs + /openapi.json (behind a
 Secrets / paths via env:
 | Env var | Purpose |
 |---|---|
-| `WATCHTOWER_API_KEYS` | comma-separated API keys (the API's own auth — **env-only**) |
-| `WATCHTOWER_WEBHOOK_SECRET` | HMAC-SHA256 signing secret for webhooks (**env-only**) |
-| `WATCHTOWER_LLM_API_KEY` | *seeds* `base_config.llm.api_key` on first boot; thereafter UI-managed (persists in the store) |
-| `WATCHTOWER_CONFIG_STORE` | path to the writable runtime store (default `<output_root>/.config/server-config.json`) |
+| `APPSECWATCH_API_KEYS` | comma-separated API keys (the API's own auth — **env-only**) |
+| `APPSECWATCH_WEBHOOK_SECRET` | HMAC-SHA256 signing secret for webhooks (**env-only**) |
+| `APPSECWATCH_LLM_API_KEY` | *seeds* `base_config.llm.api_key` on first boot; thereafter UI-managed (persists in the store) |
+| `APPSECWATCH_CONFIG_STORE` | path to the writable runtime store (default `<output_root>/.config/server-config.json`) |
 
 No scan-target allowlist. The server boots even fully unconfigured (no file,
-empty base config); a scan is gated at submit on a valid `WatchTowerConfig` (the
+empty base config); a scan is gated at submit on a valid `AppSecWatchConfig` (the
 llm endpoint set — mmdb is optional and not part of the gate) → `409
 not_configured` until the operator sets it via `PUT /config`.
 
@@ -354,8 +354,8 @@ On terminal state, if `callback_url` was supplied and its host is in
 ```
 POST <callback_url>
   Content-Type: application/json
-  X-WatchTower-Event: scan.completed | scan.failed | scan.cancelled
-  X-WatchTower-Signature: sha256=<hex HMAC-SHA256(body, WATCHTOWER_WEBHOOK_SECRET)>
+  X-AppSecWatch-Event: scan.completed | scan.failed | scan.cancelled
+  X-AppSecWatch-Signature: sha256=<hex HMAC-SHA256(body, APPSECWATCH_WEBHOOK_SECRET)>
   body: { id, state, finished_at, finding_count, result_url, report_url, executive_url }
 ```
 
@@ -368,7 +368,7 @@ SSRF guards: host must be allowlisted; resolve + connect with a short timeout;
 ## 7. Module layout
 
 ```
-watchtower/api/
+appsecwatch/api/
 ├── __init__.py
 ├── config.py     # ServerConfig (+ env secret overlay, base_config load/validate)
 ├── auth.py       # API-key dependency (constant-time compare → 401)
@@ -381,7 +381,7 @@ watchtower/api/
 ```
 
 ### Touched files
-- `cli.py` — add `serve` subcommand (lazy-import `watchtower.api.server`) → `uvicorn.run(app, host, port)`.
+- `cli.py` — add `serve` subcommand (lazy-import `appsecwatch.api.server`) → `uvicorn.run(app, host, port)`.
 - `util/subproc.py` — `start_new_session=True`; kill **process group** on timeout *and* `CancelledError`.
 - `runner.py` — expose `current_stage`/`completed_stages` progress hook the JobManager can read (the stage driver already tracks `completed_stages` in `ScanState`; surface it live).
 - `pyproject.toml` — add `fastapi>=0.110`, `uvicorn[standard]>=0.29`.
@@ -399,7 +399,7 @@ need no external tools:
 - **backpressure** — fill running+queue → 429 with `Retry-After`.
 - **lifecycle** — submit → status `queued`→`running`→`completed`; `/result` 409 before finish, JSON after.
 - **cancel** — queued → cancelled; running → cancelled + partial (mock asserts task cancellation + killpg called).
-- **webhook** — on completion, callback POSTed with correct `X-WatchTower-Signature`; non-allowlisted host skipped.
+- **webhook** — on completion, callback POSTed with correct `X-AppSecWatch-Signature`; non-allowlisted host skipped.
 - **reindex** — pre-seed `runs/*/job.json` with `running`; startup → `interrupted`.
 - **validation** — `only`+`skip` together → 422; missing `roots` → 422.
 
@@ -411,12 +411,12 @@ need no external tools:
 docker run --rm -p 8080:8080 \
   -v "$PWD/mmdb:/data/mmdb:ro" \
   -v "$PWD/runs:/data/runs" \
-  -v "$PWD/server.yaml:/etc/watchtower/server.yaml:ro" \
-  -v "$PWD/scan.yaml:/etc/watchtower/scan.yaml:ro" \
-  -e WATCHTOWER_API_KEYS="$(cat ./api.key)" \
-  -e WATCHTOWER_WEBHOOK_SECRET="$(cat ./wh.secret)" \
+  -v "$PWD/server.yaml:/etc/appsecwatch/server.yaml:ro" \
+  -v "$PWD/scan.yaml:/etc/appsecwatch/scan.yaml:ro" \
+  -e APPSECWATCH_API_KEYS="$(cat ./api.key)" \
+  -e APPSECWATCH_WEBHOOK_SECRET="$(cat ./wh.secret)" \
   --add-host=host.docker.internal:host-gateway \
-  watchtower serve -c /etc/watchtower/server.yaml --host 0.0.0.0 --port 8080
+  appsecwatch serve -c /etc/appsecwatch/server.yaml --host 0.0.0.0 --port 8080
 ```
 
 Example call:

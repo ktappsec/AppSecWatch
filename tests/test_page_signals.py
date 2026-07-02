@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import base64
 
-from watchtower.recon.page_signals import parse_page_signals
-from watchtower.recon.web_probe import parse_httpx_records
+from appsecwatch.recon.page_signals import parse_page_signals
+from appsecwatch.recon.web_probe import parse_httpx_records
 
 _RAW = (
     "HTTP/1.1 200 OK\r\n"

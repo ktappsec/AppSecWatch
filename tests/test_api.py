@@ -1,6 +1,6 @@
 """Web API tests — scan execution is mocked, so no external tools are needed.
 
-`run_scan` is monkeypatched in `watchtower.api.jobs` (where it is imported by name).
+`run_scan` is monkeypatched in `appsecwatch.api.jobs` (where it is imported by name).
 The fake populates the injected ScanState and writes a report.html so the
 result/report/lifecycle paths are exercised end-to-end through the real
 JobManager, FastAPI app, auth, allowlist, and idempotency code.
@@ -14,10 +14,10 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from watchtower.api.config import ServerConfig
-from watchtower.api.security import callback_host_allowed, sign_webhook
-from watchtower.api.server import create_app
-from watchtower.models import Finding
+from appsecwatch.api.config import ServerConfig
+from appsecwatch.api.security import callback_host_allowed, sign_webhook
+from appsecwatch.api.server import create_app
+from appsecwatch.models import Finding
 
 API_KEY = "secret-key-1"
 H = {"Authorization": f"Bearer {API_KEY}"}
@@ -70,7 +70,7 @@ def _make_fake_run(*, findings=1, block_event=None, fail=False):
 
 def _client(tmp_path, monkeypatch, fake_run=None, config=None):
     fake_run = fake_run or _make_fake_run()
-    monkeypatch.setattr("watchtower.api.jobs.run_scan", fake_run)
+    monkeypatch.setattr("appsecwatch.api.jobs.run_scan", fake_run)
     app = create_app(config or _server_config(tmp_path))
     return TestClient(app)
 
@@ -459,7 +459,7 @@ def test_nuclei_catalog_and_reindex(tmp_path, monkeypatch):
 
 
 def test_nuclei_custom_crud(tmp_path, monkeypatch):
-    import watchtower.api.nuclei_custom as ncmod
+    import appsecwatch.api.nuclei_custom as ncmod
     monkeypatch.setattr(ncmod.subprocess, "run",
                         lambda *a, **k: (_ for _ in ()).throw(FileNotFoundError()))
     with _client(tmp_path, monkeypatch) as client:
@@ -561,7 +561,7 @@ def test_llm_api_key_is_write_only(tmp_path, monkeypatch):
 
 def test_put_invalid_config_422(tmp_path, monkeypatch):
     with _client(tmp_path, monkeypatch) as client:
-        # llm.base_url is required by WatchTowerConfig → validation fails
+        # llm.base_url is required by AppSecWatchConfig → validation fails
         r = client.put("/config", json={
             "base_config": {"mmdb_path": "/dev/null", "llm": {"model": "m"}},
         }, headers=H)
@@ -591,9 +591,9 @@ def test_config_requires_auth(tmp_path, monkeypatch):
 def test_serve_with_no_config_file_boots_unconfigured(monkeypatch):
     # `serve` with no -c: load_server_config(None) must build a usable, empty,
     # allowlist-free ServerConfig (the UI-managed / store-primary path).
-    from watchtower.api.config import load_server_config
-    monkeypatch.delenv("WATCHTOWER_LLM_API_KEY", raising=False)
-    monkeypatch.delenv("WATCHTOWER_API_KEYS", raising=False)
+    from appsecwatch.api.config import load_server_config
+    monkeypatch.delenv("APPSECWATCH_LLM_API_KEY", raising=False)
+    monkeypatch.delenv("APPSECWATCH_API_KEYS", raising=False)
     cfg = load_server_config(None)
     assert cfg.base_config_raw == {}
     assert not hasattr(cfg, "allowed_roots")  # the allowlist concept is gone
@@ -787,7 +787,7 @@ def test_callback_host_allowlist():
 async def test_send_webhook_skips_non_allowlisted(tmp_path, monkeypatch):
     import httpx
 
-    from watchtower.api import security
+    from appsecwatch.api import security
 
     cfg = _server_config(tmp_path)
 
@@ -806,7 +806,7 @@ def test_webhook_fired_on_completion(tmp_path, monkeypatch):
     async def fake_send(server, url, event, payload):
         calls.append((url, event, payload))
 
-    monkeypatch.setattr("watchtower.api.jobs.send_webhook", fake_send)
+    monkeypatch.setattr("appsecwatch.api.jobs.send_webhook", fake_send)
     with _client(tmp_path, monkeypatch) as client:
         job_id = client.post(
             "/scans",

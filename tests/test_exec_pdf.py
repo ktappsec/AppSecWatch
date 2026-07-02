@@ -7,11 +7,11 @@ import sys
 
 import pytest
 
-from watchtower.config import LLMConfig, ReportConfig, WatchTowerConfig
-from watchtower.stages.base import Stage
-from watchtower.stages.exec_pdf import ExecPdfStage
-from watchtower.stages.pipeline import build_pipeline
-from watchtower.stages.state import ScanState
+from appsecwatch.config import LLMConfig, ReportConfig, AppSecWatchConfig
+from appsecwatch.stages.base import Stage
+from appsecwatch.stages.exec_pdf import ExecPdfStage
+from appsecwatch.stages.pipeline import build_pipeline
+from appsecwatch.stages.state import ScanState
 
 
 class _Log:
@@ -29,8 +29,8 @@ class _Dummy(Stage):
         pass
 
 
-def _cfg() -> WatchTowerConfig:
-    return WatchTowerConfig(
+def _cfg() -> AppSecWatchConfig:
+    return AppSecWatchConfig(
         roots=["example.com"], mmdb_path="/dev/null",
         llm=LLMConfig(base_url="http://localhost/v1", model="m"),
     )

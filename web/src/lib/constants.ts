@@ -1,37 +1,73 @@
 import type { Severity, JobState } from "./types";
 
-/** Severity colors — semantic constants used in dashboard charts + badges. */
+/** Severity colors — CSS-var references to the `--sev-*` tokens in globals.css.
+ * Theme-aware (light/dark) and safe as recharts fills / inline styles. */
 export const SEVERITY_COLORS: Record<string, string> = {
-  critical: "#ff1744",
-  high: "#ff6d00",
-  medium: "#ffd600",
-  low: "#00c853",
-  info: "#0ea5e9",
+  critical: "var(--sev-critical)",
+  high: "var(--sev-high)",
+  medium: "var(--sev-medium)",
+  low: "var(--sev-low)",
+  info: "var(--sev-info)",
+};
+
+/** Severity → Tailwind utility classes (literal strings so v4 can scan them).
+ * `badge` keeps the label text neutral (foreground) and carries the vivid severity
+ * color in the dot + border + tint, so the palette reads on the light surface too.
+ * `text` is the raw colored-text variant — use only on dark/contrasting surfaces. */
+export const SEVERITY_CLASSES: Record<
+  string,
+  { text: string; badge: string; dot: string }
+> = {
+  critical: {
+    text: "text-sev-critical",
+    badge: "border-sev-critical/50 bg-sev-critical/10",
+    dot: "bg-sev-critical",
+  },
+  high: {
+    text: "text-sev-high",
+    badge: "border-sev-high/50 bg-sev-high/10",
+    dot: "bg-sev-high",
+  },
+  medium: {
+    text: "text-sev-medium",
+    badge: "border-sev-medium/60 bg-sev-medium/15",
+    dot: "bg-sev-medium",
+  },
+  low: {
+    text: "text-sev-low",
+    badge: "border-sev-low/50 bg-sev-low/10",
+    dot: "bg-sev-low",
+  },
+  info: {
+    text: "text-sev-info",
+    badge: "border-sev-info/50 bg-sev-info/10",
+    dot: "bg-sev-info",
+  },
 };
 
 export const SEVERITY_ORDER: Severity[] = ["critical", "high", "medium", "low", "info"];
 
 export const CHART_COLORS = {
-  critical: "#ff1744",
-  high: "#ff6d00",
-  medium: "#ffd600",
-  low: "#00c853",
-  info: "#0ea5e9",
-  purple: "#d946ef",
-  pink: "#ec4899",
-  blue: "#0ea5e9",
-  cyan: "#06b6d4",
-  teal: "#14b8a6",
+  critical: "var(--sev-critical)",
+  high: "var(--sev-high)",
+  medium: "var(--sev-medium)",
+  low: "var(--sev-low)",
+  info: "var(--sev-info)",
+  purple: "var(--chart-1)",
+  pink: "var(--chart-5)",
+  blue: "var(--chart-3)",
+  cyan: "var(--chart-3)",
+  teal: "var(--chart-4)",
 } as const;
 
-/** state → tailwind-ish text/bg classes for status badges. */
+/** state → token-driven text/bg classes for status badges. */
 export const STATE_STYLES: Record<JobState, { label: string; className: string; dot: string }> = {
   queued: { label: "Queued", className: "text-muted-foreground border-border", dot: "bg-muted-foreground" },
-  running: { label: "Running", className: "text-accent border-accent/40", dot: "bg-accent animate-pulse" },
-  completed: { label: "Completed", className: "text-[#00c853] border-[#00c853]/40", dot: "bg-[#00c853]" },
+  running: { label: "Running", className: "text-primary border-primary/40", dot: "bg-primary animate-pulse" },
+  completed: { label: "Completed", className: "text-success border-success/40", dot: "bg-success" },
   failed: { label: "Failed", className: "text-destructive border-destructive/40", dot: "bg-destructive" },
-  cancelled: { label: "Cancelled", className: "text-[#ff6d00] border-[#ff6d00]/40", dot: "bg-[#ff6d00]" },
-  interrupted: { label: "Interrupted", className: "text-[#ffd600] border-[#ffd600]/40", dot: "bg-[#ffd600]" },
+  cancelled: { label: "Cancelled", className: "text-warning border-warning/40", dot: "bg-warning" },
+  interrupted: { label: "Interrupted", className: "text-sev-medium border-sev-medium/40", dot: "bg-sev-medium" },
 };
 
 export const TERMINAL_STATES: JobState[] = ["completed", "failed", "cancelled", "interrupted"];

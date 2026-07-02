@@ -1,8 +1,8 @@
 """Deterministic dangling-CNAME takeover detection (audit/takeover_fingerprints)."""
 from __future__ import annotations
 
-from watchtower.audit.takeover_fingerprints import scan_cname_takeovers
-from watchtower.models import TriagedAsset
+from appsecwatch.audit.takeover_fingerprints import scan_cname_takeovers
+from appsecwatch.models import TriagedAsset
 
 
 def _dead(fqdn: str, cname_chain: list[str]) -> TriagedAsset:

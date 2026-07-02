@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import types
 
-from watchtower.audit.js_libs import _affected, _extract_version, scan_scripts
+from appsecwatch.audit.js_libs import _affected, _extract_version, scan_scripts
 
 
 def art(host, urls):

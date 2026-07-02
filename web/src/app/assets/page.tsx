@@ -11,7 +11,20 @@ import { Input } from "@/components/ui/input";
 import {
   Table, TableHeader, TableBody, TableRow, TableHead, TableCell,
 } from "@/components/ui/table";
-import { SeverityBadge } from "@/components/badges";
+import { SeverityBadge, SeverityCounts } from "@/components/badges";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
+} from "@/components/ui/select";
+import { ListSkeleton } from "@/components/ui/skeleton";
+import { InlineError } from "@/components/api-error-state";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
+} from "@/components/ui/dialog";
+import {
+  AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction,
+} from "@/components/ui/alert-dialog";
 import { toast } from "@/components/ui/sonner";
 import { cn } from "@/lib/utils";
 import { api, ApiError } from "@/lib/api";
@@ -20,28 +33,14 @@ import { relativeTime } from "@/lib/format";
 import type { Asset, Finding } from "@/lib/types";
 
 const STATUS_STYLE: Record<string, string> = {
-  live: "text-[#00c853] border-[#00c853]/40",
+  live: "text-success border-success/40",
   dead: "text-muted-foreground border-border",
 };
 
-const SEV_DOT: Record<string, string> = {
-  critical: "bg-[#d11a2a]", high: "bg-[#ff4d4f]", medium: "bg-[#ff8a3d]",
-  low: "bg-[#facc15]", info: "bg-[#5b9bd5]",
-};
-
 function FindingCounts({ counts }: { counts?: Record<string, number> }) {
-  const order = ["critical", "high", "medium", "low", "info"];
-  const present = order.filter((s) => (counts?.[s] ?? 0) > 0);
-  if (!present.length) return <span className="text-xs text-muted-foreground">—</span>;
-  return (
-    <span className="flex flex-wrap items-center gap-1">
-      {present.map((s) => (
-        <span key={s} title={s} className="inline-flex items-center gap-1 text-[11px]">
-          <span className={cn("h-2 w-2 rounded-full", SEV_DOT[s])} />{counts![s]}
-        </span>
-      ))}
-    </span>
-  );
+  const total = Object.values(counts ?? {}).reduce((a, b) => a + b, 0);
+  if (!total) return <span className="text-xs text-muted-foreground">—</span>;
+  return <SeverityCounts counts={counts ?? {}} />;
 }
 
 export default function AssetsPage() {
@@ -136,18 +135,24 @@ export default function AssetsPage() {
   const selectMany = (fqdns: string[], on: boolean) =>
     setSelected((s) => { const n = new Set(s); fqdns.forEach((f) => (on ? n.add(f) : n.delete(f))); return n; });
 
+  const [deleteOpen, setDeleteOpen] = React.useState(false);
+  const [groupOpen, setGroupOpen] = React.useState(false);
+  const [groupValue, setGroupValue] = React.useState("");
+
   const bulkDelete = async () => {
-    if (!selected.size || !window.confirm(`Delete ${selected.size} asset(s)?`)) return;
+    setDeleteOpen(false);
+    if (!selected.size) return;
     try {
       const r = await api.bulkAssets({ action: "delete", fqdns: [...selected] });
       toast.success(`Deleted ${r.affected}`); setSelected(new Set()); load();
     } catch (e) { toast.error(e instanceof ApiError ? e.message : "Bulk delete failed"); }
   };
   const bulkSetGroup = async () => {
-    const g = window.prompt("Set group (iştirak) for selected assets:");
-    if (g === null) return;
+    setGroupOpen(false);
     try {
-      const r = await api.bulkAssets({ action: "set_group", fqdns: [...selected], group: g.trim() || null });
+      const r = await api.bulkAssets({
+        action: "set_group", fqdns: [...selected], group: groupValue.trim() || null,
+      });
       toast.success(`Regrouped ${r.affected}`); setSelected(new Set()); load();
     } catch (e) { toast.error(e instanceof ApiError ? e.message : "Bulk set-group failed"); }
   };
@@ -182,7 +187,7 @@ export default function AssetsPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold">Assets</h1>
+          <h1 className="text-xl font-semibold tracking-tight">Assets</h1>
           <p className="text-sm text-muted-foreground">
             Inventory grouped by iştirak. Imported roots + subdomains discovered by recon.
           </p>
@@ -207,8 +212,11 @@ export default function AssetsPage() {
             onClick={() => scan({ assets: [...selected] })}>
             <Play className="h-3.5 w-3.5" /> Scan
           </Button>
-          <Button variant="outline" size="sm" onClick={bulkSetGroup}>Set group…</Button>
-          <Button variant="outline" size="sm" className="gap-1.5 text-destructive" onClick={bulkDelete}>
+          <Button variant="outline" size="sm" onClick={() => { setGroupValue(""); setGroupOpen(true); }}>
+            Set group…
+          </Button>
+          <Button variant="outline" size="sm" className="gap-1.5 text-destructive"
+            onClick={() => setDeleteOpen(true)}>
             <Trash2 className="h-3.5 w-3.5" /> Delete
           </Button>
           <Button variant="ghost" size="sm" className="ml-auto" onClick={() => setSelected(new Set())}>
@@ -228,21 +236,21 @@ export default function AssetsPage() {
           <div className="ml-auto flex items-center gap-2">
             <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="search fqdn…"
               className="max-w-[220px]" />
-            <select value={status} onChange={(e) => setStatus(e.target.value)}
-              className="h-9 rounded-md border border-border bg-input px-2 text-sm">
-              <option value="">all</option>
-              <option value="live">live</option>
-              <option value="dead">dead</option>
-            </select>
+            <Select value={status || "all"} onValueChange={(v) => setStatus(v === "all" ? "" : v)}>
+              <SelectTrigger className="w-28" aria-label="Status filter"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">all</SelectItem>
+                <SelectItem value="live">live</SelectItem>
+                <SelectItem value="dead">dead</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
         </div>
         <p className="text-xs text-muted-foreground">CSV format: <code>domain,group</code> (header optional).</p>
       </Card>
 
       {!loaded ? (
-        <Card className="p-6 text-sm text-muted-foreground">
-          {err ? <>Couldn&apos;t load — <span className="text-destructive">{err}</span>. Check the API connection in Settings.</> : "Loading…"}
-        </Card>
+        err ? <InlineError message={`${err}. Check the API connection in Settings.`} onRetry={load} /> : <ListSkeleton rows={5} />
       ) : assets.length === 0 ? (
         <Card className="flex flex-col items-center gap-2 p-12 text-center">
           <Network className="h-10 w-10 text-muted-foreground" />
@@ -257,10 +265,9 @@ export default function AssetsPage() {
               <Card key={group} className="overflow-hidden p-0">
                 <div className="flex items-center justify-between gap-2 px-4 py-3">
                   <div className="flex items-center gap-2">
-                    <input type="checkbox" aria-label={`select ${group}`}
+                    <Checkbox aria-label={`select ${group}`}
                       checked={rows.length > 0 && rows.every((r) => selected.has(r.fqdn))}
-                      onChange={(e) => selectMany(rows.map((r) => r.fqdn), e.target.checked)}
-                      className="h-4 w-4 accent-[var(--primary)]" />
+                      onCheckedChange={(c) => selectMany(rows.map((r) => r.fqdn), c === true)} />
                     <button onClick={() => toggle(group)} className="flex items-center gap-2 text-left">
                       {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
                       <span className="font-semibold">{group}</span>
@@ -293,9 +300,8 @@ export default function AssetsPage() {
                         <React.Fragment key={a.fqdn}>
                         <TableRow className={cn(expanded.has(a.fqdn) && "border-b-0")}>
                           <TableCell>
-                            <input type="checkbox" aria-label={`select ${a.fqdn}`}
-                              checked={selected.has(a.fqdn)} onChange={() => toggleSel(a.fqdn)}
-                              className="h-4 w-4 accent-[var(--primary)]" />
+                            <Checkbox aria-label={`select ${a.fqdn}`}
+                              checked={selected.has(a.fqdn)} onCheckedChange={() => toggleSel(a.fqdn)} />
                           </TableCell>
                           <TableCell className="max-w-[260px] truncate font-mono text-xs" title={a.fqdn}>{a.fqdn}</TableCell>
                           <TableCell>
@@ -320,7 +326,7 @@ export default function AssetsPage() {
                               <Button variant="ghost" size="icon-sm" aria-label="Details"
                                 onClick={() => toggleDetail(a)}>
                                 {expanded.has(a.fqdn)
-                                  ? <ChevronDown className="h-3.5 w-3.5 text-accent" />
+                                  ? <ChevronDown className="h-3.5 w-3.5 text-primary" />
                                   : <Info className="h-3.5 w-3.5" />}
                               </Button>
                               <Button variant="ghost" size="icon-sm" aria-label="Scan"
@@ -351,6 +357,52 @@ export default function AssetsPage() {
           })}
         </div>
       )}
+
+      {/* Bulk delete confirmation */}
+      <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {selected.size} asset{selected.size === 1 ? "" : "s"}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This removes the selected asset{selected.size === 1 ? "" : "s"} from the inventory.
+              Scan history and run artifacts are not affected.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={bulkDelete}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Bulk set-group */}
+      <Dialog open={groupOpen} onOpenChange={setGroupOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Set group</DialogTitle>
+            <DialogDescription>
+              Assign {selected.size} selected asset{selected.size === 1 ? "" : "s"} to an iştirak / group.
+              Leave blank to clear.
+            </DialogDescription>
+          </DialogHeader>
+          <Input
+            autoFocus
+            value={groupValue}
+            onChange={(e) => setGroupValue(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && bulkSetGroup()}
+            placeholder="iştirak / group"
+          />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setGroupOpen(false)}>Cancel</Button>
+            <Button onClick={bulkSetGroup}>Save</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

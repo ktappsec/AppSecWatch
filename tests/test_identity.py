@@ -4,10 +4,10 @@ from __future__ import annotations
 import types
 from pathlib import Path
 
-import watchtower.recon.web_probe as wp
-from watchtower.audit.nuclei_runner import build_nuclei_cmd
-from watchtower.config import HttpxConfig, IdentityConfig, NucleiConfig
-from watchtower.recon.web_probe import run_httpx
+import appsecwatch.recon.web_probe as wp
+from appsecwatch.audit.nuclei_runner import build_nuclei_cmd
+from appsecwatch.config import HttpxConfig, IdentityConfig, NucleiConfig
+from appsecwatch.recon.web_probe import run_httpx
 
 
 class _Log:
@@ -55,7 +55,7 @@ def test_off_is_inactive():
 
 
 def test_browser_preset_rotates_referer():
-    from watchtower.config import REFERER_POOL
+    from appsecwatch.config import REFERER_POOL
 
     i = IdentityConfig(preset="chrome-win")
     h = i.effective_headers()

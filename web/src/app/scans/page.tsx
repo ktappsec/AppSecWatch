@@ -57,7 +57,7 @@ export default function ScansPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold">Scans</h1>
+          <h1 className="text-xl font-semibold tracking-tight">Scans</h1>
           <p className="text-sm text-muted-foreground">
             {data ? `${data.total} total` : "Loading…"}
           </p>
@@ -80,11 +80,13 @@ export default function ScansPage() {
           <button
             key={f.value}
             onClick={() => setFilter(f.value)}
+            aria-pressed={filter === f.value}
             className={cn(
               "rounded-lg border px-3 py-1.5 text-xs font-medium transition-smooth",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
               filter === f.value
-                ? "border-accent/40 bg-accent/15 text-accent"
-                : "border-border text-muted-foreground hover:bg-accent/5"
+                ? "border-primary/40 bg-primary/10 text-primary"
+                : "border-border text-muted-foreground hover:bg-muted"
             )}
           >
             {f.label}
@@ -125,7 +127,8 @@ export default function ScansPage() {
                   <TableCell className="max-w-[220px]">
                     <Link
                       href={`/scans/detail?id=${encodeURIComponent(j.id)}`}
-                      className="block truncate font-medium hover:text-accent"
+                      className="block truncate font-medium hover:text-primary"
+                      title={j.roots?.length ? j.roots.join(", ") : undefined}
                     >
                       {rootsLabel(j.roots)}
                     </Link>
@@ -138,7 +141,7 @@ export default function ScansPage() {
                   <TableCell className="hidden lg:table-cell text-xs text-muted-foreground">
                     {j.state === "running" ? j.current_stage ?? "…" : "—"}
                   </TableCell>
-                  <TableCell className="hidden sm:table-cell text-xs text-muted-foreground">
+                  <TableCell className="hidden sm:table-cell text-xs text-muted-foreground tabular-nums">
                     {formatDuration(j.elapsed_s)}
                   </TableCell>
                   <TableCell className="hidden md:table-cell text-xs text-muted-foreground">

@@ -23,7 +23,7 @@ export function Badge({ tone, children }: { tone: "good" | "muted"; children: Re
   return (
     <span className={
       tone === "good"
-        ? "rounded border border-[#00c853]/40 px-1.5 py-0.5 font-mono text-[11px] text-[#00c853]"
+        ? "rounded border border-success/40 px-1.5 py-0.5 font-mono text-[11px] text-success"
         : "rounded border border-border px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground"
     }>
       {children}
@@ -36,8 +36,8 @@ export function Callout({ children, tone = "info" }: { children: React.ReactNode
     <div className={cn(
       "rounded-lg border-l-2 px-3 py-2 text-sm",
       tone === "warn"
-        ? "border-l-[#ff6d00] bg-[#ff6d00]/5 text-muted-foreground"
-        : "border-l-accent bg-accent/5 text-muted-foreground",
+        ? "border-l-warning bg-warning/5 text-muted-foreground"
+        : "border-l-primary bg-primary/5 text-muted-foreground",
     )}>
       {children}
     </div>
@@ -59,7 +59,7 @@ export function FlowNode({ title, sub, tone = "default", className }: {
   return (
     <div className={cn(
       "flex min-w-[8rem] flex-col gap-0.5 rounded-lg border px-3 py-2 text-center",
-      tone === "accent" ? "border-accent/50 bg-accent/5" : "border-border bg-card",
+      tone === "accent" ? "border-primary/50 bg-primary/5" : "border-border bg-card",
       className,
     )}>
       <span className="text-xs font-semibold text-foreground">{title}</span>
@@ -89,8 +89,8 @@ export function DocsLangToggle({ active }: { active: "en" | "tr" }) {
           className={cn(
             "rounded-md border px-2.5 py-1 text-xs font-medium transition-smooth",
             active === o.code
-              ? "border-accent/50 bg-accent/10 text-accent"
-              : "border-border text-muted-foreground hover:border-accent/40 hover:text-accent",
+              ? "border-primary/50 bg-primary/10 text-primary"
+              : "border-border text-muted-foreground hover:border-primary/40 hover:text-primary",
           )}>
           {o.label}
         </a>

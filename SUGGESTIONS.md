@@ -72,7 +72,7 @@ cookie/storage **key names** — never values) and persists a curated per-asset
   minified bundles; improves attribution, not detection. Defer until the
   supply-chain view actually consumes a dependency graph.
 - **Multimodal profiling.** Screenshots are captured for the dashboard today but
-  never sent to the LLM. If WatchTower is pointed at a vision-capable model, feed the
+  never sent to the LLM. If AppSecWatch is pointed at a vision-capable model, feed the
   screenshot to the profiler as an extra signal. Gate behind a dedicated flag (only
   meaningful with a multimodal endpoint); the capture seam already exists.
 - **localStorage-token as a finding.** The new `storage_keys` capture means a

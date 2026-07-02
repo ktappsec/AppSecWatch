@@ -12,9 +12,9 @@ from unittest.mock import patch
 
 import pytest
 
-from watchtower.logging import RunLogger
-from watchtower.models import TriagedAsset
-from watchtower.recon.tls_san import MAX_ITERATIONS, _parse_cert, tlsx_refeed_loop
+from appsecwatch.logging import RunLogger
+from appsecwatch.models import TriagedAsset
+from appsecwatch.recon.tls_san import MAX_ITERATIONS, _parse_cert, tlsx_refeed_loop
 
 
 @pytest.fixture
@@ -51,7 +51,7 @@ async def test_loop_discovers_new_in_root_sans(log, tmp_path):
     sans = {"10.0.0.1": ["b.example.com", "external.zendesk.com"]}
     resolved = {"b.example.com": _asset("b.example.com", ["10.0.0.2"])}
 
-    with patch("watchtower.recon.tls_san._tlsx_grab", side_effect=_stub_tlsx(sans)):
+    with patch("appsecwatch.recon.tls_san._tlsx_grab", side_effect=_stub_tlsx(sans)):
         final, wildcards, _ = await tlsx_refeed_loop(
             initial_assets=initial,
             roots=["example.com"],
@@ -72,7 +72,7 @@ async def test_loop_records_wildcards_but_does_not_iterate(log, tmp_path):
     initial = [_asset("a.example.com", ["10.0.0.1"])]
     sans = {"10.0.0.1": ["*.example.com", "*.other.com"]}
 
-    with patch("watchtower.recon.tls_san._tlsx_grab", side_effect=_stub_tlsx(sans)):
+    with patch("appsecwatch.recon.tls_san._tlsx_grab", side_effect=_stub_tlsx(sans)):
         final, wildcards, _ = await tlsx_refeed_loop(
             initial_assets=initial, roots=["example.com"],
             cfg=type("C", (), {"extra_flags": []})(), out_dir=tmp_path, log=log,
@@ -103,7 +103,7 @@ async def test_loop_dedups_across_iterations(log, tmp_path):
         call_log.append(sorted(names))
         return [resolved[n] for n in names if n in resolved]
 
-    with patch("watchtower.recon.tls_san._tlsx_grab", side_effect=_stub_tlsx(sans)):
+    with patch("appsecwatch.recon.tls_san._tlsx_grab", side_effect=_stub_tlsx(sans)):
         final, _, _ = await tlsx_refeed_loop(
             initial_assets=initial, roots=["example.com"],
             cfg=type("C", (), {"extra_flags": []})(), out_dir=tmp_path, log=log,
@@ -137,7 +137,7 @@ async def test_loop_respects_max_iterations(log, tmp_path):
         return [_asset(n, [f"10.0.0.{iter_count['n'] + 10}"]) for n in names]
 
     initial = [_asset("a.example.com", ["10.0.0.1"])]
-    with patch("watchtower.recon.tls_san._tlsx_grab", side_effect=infinite_tlsx):
+    with patch("appsecwatch.recon.tls_san._tlsx_grab", side_effect=infinite_tlsx):
         await tlsx_refeed_loop(
             initial_assets=initial, roots=["example.com"],
             cfg=type("C", (), {"extra_flags": []})(), out_dir=tmp_path, log=log,
@@ -159,7 +159,7 @@ async def test_loop_stops_early_when_no_new_sans(log, tmp_path):
         calls["n"] += 1
         return []
 
-    with patch("watchtower.recon.tls_san._tlsx_grab", side_effect=_stub_tlsx(sans)):
+    with patch("appsecwatch.recon.tls_san._tlsx_grab", side_effect=_stub_tlsx(sans)):
         final, _, _ = await tlsx_refeed_loop(
             initial_assets=initial, roots=["example.com"],
             cfg=type("C", (), {"extra_flags": []})(), out_dir=tmp_path, log=log,
@@ -206,7 +206,7 @@ async def test_loop_captures_cert_inventory(log, tmp_path):
         "fingerprint_hash": {"sha256": "abc"}, "serial": "01",
     }}
     initial = [_asset("a.example.com", ["10.0.0.1"])]
-    with patch("watchtower.recon.tls_san._tlsx_grab", side_effect=_cert_stub(raw)):
+    with patch("appsecwatch.recon.tls_san._tlsx_grab", side_effect=_cert_stub(raw)):
         _, _, certs = await tlsx_refeed_loop(
             initial_assets=initial, roots=["example.com"],
             cfg=type("C", (), {"extra_flags": []})(), out_dir=tmp_path, log=log,

@@ -7,6 +7,9 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
+import { ListSkeleton } from "@/components/ui/skeleton";
+import { InlineError } from "@/components/api-error-state";
 import {
   Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
 } from "@/components/ui/select";
@@ -135,9 +138,9 @@ export default function AITuningPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <Sparkles className="h-6 w-6 text-accent" />
+          <Sparkles className="h-6 w-6 text-primary" />
           <div>
-            <h1 className="text-2xl font-bold">AI Tuning</h1>
+            <h1 className="text-xl font-semibold tracking-tight">AI Tuning</h1>
             <p className="text-sm text-muted-foreground">
               Profiling, cross-source false-positive suppression (the <code>ai.triage</code> pass),
               and the editable AI system prompts.
@@ -150,9 +153,7 @@ export default function AITuningPage() {
       </div>
 
       {!loaded ? (
-        <Card className="p-6 text-sm text-muted-foreground">
-          {cfgErr ? <>Couldn&apos;t load — <span className="text-destructive">{cfgErr}</span>.</> : "Loading…"}
-        </Card>
+        cfgErr ? <InlineError message={cfgErr} onRetry={load} /> : <ListSkeleton rows={5} />
       ) : (
         <>
           {/* Behavior + suppression */}
@@ -165,19 +166,20 @@ export default function AITuningPage() {
               </p>
             </div>
 
-            <label className="flex cursor-pointer items-center gap-3">
-              <input type="checkbox" checked={profiling}
-                onChange={(e) => setProfiling(e.target.checked)}
-                className="h-4 w-4 accent-[var(--primary)]" />
-              <span className="text-sm">Context-aware AI profiling (one extra LLM call/host)</span>
-            </label>
+            <div className="flex items-center gap-3">
+              <Switch id="profiling" checked={profiling} onCheckedChange={setProfiling} />
+              <Label htmlFor="profiling" className="cursor-pointer text-sm font-normal">
+                Context-aware AI profiling (one extra LLM call/host)
+              </Label>
+            </div>
 
-            <label className="flex cursor-pointer items-center gap-3">
-              <input type="checkbox" checked={supp.enabled}
-                onChange={(e) => setSupp({ ...supp, enabled: e.target.checked })}
-                className="h-4 w-4 accent-[var(--primary)]" />
-              <span className="text-sm">Let the AI soft-suppress false-positive findings (all sources)</span>
-            </label>
+            <div className="flex items-center gap-3">
+              <Switch id="supp-enabled" checked={supp.enabled}
+                onCheckedChange={(c) => setSupp({ ...supp, enabled: c })} />
+              <Label htmlFor="supp-enabled" className="cursor-pointer text-sm font-normal">
+                Let the AI soft-suppress false-positive findings (all sources)
+              </Label>
+            </div>
 
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <Field label="Min suppression confidence"
@@ -207,14 +209,13 @@ export default function AITuningPage() {
               </Field>
             </div>
 
-            <label className="flex cursor-pointer items-center gap-3">
-              <input type="checkbox" checked={supp.require_profile}
-                onChange={(e) => setSupp({ ...supp, require_profile: e.target.checked })}
-                className="h-4 w-4 accent-[var(--primary)]" />
-              <span className="text-sm">
+            <div className="flex items-center gap-3">
+              <Switch id="require-profile" checked={supp.require_profile}
+                onCheckedChange={(c) => setSupp({ ...supp, require_profile: c })} />
+              <Label htmlFor="require-profile" className="cursor-pointer text-sm font-normal">
                 Require a usable, non-low-confidence profile before suppressing (legacy gate)
-              </span>
-            </label>
+              </Label>
+            </div>
 
             <div className="flex justify-end">
               <Button onClick={saveCfg} disabled={savingCfg}>

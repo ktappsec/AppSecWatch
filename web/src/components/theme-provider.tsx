@@ -30,7 +30,7 @@ function applyTheme(resolved: "dark" | "light") {
 
 export function ThemeProvider({
   children,
-  defaultTheme = "dark",
+  defaultTheme = "light",
   enableSystem = true,
 }: {
   children: React.ReactNode;
@@ -48,7 +48,8 @@ export function ThemeProvider({
     const stored = (typeof window !== "undefined"
       ? (localStorage.getItem(STORAGE_KEY) as Theme | null)
       : null);
-    const initial: Theme = stored ?? (enableSystem ? "system" : defaultTheme);
+    // Light is the product default; "system" only applies when explicitly chosen.
+    const initial: Theme = stored ?? defaultTheme;
     setThemeState(initial);
     const resolved =
       initial === "system" ? (systemPrefersDark() ? "dark" : "light") : initial;
@@ -78,11 +79,11 @@ export function ThemeProvider({
 
 export function useTheme(): ThemeContextValue {
   const ctx = React.useContext(ThemeContext);
-  // Safe default outside a provider (test safety): pretend dark.
+  // Safe default outside a provider (test safety): pretend light.
   return (
     ctx ?? {
-      theme: "dark",
-      resolvedTheme: "dark",
+      theme: "light",
+      resolvedTheme: "light",
       setTheme: () => {},
     }
   );

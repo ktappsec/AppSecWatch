@@ -1,4 +1,4 @@
-# WatchTower configuration example
+# AppSecWatch configuration example
 #
 # Required top-level keys: roots, sanctioned_cidrs, sanctioned_asns, mmdb_path, llm
 # Everything else has sensible defaults.

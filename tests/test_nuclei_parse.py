@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 
-from watchtower.audit.nuclei_parse import parse_nuclei_jsonl
+from appsecwatch.audit.nuclei_parse import parse_nuclei_jsonl
 
 
 def _line(**obj) -> str:

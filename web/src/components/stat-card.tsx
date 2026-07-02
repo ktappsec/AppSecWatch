@@ -26,25 +26,25 @@ export function StatCard({
   return (
     <Card
       className={cn(
-        "relative gap-0 p-6 transition-smooth animate-fade-in-up",
-        "hover:border-accent/50 hover:shadow-lg hover:shadow-accent/10"
+        "relative gap-0 p-5 transition-smooth animate-fade-in-up",
+        "hover:border-primary/40 hover:shadow-sm"
       )}
       style={{ animationDelay: `${delay}ms` }}
     >
       <div className="flex items-start justify-between">
-        <div className="space-y-1">
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        <div className="space-y-1.5">
+          <p className="text-xs font-medium tracking-wide text-muted-foreground">
             {title}
           </p>
-          <p className="text-3xl font-bold leading-tight">{value}</p>
+          <p className="text-3xl font-semibold leading-tight tabular-nums">{value}</p>
         </div>
         <div
           className={cn(
-            "flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-accent/15 text-accent",
+            "flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary",
             iconClassName
           )}
         >
-          <Icon className="h-6 w-6" />
+          <Icon className="h-5 w-5" />
         </div>
       </div>
       {(trend || hint) && (
@@ -53,7 +53,7 @@ export function StatCard({
             <span
               className={cn(
                 "inline-flex items-center gap-1 font-medium",
-                trend.positive ? "text-[#00c853]" : "text-destructive"
+                trend.positive ? "text-success" : "text-destructive"
               )}
             >
               {trend.positive ? (

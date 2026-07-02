@@ -75,7 +75,7 @@ export function SeverityBars({ totals }: { totals: Record<string, number> }) {
       <BarChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: -20 }}>
         <XAxis dataKey="name" tick={axisStyle} axisLine={false} tickLine={false} className="capitalize" />
         <YAxis tick={axisStyle} axisLine={false} tickLine={false} allowDecimals={false} />
-        <RTooltip contentStyle={tooltipStyle()} cursor={{ fill: "var(--accent)", opacity: 0.08 }} />
+        <RTooltip contentStyle={tooltipStyle()} cursor={{ fill: "var(--primary)", opacity: 0.08 }} />
         <Bar dataKey="count" radius={[6, 6, 0, 0]}>
           {data.map((d) => (
             <Cell key={d.name} fill={SEVERITY_COLORS[d.name as Severity]} />
@@ -105,7 +105,7 @@ export function FindingsByScan({
           tickLine={false}
           width={140}
         />
-        <RTooltip contentStyle={tooltipStyle()} cursor={{ fill: "var(--accent)", opacity: 0.08 }} />
+        <RTooltip contentStyle={tooltipStyle()} cursor={{ fill: "var(--primary)", opacity: 0.08 }} />
         <Bar dataKey="findings" fill="var(--chart-1)" radius={[0, 6, 6, 0]} barSize={18} />
       </BarChart>
     </ResponsiveContainer>

@@ -1,4 +1,4 @@
-"""Tests for watchtower.recon.triage.triage_records.
+"""Tests for appsecwatch.recon.triage.triage_records.
 
 Liveness classification only: `dead` (no A records) vs `live` (resolves). Scope
 is the configured roots; there is NO IP/ASN ownership gate. ASN/org are display
@@ -6,7 +6,7 @@ enrichment taken from the first A record.
 """
 from __future__ import annotations
 
-from watchtower.recon.triage import triage_records
+from appsecwatch.recon.triage import triage_records
 
 
 def _rec(host: str, a=None, cname=None) -> dict:

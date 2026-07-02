@@ -42,7 +42,7 @@ export function ApiStatus() {
 
   const map = {
     loading: { icon: Loader2, cls: "text-muted-foreground", label: "Connecting…", spin: true },
-    up: { icon: Wifi, cls: "text-[#00c853]", label: `API online · v${version ?? "?"}`, spin: false },
+    up: { icon: Wifi, cls: "text-success", label: `API online · v${version ?? "?"}`, spin: false },
     down: { icon: WifiOff, cls: "text-destructive", label: "API unreachable", spin: false },
   }[status];
   const Icon = map.icon;

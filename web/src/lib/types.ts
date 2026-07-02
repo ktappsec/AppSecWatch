@@ -1,4 +1,4 @@
-/** TypeScript mirror of the WatchTower FastAPI contract (watchtower/api/models.py).
+/** TypeScript mirror of the AppSecWatch FastAPI contract (appsecwatch/api/models.py).
  * Keep in sync with the Pydantic models. */
 
 export type JobState =
@@ -357,7 +357,7 @@ export interface ScanTemplateUpsert {
   compress?: boolean;
 }
 
-/** Effective server config (GET /config). `base_config` mirrors WatchTowerConfig
+/** Effective server config (GET /config). `base_config` mirrors AppSecWatchConfig
  * minus per-request `roots`; `llm.api_key` is masked ("********"). The same shape
  * is sent to PUT /config (full replacement; a blank/masked api_key is kept).
  * There is no scan-target allowlist — the per-scan roots is the only scope. */
@@ -366,7 +366,7 @@ export interface ServerConfigView {
 }
 
 // AI prompts — the editable system-prompt registry (AI Tuning page). Mirrors
-// watchtower/api/models.py PromptSlot / PromptsView / PromptPreview.
+// appsecwatch/api/models.py PromptSlot / PromptsView / PromptPreview.
 export interface PromptSlot {
   id: string;
   label: string;

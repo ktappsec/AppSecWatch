@@ -1,6 +1,6 @@
-# WatchTower API Reference
+# AppSecWatch API Reference
 
-This document is the canonical reference for WatchTower's surface area:
+This document is the canonical reference for AppSecWatch's surface area:
 
 1. [CLI Reference](#1-cli-reference)
 2. [Configuration Reference (YAML)](#2-configuration-reference-yaml)
@@ -23,7 +23,7 @@ For the original product brief see [`DOCS.md`](DOCS.md).
 ### Synopsis
 
 ```
-watchtower <command> [options]
+appsecwatch <command> [options]
 ```
 
 ### Global flags
@@ -35,12 +35,12 @@ watchtower <command> [options]
 
 ### Commands
 
-#### `watchtower scan`
+#### `appsecwatch scan`
 
 Run a full audit pipeline against the scope defined in a YAML config file.
 
 ```
-watchtower scan -c <config.yaml> [-o RUNS_DIR] [--progress MODE] [-v]
+appsecwatch scan -c <config.yaml> [-o RUNS_DIR] [--progress MODE] [-v]
               [--compress | --no-compress]
               [--only TOKENS | --skip TOKENS] [--strict]
 ```
@@ -66,9 +66,9 @@ watchtower scan -c <config.yaml> [-o RUNS_DIR] [--progress MODE] [-v]
 docker run --rm \
   -v "$PWD/mmdb:/data/mmdb:ro" \
   -v "$PWD/runs:/data/runs" \
-  -v "$PWD/config.yaml:/etc/watchtower/config.yaml:ro" \
+  -v "$PWD/config.yaml:/etc/appsecwatch/config.yaml:ro" \
   --add-host=host.docker.internal:host-gateway \
-  watchtower scan -c /etc/watchtower/config.yaml --progress plain
+  appsecwatch scan -c /etc/appsecwatch/config.yaml --progress plain
 ```
 
 <a id="stage-selection"></a>
@@ -112,23 +112,23 @@ When only some of a parent's sub-steps run, the coverage strip / `manifest.json`
 mark the parent **partial** and record per-sub-token `ran`/`reason`.
 
 ```sh
-watchtower scan -c config.yaml --only tls                  # only the TLS scorecard
-watchtower scan -c config.yaml --skip nuclei,supply-chain  # everything but those two
-watchtower scan -c config.yaml --only recon                # attack-surface map only
-watchtower scan -c config.yaml --only recon.subfinder      # subdomain names only
-watchtower scan -c config.yaml --only nuclei.high,nuclei.critical   # high+crit CVEs only
-watchtower scan -c config.yaml --only ai.triage            # just the AI cross-source triage
-watchtower scan -c config.yaml --only headers              # deterministic header + CSP audit
-watchtower scan -c config.yaml --only headers.csp          # just the CSP weakness rules
-watchtower scan -c config.yaml --skip recon.tlsx           # full run, no cert-SAN re-feed
+appsecwatch scan -c config.yaml --only tls                  # only the TLS scorecard
+appsecwatch scan -c config.yaml --skip nuclei,supply-chain  # everything but those two
+appsecwatch scan -c config.yaml --only recon                # attack-surface map only
+appsecwatch scan -c config.yaml --only recon.subfinder      # subdomain names only
+appsecwatch scan -c config.yaml --only nuclei.high,nuclei.critical   # high+crit CVEs only
+appsecwatch scan -c config.yaml --only ai.triage            # just the AI cross-source triage
+appsecwatch scan -c config.yaml --only headers              # deterministic header + CSP audit
+appsecwatch scan -c config.yaml --only headers.csp          # just the CSP weakness rules
+appsecwatch scan -c config.yaml --skip recon.tlsx           # full run, no cert-SAN re-feed
 ```
 
-#### `watchtower verify-deps`
+#### `appsecwatch verify-deps`
 
 Probe required binaries, Python modules, and optionally the MMDB + LLM endpoint. Exits non-zero if any check fails.
 
 ```
-watchtower verify-deps [-c CONFIG]
+appsecwatch verify-deps [-c CONFIG]
 ```
 
 | Flag | Type | Default | Description |
@@ -141,18 +141,18 @@ watchtower verify-deps [-c CONFIG]
 **Example:**
 
 ```sh
-watchtower verify-deps                          # binaries + Python deps only
-watchtower verify-deps -c /etc/watchtower/config.yaml   # adds MMDB + LLM probes
+appsecwatch verify-deps                          # binaries + Python deps only
+appsecwatch verify-deps -c /etc/appsecwatch/config.yaml   # adds MMDB + LLM probes
 ```
 
 This is safe to run *before* installing the heavy deps — the CLI lazy-imports the scan path, so missing modules show as `✗` entries rather than crashing the command.
 
-#### `watchtower init-config`
+#### `appsecwatch init-config`
 
 Print or write a fully-commented example YAML config.
 
 ```
-watchtower init-config [-o FILE] [-f]
+appsecwatch init-config [-o FILE] [-f]
 ```
 
 | Flag | Type | Default | Description |
@@ -167,16 +167,16 @@ watchtower init-config [-o FILE] [-f]
 
 ```sh
 # Print to stdout (e.g., pipe into a file):
-watchtower init-config > config.yaml
+appsecwatch init-config > config.yaml
 
 # Write directly:
-watchtower init-config -o /etc/watchtower/config.yaml
+appsecwatch init-config -o /etc/appsecwatch/config.yaml
 
 # Refresh from latest defaults, overwriting existing file:
-watchtower init-config -o config.yaml --force
+appsecwatch init-config -o config.yaml --force
 ```
 
-#### `watchtower serve`
+#### `appsecwatch serve`
 
 Run the authenticated **Web API** (FastAPI + uvicorn) over the scan engine. The
 server reuses the async runner in-process, keeps `runs/` as the durable record,
@@ -184,7 +184,7 @@ and rebuilds its job index from disk on startup. Requires the web extras
 (`pip install '.[web]'`; bundled in the Docker image).
 
 ```
-watchtower serve [-c <server.yaml>] [--host HOST] [--port PORT] [--ui-dir DIR]
+appsecwatch serve [-c <server.yaml>] [--host HOST] [--port PORT] [--ui-dir DIR]
 ```
 
 | Flag | Type | Default | Description |
@@ -193,19 +193,19 @@ watchtower serve [-c <server.yaml>] [--host HOST] [--port PORT] [--ui-dir DIR]
 | `-o, --output-dir` | path | from config (`/data/runs`) | Where run dirs + the config store live. Needed for UI-only local runs (the default `/data/runs` isn't writable outside the container). |
 | `--host` | str | from config | Bind host (overrides `server.yaml`). |
 | `--port` | int | from config | Bind port (overrides `server.yaml`). |
-| `--ui-dir` | path | `$WATCHTOWER_UI_DIR` | Serve a built UI (Next.js static export) at `/` with the API mounted under `/api`. When unset the API serves at root. |
+| `--ui-dir` | path | `$APPSECWATCH_UI_DIR` | Serve a built UI (Next.js static export) at `/` with the API mounted under `/api`. When unset the API serves at root. |
 
 The API's own auth secrets are read from the environment (see §9):
-`WATCHTOWER_API_KEYS` (a comma-separated allowlist — **if unset the API runs OPEN**)
-and optional `WATCHTOWER_WEBHOOK_SECRET`. There is **no scan-target allowlist** — the
+`APPSECWATCH_API_KEYS` (a comma-separated allowlist — **if unset the API runs OPEN**)
+and optional `APPSECWATCH_WEBHOOK_SECRET`. There is **no scan-target allowlist** — the
 per-scan `roots` is the only scope, so with auth OPEN anyone who can reach the API
-can scan any host; keep `WATCHTOWER_API_KEYS` set before exposing it.
+can scan any host; keep `APPSECWATCH_API_KEYS` set before exposing it.
 
 **Runtime config is UI-managed (store-primary).** `serve -c` is optional;
-`server.yaml` only seeds first boot. A writable JSON store (`WATCHTOWER_CONFIG_STORE`,
+`server.yaml` only seeds first boot. A writable JSON store (`APPSECWATCH_CONFIG_STORE`,
 default `<output_root>/.config/server-config.json`, `0600`) is the source of truth
 and is edited at runtime via `GET`/`PUT /config`. The full scan config is editable;
-`llm.api_key` is UI-managed and persists in the store (`WATCHTOWER_LLM_API_KEY` only
+`llm.api_key` is UI-managed and persists in the store (`APPSECWATCH_LLM_API_KEY` only
 *seeds* it; masked `********` on read, blank/masked on write keeps it). The server
 boots even unconfigured — a scan is refused with `409 not_configured` until a valid
 LLM config is set (the MMDB is optional). Edits apply to the next scan with no restart.
@@ -222,11 +222,11 @@ LLM config is set (the MMDB is optional). Edits apply to the next scan with no r
 # API + bundled UI from the Docker image (one container, one port):
 docker run --rm -p 8080:8080 \
   -v "$PWD/mmdb:/data/mmdb:ro" -v "$PWD/runs:/data/runs" \
-  -v "$PWD/server.yaml:/etc/watchtower/server.yaml:ro" \
-  -e WATCHTOWER_API_KEYS="$(cat api.key)" \
-  -e WATCHTOWER_WEBHOOK_SECRET="$(cat wh.secret)" \
+  -v "$PWD/server.yaml:/etc/appsecwatch/server.yaml:ro" \
+  -e APPSECWATCH_API_KEYS="$(cat api.key)" \
+  -e APPSECWATCH_WEBHOOK_SECRET="$(cat wh.secret)" \
   --add-host=host.docker.internal:host-gateway \
-  watchtower serve -c /etc/watchtower/server.yaml --host 0.0.0.0 --port 8080
+  appsecwatch serve -c /etc/appsecwatch/server.yaml --host 0.0.0.0 --port 8080
 # → UI:  http://localhost:8080/        API: http://localhost:8080/api/...
 
 # Submit a scan:
@@ -239,7 +239,7 @@ curl -sS -X POST http://localhost:8080/api/scans \
 
 ## 2. Configuration Reference (YAML)
 
-The config file is parsed with PyYAML and validated against `watchtower.config.WatchTowerConfig`. Any validation failure aborts with a non-zero exit.
+The config file is parsed with PyYAML and validated against `appsecwatch.config.AppSecWatchConfig`. Any validation failure aborts with a non-zero exit.
 
 ### Top-level keys
 
@@ -313,7 +313,7 @@ llm:
   model: <str>              # required; e.g., llama3.1:8b-instruct
   timeout_seconds: 120      # optional; default 120
   max_retries: 1            # optional; default 1
-  app_title: WatchTower     # optional; X-Title header (the request "name")
+  app_title: AppSecWatch     # optional; X-Title header (the request "name")
   app_url: null             # optional; HTTP-Referer header (sent only if set)
   tag_requests: true        # optional; append call purpose to the title for spend breakdown
   models: {}                # optional; per-call-type model overrides (see below)
@@ -323,7 +323,7 @@ llm:
 
 The client posts to `{base_url}/chat/completions` with OpenAI-shape payloads. For the JSON-returning calls (`profile` / `triage` / `supply` / `summary`) `response_format: {"type": "json_object"}` is sent; backends that reject it get a retry without that field automatically. The `nuclei-gen` call returns YAML, so it opts out of JSON mode (`chat(json_mode=False)`) and retries once with the validation error on a malformed first draft.
 
-**Request attribution.** Every call carries an `X-Title` header (default `WatchTower`) and, when `app_url` is set, an `HTTP-Referer` — OpenRouter surfaces both in its activity log, so you can see what spent what. With `tag_requests: true` (default), each call's purpose is appended to the title (`WatchTower: profile`, `WatchTower: triage`, `WatchTower: supply`, `WatchTower: nuclei-gen`) so spend groups by call type; on an `openrouter.ai` `base_url` the OpenAI `user` field also carries the full per-host label (e.g. `profile[app.example.com]`). The headers and `user` field are ignored by backends that don't use them, so this is harmless on Ollama / llama.cpp / vLLM / LM Studio.
+**Request attribution.** Every call carries an `X-Title` header (default `AppSecWatch`) and, when `app_url` is set, an `HTTP-Referer` — OpenRouter surfaces both in its activity log, so you can see what spent what. With `tag_requests: true` (default), each call's purpose is appended to the title (`AppSecWatch: profile`, `AppSecWatch: triage`, `AppSecWatch: supply`, `AppSecWatch: nuclei-gen`) so spend groups by call type; on an `openrouter.ai` `base_url` the OpenAI `user` field also carries the full per-host label (e.g. `profile[app.example.com]`). The headers and `user` field are ignored by backends that don't use them, so this is harmless on Ollama / llama.cpp / vLLM / LM Studio.
 
 ### `ai`
 
@@ -354,7 +354,7 @@ ai:
 | `suppression.min_confidence` | enum | `medium` | Minimum AI verdict confidence to actually hide a finding. |
 | `suppression.max_severity` | enum | `medium` | Highest severity the AI may auto-hide. Findings **above** this are never offered to the AI and always stay visible + counted. |
 | `suppression.require_profile` | bool | `false` | When `true`, only hosts with a usable, non-low-confidence `AppProfile` get suppression (legacy gate). Default `false`: the profile is calibration, not a precondition. An AI degrade hides nothing either way. |
-| `prompts.*` | str \| null | `null` | Override a built-in AI **system** prompt (slot ids mirror `watchtower/ai/prompts.py` `PROMPT_SLOTS`). `null`/blank = built-in default. Shape-hints + user-message assembly stay in code, so an override can change judgment but never break JSON validation. Usually edited via the UI's **AI Tuning** page. |
+| `prompts.*` | str \| null | `null` | Override a built-in AI **system** prompt (slot ids mirror `appsecwatch/ai/prompts.py` `PROMPT_SLOTS`). `null`/blank = built-in default. Shape-hints + user-message assembly stay in code, so an override can change judgment but never break JSON validation. Usually edited via the UI's **AI Tuning** page. |
 
 Profiling adds one LLM call per host. Hard failures degrade to the default prompts for that host; a profile that self-reports `confidence: low` is still used but does not drive aggressive severity escalation. The profiling stage runs at the **head of the `ai-analyze` phase** (after the audit fan-out) so it can consume the crawler's rendered capture under `render: auto`/`always`; with `render: always` the crawler (the `supply-chain` capability) is **force-included** even when supply-chain analysis isn't selected. It never gates the deterministic scanners — nuclei/sslscan/crawler always run at full coverage regardless of the profile.
 
@@ -421,7 +421,7 @@ tools:
     auto_scan: true                              # adds `-as` (wappalyzer-driven template selection)
     rate_limit: 100                              # `-rl`
     timeout: 5                                   # `-timeout`
-    user_agent: "WatchTower/0.1"                   # injected via `-H`
+    user_agent: "AppSecWatch/0.1"                   # injected via `-H`
     extra_flags: []
 ```
 
@@ -475,18 +475,18 @@ templated text otherwise. Display-only — `report` never gates a scan.
 
 ### Generating a fresh template
 
-`watchtower init-config` always emits the current canonical example, including all defaults. If you upgrade WatchTower, regenerate to see new fields.
+`appsecwatch init-config` always emits the current canonical example, including all defaults. If you upgrade AppSecWatch, regenerate to see new fields.
 
 ---
 
 ## 3. Run Directory Layout
 
-Each invocation of `watchtower scan` creates a fresh directory under `--output-dir`:
+Each invocation of `appsecwatch scan` creates a fresh directory under `--output-dir`:
 
 ```
 runs/<UTC-ISO-timestamp>-<root-slug>/
 ├── config.snapshot.yaml         # exact config used for this run (llm.api_key redacted)
-├── versions.json                # tool versions, model, MMDB path, watchtower sha
+├── versions.json                # tool versions, model, MMDB path, appsecwatch sha
 ├── manifest.json                # capability coverage: ran / skipped + reason
 ├── run.log.jsonl                # always-on structured event log (incl. the run_summary event)
 ├── errors.json                  # consolidated failures: stage crashes + every per-host error
@@ -546,7 +546,7 @@ All JSONL files are line-delimited JSON; one record per line. All single-JSON fi
 
 ```json
 {
-  "watchtower": "0.1.0",
+  "appsecwatch": "0.1.0",
   "subfinder": "subfinder version v2.6.6",
   "dnsx": "dnsx version v1.2.1",
   "tlsx": "...",
@@ -601,7 +601,7 @@ Records which capabilities ran vs. were skipped, and why — the source of the r
 
 ### `01_recon/dnsx.jsonl`
 
-Raw stdout from `dnsx -json`. Each line has `host`, optional `a` (list of A records), `cname` (list of CNAME targets), `status_code`. WatchTower synthesizes records with empty `a` for names dnsx omitted (treated as NXDOMAIN).
+Raw stdout from `dnsx -json`. Each line has `host`, optional `a` (list of A records), `cname` (list of CNAME targets), `status_code`. AppSecWatch synthesizes records with empty `a` for names dnsx omitted (treated as NXDOMAIN).
 
 ### `01_recon/httpx.jsonl`
 
@@ -609,11 +609,11 @@ Raw stdout from `httpx -json` (invoked with `-include-response` so the raw, pre-
 
 ### `02_audit/takeovers/nuclei-takeovers.jsonl` and `02_audit/nuclei/findings.jsonl`
 
-Raw `nuclei -jsonl` output. WatchTower parses into `Finding` objects but persists the raw form for forensics.
+Raw `nuclei -jsonl` output. AppSecWatch parses into `Finding` objects but persists the raw form for forensics.
 
 ### `02_audit/sslscan/<host>.xml`
 
-Raw `sslscan --xml` output, one file per host. WatchTower parses each `<ssltest>` element into the per-host TLS scorecard (`TLSHostReport`): insecure protocols disabled, no weak ciphers, certificate valid >30 days, key strength, signature algorithm, and secure renegotiation (see `tools.sslscan`).
+Raw `sslscan --xml` output, one file per host. AppSecWatch parses each `<ssltest>` element into the per-host TLS scorecard (`TLSHostReport`): insecure protocols disabled, no weak ciphers, certificate valid >30 days, key strength, signature algorithm, and secure renegotiation (see `tools.sslscan`).
 
 ### `02_audit/playwright/<host>.json`
 
@@ -699,25 +699,25 @@ The pipeline never fails on AI errors; the artifact simply records the failure.
 
 ## 5. Python API
 
-WatchTower is usable as a library. Imports below assume the package is installed (`pip install .` from the repo root or via the Docker image).
+AppSecWatch is usable as a library. Imports below assume the package is installed (`pip install .` from the repo root or via the Docker image).
 
-### `watchtower.config`
+### `appsecwatch.config`
 
 ```python
-from watchtower.config import load_config, WatchTowerConfig
+from appsecwatch.config import load_config, AppSecWatchConfig
 
-cfg: WatchTowerConfig = load_config("config.yaml")
+cfg: AppSecWatchConfig = load_config("config.yaml")
 ```
 
-* `load_config(path: str | Path) -> WatchTowerConfig` — Loads YAML, validates with Pydantic, raises `pydantic.ValidationError` on failure.
-* `WatchTowerConfig` — root Pydantic model. See §6.
+* `load_config(path: str | Path) -> AppSecWatchConfig` — Loads YAML, validates with Pydantic, raises `pydantic.ValidationError` on failure.
+* `AppSecWatchConfig` — root Pydantic model. See §6.
 
-### `watchtower.runner`
+### `appsecwatch.runner`
 
 ```python
 import asyncio
 from pathlib import Path
-from watchtower.runner import run_scan
+from appsecwatch.runner import run_scan
 
 report_path = asyncio.run(
     run_scan(
@@ -739,10 +739,10 @@ Returns the absolute path to the rendered `report.html`. Raises on bootstrap fai
 
 `run_dir` and `state` exist for embedders that need to observe a scan as it runs (the Web API uses them): pass a `ScanState()` you keep a reference to and poll its `current_stage` / `completed_stages` / findings live, and pass a `run_dir` (e.g. from `make_run_dir`) to reserve the id up front. Both default to internal creation, so existing callers are unaffected.
 
-### `watchtower.stages.pipeline` — capability registry & builder
+### `appsecwatch.stages.pipeline` — capability registry & builder
 
 ```python
-from watchtower.stages.pipeline import build_pipeline, CAPABILITIES, default_pipeline
+from appsecwatch.stages.pipeline import build_pipeline, CAPABILITIES, default_pipeline
 
 # The tokens both CLI and API understand:
 list(CAPABILITIES)          # ["recon", "takeovers", "tls", "nuclei", "headers", "supply-chain", "ai"]
@@ -765,53 +765,53 @@ Each stage is callable directly for embedding into other pipelines:
 
 ```python
 # Recon
-from watchtower.recon.subdomains import run_subfinder
-from watchtower.recon.resolve    import run_dnsx
-from watchtower.recon.triage     import triage_records
-from watchtower.recon.tls_san    import tlsx_refeed_loop
-from watchtower.recon.web_probe  import run_httpx
+from appsecwatch.recon.subdomains import run_subfinder
+from appsecwatch.recon.resolve    import run_dnsx
+from appsecwatch.recon.triage     import triage_records
+from appsecwatch.recon.tls_san    import tlsx_refeed_loop
+from appsecwatch.recon.web_probe  import run_httpx
 
 # Audit
-from watchtower.audit.takeovers       import run_takeovers
-from watchtower.audit.sslscan_runner  import run_sslscan
-from watchtower.audit.nuclei_runner   import run_nuclei
-from watchtower.audit.crawler        import run_crawler
+from appsecwatch.audit.takeovers       import run_takeovers
+from appsecwatch.audit.sslscan_runner  import run_sslscan
+from appsecwatch.audit.nuclei_runner   import run_nuclei
+from appsecwatch.audit.crawler        import run_crawler
 
 # AI
-from watchtower.ai.analyzer import analyze_all
-from watchtower.ai.client   import LLMClient
-from watchtower.ai.prompts  import (
+from appsecwatch.ai.analyzer import analyze_all
+from appsecwatch.ai.client   import LLMClient
+from appsecwatch.ai.prompts  import (
     build_profile_prompt, build_headers_prompt, build_supply_chain_prompt,
 )
 
 # Report
-from watchtower.report.aggregator import build_report_context
-from watchtower.report.renderer   import render_report
+from appsecwatch.report.aggregator import build_report_context
+from appsecwatch.report.renderer   import render_report
 
 # Stage plugin API
-from watchtower.stages import Stage, ParallelStage, ScanState, execute_stages
-from watchtower.stages.profile  import AIProfileStage
-from watchtower.stages.pipeline import build_pipeline, CAPABILITIES, default_pipeline
+from appsecwatch.stages import Stage, ParallelStage, ScanState, execute_stages
+from appsecwatch.stages.profile  import AIProfileStage
+from appsecwatch.stages.pipeline import build_pipeline, CAPABILITIES, default_pipeline
 
 # Preflight
-from watchtower.preflight import run_preflight, format_report
+from appsecwatch.preflight import run_preflight, format_report
 ```
 
 All `run_*` and `analyze_all` functions are `async`. Each takes a `RunLogger`; for ad-hoc use, instantiate one bound to a writable directory:
 
 ```python
-from watchtower.logging import RunLogger
+from appsecwatch.logging import RunLogger
 log = RunLogger(run_dir=Path("./scratch"), mode="plain", verbose=False)
 ```
 
-### `watchtower.api` — Web API
+### `appsecwatch.api` — Web API
 
 The FastAPI layer (see `WEB_API_PLAN.md` for the full design). Useful entry
 points for embedding or testing:
 
 ```python
-from watchtower.api.config import load_server_config, ServerConfig
-from watchtower.api.server import create_app, create_combined_app, serve
+from appsecwatch.api.config import load_server_config, ServerConfig
+from appsecwatch.api.server import create_app, create_combined_app, serve
 
 config = load_server_config("server.yaml")     # structure + env secrets
 app = create_app(config)                        # API at root (FastAPI app)
@@ -821,16 +821,16 @@ serve("server.yaml", host="0.0.0.0", port=8080) # load + build + uvicorn.run
 
 * `create_app(config)` returns a FastAPI app and is what the tests drive via
   `fastapi.testclient.TestClient`.
-* The `JobManager` (`watchtower.api.jobs`) owns the semaphore/queue, `job.json`
+* The `JobManager` (`appsecwatch.api.jobs`) owns the semaphore/queue, `job.json`
   persistence, startup reindex, idempotency, and cancellation (process-group
   kill). It calls `run_scan` with an injected `run_dir`+`state`.
 
-### `watchtower.util.subproc`
+### `appsecwatch.util.subproc`
 
 Generic async subprocess helpers used by all tool wrappers.
 
 ```python
-from watchtower.util.subproc import run_tool, ProcResult, ToolError, tool_version
+from appsecwatch.util.subproc import run_tool, ProcResult, ToolError, tool_version
 
 res: ProcResult = await run_tool(
     ["nuclei", "-version"],
@@ -840,10 +840,10 @@ res: ProcResult = await run_tool(
 )
 ```
 
-### `watchtower.util.ipinfo`
+### `appsecwatch.util.ipinfo`
 
 ```python
-from watchtower.util.ipinfo import IPInfoLookup
+from appsecwatch.util.ipinfo import IPInfoLookup
 
 ipinfo = IPInfoLookup(
     mmdb_path="/data/mmdb/GeoLite2-ASN.mmdb",   # optional; None = no ASN/org enrichment
@@ -853,10 +853,10 @@ ipinfo.asn_info("1.2.3.4")              # ASNInfo(asn=15169, organization="...")
 ipinfo.close()
 ```
 
-### `watchtower.util.domains`
+### `appsecwatch.util.domains`
 
 ```python
-from watchtower.util.domains import etld_plus_one, under_any_root, is_wildcard, strip_wildcard
+from appsecwatch.util.domains import etld_plus_one, under_any_root, is_wildcard, strip_wildcard
 
 etld_plus_one("foo.bar.example.co.uk")     # "example.co.uk"
 under_any_root("api.example.com", ["example.com"])  # True
@@ -866,16 +866,16 @@ strip_wildcard("*.example.com")            # "example.com"
 
 ### Report rendering only
 
-If you want to drive the pipeline yourself and just use WatchTower's renderer:
+If you want to drive the pipeline yourself and just use AppSecWatch's renderer:
 
 ```python
-from watchtower.report.aggregator import build_report_context
-from watchtower.report.renderer   import render_report
+from appsecwatch.report.aggregator import build_report_context
+from appsecwatch.report.renderer   import render_report
 
 context = build_report_context(
     run_meta={"label": "ad-hoc", "roots": ["example.com"],
               "started_at": "...", "finished_at": "...",
-              "duration": "0.0s", "watchtower_version": "0.1.0"},
+              "duration": "0.0s", "appsecwatch_version": "0.1.0"},
     triaged=[...],          # list[TriagedAsset]
     wildcards=[],           # list[str]
     live_servers=[...],     # list[LiveWebServer]
@@ -889,7 +889,7 @@ context = build_report_context(
     crawler_artifacts=[],   # list[CrawlerArtifact]
     coverage={},            # capability manifest — coverage strip + "Not run" placeholders
     errors=[],
-    versions={"watchtower": "0.1.0"},
+    versions={"appsecwatch": "0.1.0"},
 )
 render_report(context, out_path=Path("report.html"))
 ```
@@ -1049,7 +1049,7 @@ class StageError(BaseModel):
 
 The pipeline is a list of `Stage` objects driven uniformly by `execute_stages`. Adding a new scanner is **one file + one line**:
 
-1. Add a config block in `watchtower/config.py` (only if your tool has config knobs):
+1. Add a config block in `appsecwatch/config.py` (only if your tool has config knobs):
 
     ```python
     class MyToolConfig(ToolBlock):
@@ -1058,12 +1058,12 @@ The pipeline is a list of `Stage` objects driven uniformly by `execute_stages`. 
 
     and wire it into `ToolsConfig`.
 
-2. Create `watchtower/stages/my_stage.py`:
+2. Create `appsecwatch/stages/my_stage.py`:
 
     ```python
     from pathlib import Path
-    from watchtower.stages.base import Stage
-    from watchtower.models import Finding
+    from appsecwatch.stages.base import Stage
+    from appsecwatch.models import Finding
 
     class MyStage(Stage):
         name = "audit.mytool"
@@ -1076,7 +1076,7 @@ The pipeline is a list of `Stage` objects driven uniformly by `execute_stages`. 
             state.my_findings = findings   # add a slot to ScanState if needed
     ```
 
-3. Register it in `watchtower/stages/pipeline.py`. To make it appear in the default run, add it to the pipeline assembly; to make it independently selectable via `--only`/`--skip`, add a capability token to the `CAPABILITIES` registry mapping the token to your stage factory (and declare any dependency so resolution can auto-include prerequisites):
+3. Register it in `appsecwatch/stages/pipeline.py`. To make it appear in the default run, add it to the pipeline assembly; to make it independently selectable via `--only`/`--skip`, add a capability token to the `CAPABILITIES` registry mapping the token to your stage factory (and declare any dependency so resolution can auto-include prerequisites):
 
     ```python
     CAPABILITIES["mytool"] = Capability(
@@ -1088,7 +1088,7 @@ The pipeline is a list of `Stage` objects driven uniformly by `execute_stages`. 
 
     Without a token it still runs in the default pipeline but can't be individually selected.
 
-4. Extend the report: add a section to `watchtower/report/templates/report.html.j2` and update `report/aggregator.build_report_context` to thread your findings through.
+4. Extend the report: add a section to `appsecwatch/report/templates/report.html.j2` and update `report/aggregator.build_report_context` to thread your findings through.
 
 You get for free:
 - Uniform error capture (failures become `StageError` entries, pipeline continues)
@@ -1100,10 +1100,10 @@ You get for free:
 `default_pipeline()` is just a list. Build your own:
 
 ```python
-from watchtower.stages import execute_stages, ScanState
-from watchtower.stages.recon import SubfinderStage, DnsxAndTriageStage
-from watchtower.stages.audit import NucleiStage
-from watchtower.stages.report_stage import ReportStage
+from appsecwatch.stages import execute_stages, ScanState
+from appsecwatch.stages.recon import SubfinderStage, DnsxAndTriageStage
+from appsecwatch.stages.audit import NucleiStage
+from appsecwatch.stages.report_stage import ReportStage
 
 stages = [
     SubfinderStage(),
@@ -1117,7 +1117,7 @@ await execute_stages(stages, ScanState(), run_dir, cfg, ipinfo, log)
 ### Adding a new AI prompt
 
 1. Define a Pydantic schema if the response shape differs from `AIResponse`.
-2. Add a `build_<topic>_prompt(...)` helper in `watchtower/ai/prompts.py` returning `(system, user)`.
+2. Add a `build_<topic>_prompt(...)` helper in `appsecwatch/ai/prompts.py` returning `(system, user)`.
 3. Call it from `analyze_all` (or a new analyzer function) inside the per-host coroutine, using `_validated_call` for built-in retry + graceful degrade.
 4. Surface findings in the report context and template.
 
@@ -1160,17 +1160,17 @@ By default a completed scan exits 0 even if individual tools or hosts failed —
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `WATCHTOWER_MMDB_PATH` | `/data/mmdb/GeoLite2-ASN.mmdb` | Set in the Docker image as a hint; WatchTower itself reads the **optional** `mmdb_path` from the YAML (display-only ASN/org enrichment — it does not gate a run). |
+| `APPSECWATCH_MMDB_PATH` | `/data/mmdb/GeoLite2-ASN.mmdb` | Set in the Docker image as a hint; AppSecWatch itself reads the **optional** `mmdb_path` from the YAML (display-only ASN/org enrichment — it does not gate a run). |
 | `PATH` | `/opt/tools/bin:…` | The Docker image installs all Go binaries here. |
 | `PYTHONUNBUFFERED` | `1` | Set in the image so logs flush in real time. |
-| `WATCHTOWER_API_KEYS` | *(unset)* | **`serve` only.** Comma-separated API keys for `Authorization: Bearer`. **If unset the API runs OPEN.** |
-| `WATCHTOWER_WEBHOOK_SECRET` | *(unset)* | **`serve` only.** HMAC-SHA256 signing secret for webhook callbacks (`X-WatchTower-Signature`). |
-| `WATCHTOWER_LLM_API_KEY` | *(unset)* | **`serve` only.** *Seeds* `base_config.llm.api_key` on first boot; thereafter the key is UI-managed and persists in the config store (masked on `GET /config`). |
-| `WATCHTOWER_CONFIG_STORE` | `<output_root>/.config/server-config.json` | **`serve` only.** Path to the writable runtime config store (the UI-managed source of truth that overlays `server.yaml`). Written `0600`. |
-| `WATCHTOWER_DB_PATH` | `<output_root>/watchtower.db` | **`serve` only.** Path to the SQLite DB (the cross-run relational layer — assets inventory, and later phases). Server-only; the engine/CLI never use it. |
-| `WATCHTOWER_UI_DIR` | `/app/web-dist` (image) | **`serve` only.** If it points at a built UI, the UI is served at `/` and the API under `/api`. |
+| `APPSECWATCH_API_KEYS` | *(unset)* | **`serve` only.** Comma-separated API keys for `Authorization: Bearer`. **If unset the API runs OPEN.** |
+| `APPSECWATCH_WEBHOOK_SECRET` | *(unset)* | **`serve` only.** HMAC-SHA256 signing secret for webhook callbacks (`X-AppSecWatch-Signature`). |
+| `APPSECWATCH_LLM_API_KEY` | *(unset)* | **`serve` only.** *Seeds* `base_config.llm.api_key` on first boot; thereafter the key is UI-managed and persists in the config store (masked on `GET /config`). |
+| `APPSECWATCH_CONFIG_STORE` | `<output_root>/.config/server-config.json` | **`serve` only.** Path to the writable runtime config store (the UI-managed source of truth that overlays `server.yaml`). Written `0600`. |
+| `APPSECWATCH_DB_PATH` | `<output_root>/appsecwatch.db` | **`serve` only.** Path to the SQLite DB (the cross-run relational layer — assets inventory, and later phases). Server-only; the engine/CLI never use it. |
+| `APPSECWATCH_UI_DIR` | `/app/web-dist` (image) | **`serve` only.** If it points at a built UI, the UI is served at `/` and the API under `/api`. |
 
-For the CLI (`scan`) no secrets flow through env vars: the LLM API key lives in the YAML config and is **redacted to `***REDACTED***`** in `config.snapshot.yaml`, so the run directory never persists it. For `serve`, the API's own auth secrets (`WATCHTOWER_API_KEYS`, `WATCHTOWER_WEBHOOK_SECRET`) stay env-only, but the **scan config — including `llm.api_key` — is UI-managed and persisted at rest in the config store** (`GET`/`PUT /config`); `server.yaml` only seeds first boot. The store holds the LLM key, so protect the store path (it is written `0600`). There is no scan-target allowlist — the per-scan `roots` is the only scope.
+For the CLI (`scan`) no secrets flow through env vars: the LLM API key lives in the YAML config and is **redacted to `***REDACTED***`** in `config.snapshot.yaml`, so the run directory never persists it. For `serve`, the API's own auth secrets (`APPSECWATCH_API_KEYS`, `APPSECWATCH_WEBHOOK_SECRET`) stay env-only, but the **scan config — including `llm.api_key` — is UI-managed and persisted at rest in the config store** (`GET`/`PUT /config`); `server.yaml` only seeds first boot. The store holds the LLM key, so protect the store path (it is written `0600`). There is no scan-target allowlist — the per-scan `roots` is the only scope.
 
 ---
 
@@ -1256,7 +1256,7 @@ jq -r 'select(.event=="throttle" or .event=="tool_timeout" or .event=="rate_limi
 
 ### tlsx re-feed loop
 
-* Max iterations: **3** (hard-coded; see `watchtower.recon.tls_san.MAX_ITERATIONS`).
+* Max iterations: **3** (hard-coded; see `appsecwatch.recon.tls_san.MAX_ITERATIONS`).
 * Dedup: global `seen` set across iterations.
 * SAN filter: only SANs whose FQDN falls under `cfg.roots` (eTLD/zone match) are re-fed.
 * Wildcards (`*.foo.com`): recorded in `triage.json.wildcards`, **never** re-fed.
@@ -1279,7 +1279,7 @@ Compression failures are logged as warnings; the originals are kept and the part
 
 ### Determinism
 
-A WatchTower run is **not** deterministic across days:
+A AppSecWatch run is **not** deterministic across days:
 
 * Nuclei templates pull `latest` (not pinned).
 * DNS resolutions, certificate SANs, and live web responses change.

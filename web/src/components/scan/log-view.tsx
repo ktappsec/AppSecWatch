@@ -17,7 +17,7 @@ interface LogLine {
 
 const LEVEL_CLS: Record<string, string> = {
   error: "text-destructive",
-  warn: "text-[#ffd600]",
+  warn: "text-warning",
   info: "text-foreground",
   debug: "text-muted-foreground",
 };
@@ -91,7 +91,7 @@ export function LogView({ id, live }: { id: string; live: boolean }) {
                   </span>
                 )}
                 <span className="break-all">
-                  {l.event && <span className="text-accent">[{l.event}] </span>}
+                  {l.event && <span className="text-primary">[{l.event}] </span>}
                   {l.msg ?? l.message ?? ""}
                 </span>
               </div>

@@ -6,15 +6,15 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from watchtower.audit.sslscan_runner import build_sslscan_cmd
-from watchtower.config import LLMConfig, WatchTowerConfig
+from appsecwatch.audit.sslscan_runner import build_sslscan_cmd
+from appsecwatch.config import LLMConfig, AppSecWatchConfig
 
 
-def _cfg(**kw) -> WatchTowerConfig:
+def _cfg(**kw) -> AppSecWatchConfig:
     base = dict(roots=["x.com"], mmdb_path="/dev/null",
                 llm=LLMConfig(base_url="http://h/v1", model="m"))
     base.update(kw)
-    return WatchTowerConfig(**base)
+    return AppSecWatchConfig(**base)
 
 
 def test_normal_is_the_default_and_matches_prior_defaults():

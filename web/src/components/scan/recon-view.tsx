@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
 import type { AssetStatus, LiveWebServer, TriagedAsset } from "@/lib/types";
 
 const STATUS_META = {
-  live: { label: "Live (scanned)", icon: Globe2, cls: "text-[#00c853]" },
+  live: { label: "Live (scanned)", icon: Globe2, cls: "text-success" },
   dead: { label: "Dead / dangling", icon: Skull, cls: "text-muted-foreground" },
 } as const;
 
@@ -49,16 +49,16 @@ export function ReconView({
             <Card key={s} className="flex-row items-center gap-3 p-4">
               <Icon className={cn("h-5 w-5", meta.cls)} />
               <div>
-                <p className="text-xl font-bold">{grouped[s].length}</p>
+                <p className="text-xl font-semibold tabular-nums">{grouped[s].length}</p>
                 <p className="text-xs text-muted-foreground">{meta.label}</p>
               </div>
             </Card>
           );
         })}
         <Card className="flex-row items-center gap-3 p-4">
-          <ServerCog className="h-5 w-5 text-accent" />
+          <ServerCog className="h-5 w-5 text-primary" />
           <div>
-            <p className="text-xl font-bold">{liveServers.length}</p>
+            <p className="text-xl font-semibold tabular-nums">{liveServers.length}</p>
             <p className="text-xs text-muted-foreground">Live web servers</p>
           </div>
         </Card>
@@ -67,7 +67,7 @@ export function ReconView({
       {/* Live servers */}
       {liveServers.length > 0 && (
         <Card className="p-6">
-          <h3 className="mb-4 text-lg font-bold">Live web servers</h3>
+          <h3 className="mb-4 text-lg font-semibold">Live web servers</h3>
           <Table>
             <TableHeader>
               <TableRow>
@@ -86,7 +86,7 @@ export function ReconView({
                       className={cn(
                         "rounded px-1.5 py-0.5 text-xs",
                         (s.status_code ?? 0) < 400
-                          ? "bg-[#00c853]/15 text-[#00c853]"
+                          ? "bg-success/15 text-success"
                           : "bg-destructive/15 text-destructive"
                       )}
                     >
@@ -111,7 +111,7 @@ export function ReconView({
         .filter((s) => grouped[s].length > 0)
         .map((s) => (
           <Card key={s} className="p-6">
-            <h3 className="mb-4 flex items-center gap-2 text-lg font-bold">
+            <h3 className="mb-4 flex items-center gap-2 text-lg font-semibold">
               {STATUS_META[s].label}
               <span className="text-sm font-normal text-muted-foreground">
                 ({grouped[s].length})
@@ -148,7 +148,7 @@ export function ReconView({
 
       {wildcards.length > 0 && (
         <Card className="p-6">
-          <h3 className="mb-2 text-lg font-bold">Wildcards</h3>
+          <h3 className="mb-2 text-lg font-semibold">Wildcards</h3>
           <div className="flex flex-wrap gap-2">
             {wildcards.map((w) => (
               <span key={w} className="rounded bg-secondary px-2 py-1 font-mono text-xs">

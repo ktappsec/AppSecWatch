@@ -1,7 +1,7 @@
-"""Tests for watchtower.util.domains — small but security-relevant helpers."""
+"""Tests for appsecwatch.util.domains — small but security-relevant helpers."""
 from __future__ import annotations
 
-from watchtower.util.domains import (
+from appsecwatch.util.domains import (
     etld_plus_one,
     host_to_filename,
     is_wildcard,

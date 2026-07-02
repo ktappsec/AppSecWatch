@@ -8,10 +8,10 @@ from __future__ import annotations
 
 import pytest
 
-from watchtower.config import LLMConfig, WatchTowerConfig
-from watchtower.stages.base import Stage
-from watchtower.stages.pipeline import build_pipeline
-from watchtower.stages.capabilities import SelectionError
+from appsecwatch.config import LLMConfig, AppSecWatchConfig
+from appsecwatch.stages.base import Stage
+from appsecwatch.stages.pipeline import build_pipeline
+from appsecwatch.stages.capabilities import SelectionError
 
 
 class _DummyReport(Stage):
@@ -28,8 +28,8 @@ class _DummyCompress(Stage):
         pass
 
 
-def _cfg() -> WatchTowerConfig:
-    return WatchTowerConfig(
+def _cfg() -> AppSecWatchConfig:
+    return AppSecWatchConfig(
         roots=["example.com"],
         mmdb_path="/dev/null",
         llm=LLMConfig(base_url="http://localhost/v1", model="m"),
@@ -258,7 +258,7 @@ def test_default_assembles_full_spine_plus_audit():
     assert coverage["recon"]["reason"] == "prerequisite"
 
 
-def _cfg_zap() -> WatchTowerConfig:
+def _cfg_zap() -> AppSecWatchConfig:
     cfg = _cfg()
     cfg.zap.enabled = True
     cfg.zap.base_url = "http://zap:8090"

@@ -5,8 +5,8 @@ import { cn } from "@/lib/utils";
 import type { AppProfile } from "@/lib/types";
 
 const CONFIDENCE_CLS: Record<string, string> = {
-  high: "text-[#00c853] border-[#00c853]/40",
-  medium: "text-[#ffd600] border-[#ffd600]/40",
+  high: "text-success border-success/40",
+  medium: "text-warning border-warning/40",
   low: "text-muted-foreground border-border",
 };
 
@@ -35,7 +35,7 @@ export function AIProfiles({ profiles }: { profiles: Record<string, AppProfile> 
           <Card key={host} className="gap-3 p-5">
             <div className="flex items-start justify-between gap-2">
               <div className="flex items-center gap-2">
-                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-accent/15 text-accent">
+                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
                   <Brain className="h-4.5 w-4.5" />
                 </div>
                 <div>

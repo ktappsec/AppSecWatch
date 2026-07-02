@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import xml.etree.ElementTree as ET
 
-from watchtower.audit.sslscan_runner import (
+from appsecwatch.audit.sslscan_runner import (
     _checks_to_findings,
     _evaluate_checklist,
     _first_ssltest,

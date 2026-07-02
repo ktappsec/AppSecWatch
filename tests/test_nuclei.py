@@ -2,11 +2,11 @@
 and granular NucleiConfig → command mapping."""
 from __future__ import annotations
 
-import watchtower.api.nuclei_custom as nc
-from watchtower.api.db import Database
-from watchtower.api.nuclei_catalog import NucleiCatalog
-from watchtower.api.nuclei_custom import CustomTemplateManager, _extract_yaml, validate_template
-from watchtower.config import NucleiConfig
+import appsecwatch.api.nuclei_custom as nc
+from appsecwatch.api.db import Database
+from appsecwatch.api.nuclei_catalog import NucleiCatalog
+from appsecwatch.api.nuclei_custom import CustomTemplateManager, _extract_yaml, validate_template
+from appsecwatch.config import NucleiConfig
 
 
 def _write(p, tid, sev, tags, name="t"):
@@ -74,7 +74,7 @@ def test_nuclei_config_accepts_granular_fields():
 
 
 def test_build_nuclei_cmd_granular(tmp_path):
-    from watchtower.audit.nuclei_runner import build_nuclei_cmd
+    from appsecwatch.audit.nuclei_runner import build_nuclei_cmd
     out = tmp_path / "n.jsonl"
     # default: auto-scan on, no explicit selection
     assert "-as" in build_nuclei_cmd(NucleiConfig(), out)

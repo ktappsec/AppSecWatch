@@ -52,16 +52,16 @@ export default function SettingsPage() {
   return (
     <div className="mx-auto max-w-2xl space-y-6">
       <div>
-        <h1 className="text-2xl font-bold">Settings</h1>
+        <h1 className="text-xl font-semibold tracking-tight">Settings</h1>
         <p className="text-sm text-muted-foreground">
-          Connect the UI to your WatchTower FastAPI backend. Stored locally in your browser.
+          Connect the UI to your AppSecWatch FastAPI backend. Stored locally in your browser.
         </p>
       </div>
 
       <Card className="gap-5 p-6">
         <div className="flex items-center gap-2">
-          <Plug className="h-5 w-5 text-accent" />
-          <h3 className="text-lg font-bold">API connection</h3>
+          <Plug className="h-5 w-5 text-primary" />
+          <h3 className="text-lg font-semibold">API connection</h3>
         </div>
 
         <div className="space-y-1.5">
@@ -72,7 +72,7 @@ export default function SettingsPage() {
             placeholder="http://127.0.0.1:8099"
           />
           <p className="text-xs text-muted-foreground">
-            Where <span className="font-mono">watchtower serve</span> is listening.
+            Where <span className="font-mono">appsecwatch serve</span> is listening.
           </p>
         </div>
 
@@ -88,7 +88,7 @@ export default function SettingsPage() {
           />
           <p className="text-xs text-muted-foreground">
             Sent as <span className="font-mono">Authorization: Bearer …</span>. Matches an entry in{" "}
-            <span className="font-mono">WATCHTOWER_API_KEYS</span>.
+            <span className="font-mono">APPSECWATCH_API_KEYS</span>.
           </p>
         </div>
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from watchtower.audit.cookies import is_infra_cookie
+from appsecwatch.audit.cookies import is_infra_cookie
 
 
 @pytest.mark.parametrize("name", [

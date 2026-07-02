@@ -2,6 +2,14 @@
 
 Bu dokümanın amacı: AppSecMan'in görünüş ve hissini başka ürünlerde **aynı şekilde** yeniden üretebilmek. Hangi teknolojiler kullanılıyor, hangi token'lar/renkler, hangi düzen (layout) prensipleri, hangi bileşen pattern'leri — hepsi tek dosyada.
 
+> **AppSecWatch divergence (2026-07):** AppSecWatch'ın `web/` UI'ı bu spec'ten şu
+> noktalarda bilinçli olarak ayrıldı — bunlar için `web/src/app/globals.css` +
+> `AGENTS.md` esas alınır: **light-first** tema (dark toggle ile), **Geist Sans/Mono**
+> (`geist` paketi, `next/font/local`), **tek** desatüre indigo vurgu rengi
+> (`--primary`; `--accent` yalnızca shadcn hover-tint semantiği), ve semantik
+> durum/severity token'ları (`--success`, `--warning`, `--sev-critical…--sev-info`
+> — bileşenlerde hex yok). Aşağıdaki bölümler AppSecMan'i (ana ürünü) tarif eder.
+
 ---
 
 ## 1. Genel Bakış — Stack özeti
@@ -38,7 +46,7 @@ Bu dokümanın amacı: AppSecMan'in görünüş ve hissini başka ürünlerde **
 > **Üretilen raporlar ayrı temalıdır:** Motorun ürettiği `report.html` ve
 > `executive.html`, web uygulamasının oklch token sisteminden **bağımsız**, kendi
 > içine gömülü (self-contained) CSS değişkenleriyle temalanır
-> (`watchtower/report/templates/_theme.css.j2`; `data-theme` + `prefers-color-scheme`,
+> (`appsecwatch/report/templates/_theme.css.j2`; `data-theme` + `prefers-color-scheme`,
 > baskıda açık palet). Tarama detay sayfası bu belgeleri `<iframe>` ile gömer ve
 > **Executive** + **PDF indir** bağlantılarını sunar; raporun teması uygulamanınkiyle
 > karışmaz.

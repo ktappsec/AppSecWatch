@@ -7,7 +7,7 @@ import {
 } from "@/components/ui/tooltip";
 import type { CoverageEntry } from "@/lib/types";
 
-const ORDER = ["recon", "takeovers", "tls", "nuclei", "headers", "supply-chain", "ai"];
+const ORDER = ["recon", "takeovers", "tls", "nuclei", "headers", "supply-chain", "zap", "ai"];
 const LABELS: Record<string, string> = {
   recon: "Recon",
   takeovers: "Takeovers",
@@ -15,6 +15,7 @@ const LABELS: Record<string, string> = {
   nuclei: "Web CVEs",
   headers: "Headers",
   "supply-chain": "Supply chain",
+  zap: "Active scan",
   ai: "AI",
 };
 
@@ -42,9 +43,9 @@ export function CoverageStrip({
                 className={cn(
                   "inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs font-medium",
                   partial
-                    ? "border-[#ffd600]/40 bg-[#ffd600]/10 text-[#d9b400]"
+                    ? "border-warning/40 bg-warning/10 text-warning"
                     : c.ran
-                      ? "border-[#00c853]/40 bg-[#00c853]/10 text-[#00c853]"
+                      ? "border-success/40 bg-success/10 text-success"
                       : "border-border text-muted-foreground"
                 )}
               >
@@ -65,7 +66,7 @@ export function CoverageStrip({
                 <div className="mt-1 space-y-0.5">
                   {subEntries.map(([k, v]) => (
                     <div key={k} className="flex items-center gap-1.5">
-                      <span className={v.ran ? "text-[#00c853]" : "text-muted-foreground"}>
+                      <span className={v.ran ? "text-success" : "text-muted-foreground"}>
                         {v.ran ? "✓" : "✗"}
                       </span>
                       <span>{subLeaf(k)}</span>

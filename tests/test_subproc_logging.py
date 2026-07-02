@@ -5,7 +5,7 @@ import asyncio
 
 import pytest
 
-from watchtower.util.subproc import run_tool
+from appsecwatch.util.subproc import run_tool
 
 
 class _CapLog:

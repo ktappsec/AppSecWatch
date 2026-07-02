@@ -20,7 +20,7 @@ import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Progress } from "@/components/ui/progress";
-import { StateBadge } from "@/components/badges";
+import { StateBadge, SeverityDot } from "@/components/badges";
 import { ApiErrorState } from "@/components/api-error-state";
 import { CoverageStrip } from "@/components/scan/coverage-strip";
 import { FindingsTable, findingKey } from "@/components/scan/findings-table";
@@ -32,12 +32,14 @@ import { LogView } from "@/components/scan/log-view";
 import { api, ApiError } from "@/lib/api";
 import { usePoll } from "@/lib/hooks";
 import { relativeTime, formatDuration, rootsLabel } from "@/lib/format";
-import { SEVERITY_ORDER, SEVERITY_COLORS, TERMINAL_STATES } from "@/lib/constants";
+import { SEVERITY_ORDER, SEVERITY_CLASSES, TERMINAL_STATES } from "@/lib/constants";
 import { toast } from "@/components/ui/sonner";
 import { cn } from "@/lib/utils";
 import type { JobStatus, ScanResult } from "@/lib/types";
 
 // Stage order for the live progress bar (recon spine + audit + report).
+// `audit.zap` (the opt-in active scan) runs in the audit phase after the parallel
+// fan-out; it appears standalone on an --only zap run.
 const STAGE_FLOW = [
   "recon.subfinder",
   "recon.dnsx-triage",
@@ -46,6 +48,7 @@ const STAGE_FLOW = [
   "ai.profile",
   "audit.takeovers",
   "audit.parallel",
+  "audit.zap",
   "ai.analyze",
   "report",
   "compress",
@@ -126,7 +129,12 @@ function ScanDetail() {
             <ArrowLeft className="h-3.5 w-3.5" /> All scans
           </Link>
           <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold">{rootsLabel(job.roots)}</h1>
+            <h1
+              className="max-w-[60ch] truncate text-xl font-semibold tracking-tight"
+              title={job.roots?.length ? job.roots.join(", ") : undefined}
+            >
+              {rootsLabel(job.roots)}
+            </h1>
             <StateBadge state={job.state} />
           </div>
           <button
@@ -315,21 +323,25 @@ function ScanDetail() {
 
 function LiveProgress({ job }: { job: JobStatus }) {
   const completed = new Set(job.completed_stages);
-  const idx = job.current_stage ? STAGE_FLOW.indexOf(job.current_stage) : completed.size;
+  // Prefer the current stage's position in the known flow; if it's an
+  // unrecognized stage (indexOf === -1) fall back to the completed count so the
+  // bar never collapses to 0 mid-run.
+  const flowIdx = job.current_stage ? STAGE_FLOW.indexOf(job.current_stage) : -1;
+  const idx = flowIdx >= 0 ? flowIdx : completed.size;
   const pct = Math.min(100, Math.round(((idx + 1) / STAGE_FLOW.length) * 100));
 
   return (
     <Card className="gap-3 p-5">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2 text-sm font-medium">
-          <Loader2 className="h-4 w-4 animate-spin text-accent" />
+          <Loader2 className="h-4 w-4 animate-spin text-primary" />
           {job.state === "queued" ? "Queued — waiting for a slot" : "Scan in progress"}
         </div>
         <span className="text-xs text-muted-foreground">
           {job.current_stage ? `Stage: ${job.current_stage}` : `${completed.size} stages done`}
         </span>
       </div>
-      <Progress value={pct} indicatorClassName="bg-gradient-to-r from-primary to-accent" />
+      <Progress value={pct} indicatorClassName="bg-primary" />
       {job.completed_stages.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
           {job.completed_stages.map((s) => (
@@ -344,23 +356,25 @@ function LiveProgress({ job }: { job: JobStatus }) {
 }
 
 function SeveritySummary({ totals }: { totals: Record<string, number> }) {
-  const any = SEVERITY_ORDER.some((s) => totals[s] > 0);
-  if (!any) return null;
+  const shown = SEVERITY_ORDER.filter((s) => totals[s] > 0);
+  if (shown.length === 0) return null;
   return (
     <div className="flex flex-wrap gap-2">
-      {SEVERITY_ORDER.filter((s) => totals[s] > 0).map((s) => (
-        <span
-          key={s}
-          className="inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs font-medium capitalize"
-          style={{
-            borderColor: `${SEVERITY_COLORS[s]}66`,
-            color: SEVERITY_COLORS[s],
-            backgroundColor: `${SEVERITY_COLORS[s]}1a`,
-          }}
-        >
-          {totals[s]} {s}
-        </span>
-      ))}
+      {shown.map((s) => {
+        const c = SEVERITY_CLASSES[s];
+        return (
+          <span
+            key={s}
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs font-medium capitalize tabular-nums",
+              c.badge
+            )}
+          >
+            <SeverityDot severity={s} />
+            {totals[s]} {s}
+          </span>
+        );
+      })}
     </div>
   );
 }
@@ -391,7 +405,7 @@ function PendingResult({ live }: { live: boolean }) {
     <div className="flex flex-col items-center gap-2 py-12 text-center text-sm text-muted-foreground">
       {live ? (
         <>
-          <Loader2 className="h-6 w-6 animate-spin text-accent" />
+          <Loader2 className="h-6 w-6 animate-spin text-primary" />
           Results appear when the scan completes.
         </>
       ) : (
@@ -415,7 +429,7 @@ function NotFound({ message }: { message?: string }) {
   return (
     <Card className="mx-auto mt-10 max-w-md items-center gap-3 p-10 text-center">
       <AlertCircle className="h-10 w-10 text-muted-foreground" />
-      <h2 className="text-lg font-bold">Scan not found</h2>
+      <h2 className="text-lg font-semibold">Scan not found</h2>
       <p className="text-sm text-muted-foreground">
         {message ?? "This run id doesn't exist on the server."}
       </p>

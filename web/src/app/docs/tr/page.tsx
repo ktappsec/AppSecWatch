@@ -5,8 +5,8 @@ import { CAPABILITY_TOKENS, THROTTLE_PROFILES } from "@/lib/constants";
 import { Arrow, Badge, Callout, DocsLangToggle, Figure, FlowNode, Mono, Section } from "@/components/docs/ui";
 
 export const metadata: Metadata = {
-  title: "Dokümanlar · WatchTower",
-  description: "WatchTower nasıl tarar, sınıflandırır ve raporlar.",
+  title: "Dokümanlar · AppSecWatch",
+  description: "AppSecWatch nasıl tarar, sınıflandırır ve raporlar.",
 };
 
 const TOC: { id: string; label: string }[] = [
@@ -33,7 +33,7 @@ const THROTTLE_NOTES: Record<string, string> = {
   insane: "En hızlı ve en gürültülü (httpx thread 200) — WAF'ları KESİNLİKLE tetikler.",
 };
 
-// Kademe başına tam ayar değerleri — watchtower/config.py `_PROFILES` ile birebir.
+// Kademe başına tam ayar değerleri — appsecwatch/config.py `_PROFILES` ile birebir.
 const THROTTLE_DETAIL: {
   tier: string; httpx: string; nuclei: number; takeovers: number; dnsx: number; tlsx: number; tls: string; conc: string;
 }[] = [
@@ -44,7 +44,7 @@ const THROTTLE_DETAIL: {
   { tier: "insane", httpx: "1000 / 200", nuclei: 1000, takeovers: 300, dnsx: 10000, tlsx: 500, tls: "120 sn", conc: "40 / 20 / 15" },
 ];
 
-// Gizli kimlik profilleri — watchtower/config.py `IDENTITY_PRESETS` ile birebir.
+// Gizli kimlik profilleri — appsecwatch/config.py `IDENTITY_PRESETS` ile birebir.
 const IDENTITY_PRESETS: { name: string; ua: string; platform: string; hints: string; isDefault?: boolean }[] = [
   { name: "chrome-win", ua: "Chrome/149 · Windows NT 10.0", platform: '"Windows"', hints: "yalnızca düşük entropili", isDefault: true },
   { name: "chrome-mac", ua: "Chrome/149 · Intel Mac OS X 10_15_7", platform: '"macOS"', hints: "yalnızca düşük entropili" },
@@ -62,11 +62,11 @@ export default function DocsPageTR() {
     <div className="mx-auto max-w-4xl space-y-8">
       <header className="space-y-2">
         <div className="flex items-start justify-between gap-4">
-          <h1 className="text-3xl font-bold">WatchTower dokümantasyonu</h1>
+          <h1 className="text-3xl font-bold">AppSecWatch dokümantasyonu</h1>
           <DocsLangToggle active="tr" />
         </div>
         <p className="text-sm text-muted-foreground">
-          WatchTower, anlık (point-in-time) harici bir{" "}
+          AppSecWatch, anlık (point-in-time) harici bir{" "}
           <span className="font-medium">Katman-7 AppSec</span> denetim orkestratörüdür. Her tarama
           eksiksiz, bağımsız bir çıktı seti üretir — veritabanı yoktur ve koşular arasında durum
           taşınmaz.
@@ -81,7 +81,7 @@ export default function DocsPageTR() {
         <nav className="flex flex-wrap gap-2">
           {TOC.map((t) => (
             <a key={t.id} href={`#${t.id}`}
-              className="rounded-lg border border-border px-3 py-1.5 text-xs text-muted-foreground transition-smooth hover:border-accent/40 hover:text-accent">
+              className="rounded-lg border border-border px-3 py-1.5 text-xs text-muted-foreground transition-smooth hover:border-primary/40 hover:text-primary">
               {t.label}
             </a>
           ))}
@@ -131,7 +131,7 @@ export default function DocsPageTR() {
 
       <Section id="liveness" title="Canlı vs ölü varlıklar">
         <p>
-          WatchTower keşfedilen her adı tek bir <strong>canlılık</strong> ekseninde sınıflandırır —
+          AppSecWatch keşfedilen her adı tek bir <strong>canlılık</strong> ekseninde sınıflandırır —
           sahiplik / “kapsam-içi vs gölge-BT” kovalaması yoktur. Bir L7 denetimi için önemli olan,
           hostun yanıt verip vermediğidir; IP'sini hangi ağın barındırdığı değil.
         </p>
@@ -144,7 +144,7 @@ export default function DocsPageTR() {
           <li>
             <Badge tone="muted">ölü</Badge> — NXDOMAIN veya A kaydı yok (ör. sarkan bir{" "}
             <Mono>CNAME</Mono>). Aktif taranmaz, ancak çevrimdışı sağlayıcı-parmak izi DB'si
-            üzerinden <a href="#audit" className="text-accent hover:underline">alt alan ele
+            üzerinden <a href="#audit" className="text-primary hover:underline">alt alan ele
             geçirme</a> için izlenir.
           </li>
         </ul>
@@ -159,17 +159,17 @@ export default function DocsPageTR() {
         <p>
           Canlı küme üzerinde beş bağımsız yetenek paralel çalışır (ölü küme yalnızca çevrimdışı ele
           geçirme kontrolünü besler). Her biri eşzamanlılık sınırlarıyla ve seçilen{" "}
-          <a href="#throttle" className="text-accent hover:underline">hız kademesiyle</a> sınırlıdır.
+          <a href="#throttle" className="text-primary hover:underline">hız kademesiyle</a> sınırlıdır.
         </p>
         <Figure caption="Denetim aşaması. Beş düğüm eşzamanlı çalışır; hiçbiri diğerine bağlı değildir.">
           <AuditFanout />
         </Figure>
         <ul className="ml-4 list-disc space-y-1.5">
           <li><strong>Ele geçirmeler</strong> — iki yarım: CNAME zinciri kökleri terk eden canlı hostlar <Mono>nuclei -t http/takeovers/</Mono> ile kontrol edilir; ölü / sarkan sınıf, paketlenmiş bir sağlayıcı-parmak izi DB'sine (can-i-take-over-xyz) karşı <strong>çevrimdışı</strong> eşleştirilir — nuclei'nin yapısal olarak ulaşamadığı bir sınıf.</li>
-          <li><strong>TLS</strong> — <Mono>sslscan</Mono> → host başına geçti/kaldı <a href="#tls" className="text-accent hover:underline">karnesi</a>. Pasiftir, dolayısıyla WAF'ları tetiklemez.</li>
+          <li><strong>TLS</strong> — <Mono>sslscan</Mono> → host başına geçti/kaldı <a href="#tls" className="text-primary hover:underline">karnesi</a>. Pasiftir, dolayısıyla WAF'ları tetiklemez.</li>
           <li><strong>Web CVE'leri</strong> — canlı web sunucularına karşı <Mono>nuclei</Mono> oto-tarama (şablonlar tespit edilen teknolojiyle sınırlanır).</li>
           <li><strong>Güvenlik başlıkları</strong> — httpx'in zaten yakaladığı yanıt başlıklarının deterministik, pasif analizi: OWASP en iyi-uygulama kataloğu ve yapılandırılmış bir CSP zafiyet taraması. Yeni istek yapılmaz.</li>
-          <li><strong>Tedarik zinciri</strong> — Playwright/Chromium <a href="#profiling" className="text-accent hover:underline">tarayıcısı</a> (yalnızca-yapı yakalama).</li>
+          <li><strong>Tedarik zinciri</strong> — Playwright/Chromium <a href="#profiling" className="text-primary hover:underline">tarayıcısı</a> (yalnızca-yapı yakalama).</li>
         </ul>
       </Section>
 
@@ -183,8 +183,8 @@ export default function DocsPageTR() {
           <AiFlow />
         </Figure>
         <ul className="ml-4 list-disc space-y-1.5">
-          <li><strong>ai.profile</strong> — her uygulamanın ne olduğunu (giriş portalı, API, tanıtım sitesi…) ve sahip olması gereken kontrolleri çıkarır. Girdisi <a href="#profiling" className="text-accent hover:underline"><Mono>ai.profile.render</Mono></a> ile belirlenir.</li>
-          <li><strong>ai.triage</strong> — host başına <em>tüm</em> deterministik bulguları (nuclei / TLS / js_lib / headers / takeover) gözden geçirir, muhtemel yanlış pozitifleri yumuşak bastırır ve kuralların kaçırdığı başlık sorunlarını ekler. Bkz. <a href="#suppression" className="text-accent hover:underline">Bastırma</a>.</li>
+          <li><strong>ai.profile</strong> — her uygulamanın ne olduğunu (giriş portalı, API, tanıtım sitesi…) ve sahip olması gereken kontrolleri çıkarır. Girdisi <a href="#profiling" className="text-primary hover:underline"><Mono>ai.profile.render</Mono></a> ile belirlenir.</li>
+          <li><strong>ai.triage</strong> — host başına <em>tüm</em> deterministik bulguları (nuclei / TLS / js_lib / headers / takeover) gözden geçirir, muhtemel yanlış pozitifleri yumuşak bastırır ve kuralların kaçırdığı başlık sorunlarını ekler. Bkz. <a href="#suppression" className="text-primary hover:underline">Bastırma</a>.</li>
           <li><strong>ai.supply-chain</strong> — tarayıcının betikleri üzerinde risk değerlendirmesi; her biri <strong>Python tarafında</strong> 1./3. taraf olarak önceden etiketlenir (taraf kararını LLM asla vermez), profile göre ağırlıklandırılır.</li>
         </ul>
         <Callout>
@@ -332,7 +332,7 @@ export default function DocsPageTR() {
                 <tr key={p.name} className="border-b border-border/50">
                   <td>
                     <Mono>{p.name}</Mono>
-                    {p.isDefault && <span className="ml-1.5 text-[10px] text-accent">varsayılan</span>}
+                    {p.isDefault && <span className="ml-1.5 text-[10px] text-primary">varsayılan</span>}
                   </td>
                   <td className="text-muted-foreground">{p.ua}</td>
                   <td className="font-mono">{p.platform}</td>
@@ -513,16 +513,16 @@ function ReconFlow() {
       <Arrow dir="down" />
 
       {/* DNS → TLS yeniden keşif döngüsü, geri-dönüş teliyle bir çevrim olarak çizilir */}
-      <div className="relative w-full max-w-sm rounded-lg border border-dashed border-accent/50 px-3 pb-3 pt-4">
-        <span className="absolute -top-2 left-1/2 -translate-x-1/2 whitespace-nowrap bg-card px-1.5 text-[10px] font-medium text-accent">
+      <div className="relative w-full max-w-sm rounded-lg border border-dashed border-primary/50 px-3 pb-3 pt-4">
+        <span className="absolute -top-2 left-1/2 -translate-x-1/2 whitespace-nowrap bg-card px-1.5 text-[10px] font-medium text-primary">
           🔁 DNS → TLS yeniden keşif döngüsü · ≤ 3×
         </span>
         <div className="flex items-stretch gap-3">
           {/* geri-dönüş teli: tlsx (alt) → dnsx (üst) */}
           <div className="relative flex w-5 flex-col items-center">
-            <span className="text-sm leading-none text-accent">▲</span>
-            <div className="w-px flex-1 bg-accent/50" />
-            <span className="absolute top-1/2 -translate-y-1/2 text-[9px] uppercase tracking-wide text-accent [writing-mode:vertical-rl] rotate-180">
+            <span className="text-sm leading-none text-primary">▲</span>
+            <div className="w-px flex-1 bg-primary/50" />
+            <span className="absolute top-1/2 -translate-y-1/2 text-[9px] uppercase tracking-wide text-primary [writing-mode:vertical-rl] rotate-180">
               yeni SAN
             </span>
           </div>

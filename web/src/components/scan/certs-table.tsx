@@ -54,7 +54,7 @@ export function CertsTable({ certs }: { certs: CertInfo[] }) {
                 </TableCell>
                 <TableCell>
                   {c.days_remaining != null ? (
-                    <span className={cn("text-sm", soon ? "font-semibold text-destructive" : "text-[#00c853]")}>
+                    <span className={cn("text-sm", soon ? "font-semibold text-destructive" : "text-success")}>
                       {c.days_remaining}d
                     </span>
                   ) : (
@@ -66,7 +66,7 @@ export function CertsTable({ certs }: { certs: CertInfo[] }) {
                   {c.self_signed && <Flag className="text-destructive border-destructive/40">self-signed</Flag>}
                   {c.wildcard && <Flag className="text-muted-foreground border-border">wildcard</Flag>}
                 </TableCell>
-                <TableCell className="hidden lg:table-cell text-xs text-muted-foreground">
+                <TableCell className="hidden lg:table-cell text-xs text-muted-foreground tabular-nums">
                   {c.sans.length}
                 </TableCell>
               </TableRow>

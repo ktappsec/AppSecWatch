@@ -26,5 +26,9 @@ export function shortId(id: string): string {
 }
 
 export function rootsLabel(roots?: string[] | null): string {
-  return roots && roots.length ? roots.join(", ") : "—";
+  if (!roots || !roots.length) return "—";
+  if (roots.length <= 2) return roots.join(", ");
+  // A whole-fleet / all-assets scan resolves to many roots — don't dump the whole
+  // list as a title. Show the first two + a count (full list via a `title` tooltip).
+  return `${roots.slice(0, 2).join(", ")} +${roots.length - 2} more`;
 }

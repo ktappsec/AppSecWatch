@@ -1,28 +1,28 @@
-# WatchTower Web API — example server config.
+# AppSecWatch Web API — example server config.
 #
 # BOOTSTRAP SEED ONLY. The runtime config is UI-managed: this file seeds the very
-# first boot, after which a writable JSON store (WATCHTOWER_CONFIG_STORE, default
+# first boot, after which a writable JSON store (APPSECWATCH_CONFIG_STORE, default
 # <output_root>/.config/server-config.json) is the source of truth, edited live
 # via GET/PUT /config (the Settings page). The whole base_config below — including
 # llm.api_key — becomes UI-editable + persisted in that store. (There is no
 # scan-target allowlist; the per-scan roots is the only scope.)
 #
 # Env (the API's own auth secrets stay env-only):
-#   WATCHTOWER_API_KEYS        comma-separated API keys (Authorization: Bearer <key>)
-#   WATCHTOWER_WEBHOOK_SECRET  HMAC-SHA256 signing secret for webhook callbacks
-#   WATCHTOWER_LLM_API_KEY     SEEDS base_config.llm.api_key on first boot only
-#   WATCHTOWER_CONFIG_STORE    path to the writable runtime store (optional override)
+#   APPSECWATCH_API_KEYS        comma-separated API keys (Authorization: Bearer <key>)
+#   APPSECWATCH_WEBHOOK_SECRET  HMAC-SHA256 signing secret for webhook callbacks
+#   APPSECWATCH_LLM_API_KEY     SEEDS base_config.llm.api_key on first boot only
+#   APPSECWATCH_CONFIG_STORE    path to the writable runtime store (optional override)
 #   ZAP_API_KEY                ZAP daemon api.key (docker-compose zap sidecar) — set the
 #                              matching base_config.zap.api_key in the UI to enable active scans
 #
-# Run:  watchtower serve -c example.server.yaml --host 127.0.0.1 --port 8080
-# If WATCHTOWER_API_KEYS is unset the API runs OPEN (handy for local UI dev).
+# Run:  appsecwatch serve -c example.server.yaml --host 127.0.0.1 --port 8080
+# If APPSECWATCH_API_KEYS is unset the API runs OPEN (handy for local UI dev).
 
 # Where run directories are written (the durable record).
 output_root: ./runs
 
 # NOTE: there is no scan-target allowlist — the per-scan `roots` is the only
-# scope. With auth (WATCHTOWER_API_KEYS) unset the API is OPEN and can be pointed
+# scope. With auth (APPSECWATCH_API_KEYS) unset the API is OPEN and can be pointed
 # at any host, so set API keys before exposing this server.
 
 bind:
@@ -40,8 +40,8 @@ webhook:
 
 docs_enabled: true   # expose /docs + /openapi.json
 
-# The base WatchTowerConfig used for every scan. May instead be a path:
-#   base_config: /etc/watchtower/scan.yaml
+# The base AppSecWatchConfig used for every scan. May instead be a path:
+#   base_config: /etc/appsecwatch/scan.yaml
 # `roots` is supplied per-request, so it is omitted here.
 base_config:
   mmdb_path: /data/mmdb/GeoLite2-ASN.mmdb   # optional — ASN/org enrichment only
@@ -49,7 +49,7 @@ base_config:
   llm:
     base_url: https://openrouter.ai/api/v1
     model: minimax/minimax-m3
-    # api_key comes from WATCHTOWER_LLM_API_KEY
+    # api_key comes from APPSECWATCH_LLM_API_KEY
   # OWASP ZAP active scan (opt-in). Disabled by default — enable + point at the
   # sidecar daemon (docker-compose `zap` service) to allow `--only zap` scans:
   #   zap:

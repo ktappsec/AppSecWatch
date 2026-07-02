@@ -1,8 +1,8 @@
 # syntax=docker/dockerfile:1.7
 #
-# WatchTower — single-image deploy.
+# AppSecWatch — single-image deploy.
 # All recon/audit binaries pinned. Python deps installed via pip.
-# The Next.js UI is built in a Node stage and served by FastAPI (watchtower serve).
+# The Next.js UI is built in a Node stage and served by FastAPI (appsecwatch serve).
 # GeoLite2-ASN MMDB is NOT baked in: bind-mount /data/mmdb at runtime.
 #
 # Build caching: dependencies are installed in layers keyed ONLY on their
@@ -108,22 +108,22 @@ RUN python -m playwright install chromium
 # + --no-cache-dir guarantee the wheel is rebuilt from the CURRENT source on each
 # code edit (else pip treats 0.1.0 as already-satisfied / reuses a stale wheel).
 # Deps are already present (--no-deps), so this is a quick local build.
-COPY watchtower ./watchtower
+COPY appsecwatch ./appsecwatch
 RUN pip install --no-deps --force-reinstall --no-cache-dir .
 
 # --- Bundled UI ------------------------------------------------------------
-# Static export from the Node stage; `watchtower serve` serves it at / (API → /api)
-# when WATCHTOWER_UI_DIR is set.
+# Static export from the Node stage; `appsecwatch serve` serves it at / (API → /api)
+# when APPSECWATCH_UI_DIR is set.
 COPY --from=ui-build /web/out /app/web-dist
-ENV WATCHTOWER_UI_DIR=/app/web-dist
+ENV APPSECWATCH_UI_DIR=/app/web-dist
 
 # Runtime expects the MMDB at this path (bind-mount).
-ENV WATCHTOWER_MMDB_PATH=/data/mmdb/GeoLite2-ASN.mmdb
+ENV APPSECWATCH_MMDB_PATH=/data/mmdb/GeoLite2-ASN.mmdb
 
 VOLUME ["/data/mmdb", "/data/runs"]
 
-# Web API + UI (watchtower serve). No-op for the CLI subcommands.
+# Web API + UI (appsecwatch serve). No-op for the CLI subcommands.
 EXPOSE 8080
 
-ENTRYPOINT ["watchtower"]
+ENTRYPOINT ["appsecwatch"]
 CMD ["--help"]

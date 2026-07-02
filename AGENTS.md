@@ -1,10 +1,10 @@
-# AGENTS.md — working in the WatchTower repo
+# AGENTS.md — working in the AppSecWatch repo
 
 Orientation for AI agents. Read this first, then the canonical docs below.
 
 ## What this is
 
-WatchTower is a **point-in-time, single-run external AppSec audit orchestrator**.
+AppSecWatch is a **point-in-time, single-run external AppSec audit orchestrator**.
 A modular async pipeline (recon → triage → audit fan-out → AI analysis →
 aggregate → `report.html`) driven by a CLI, a Python API, and a Web API. **No
 database, no state across runs** — every scan writes a complete, standalone
@@ -16,7 +16,7 @@ artifact set under `runs/<id>/`. Target deployment: Docker on Debian.
 |---|---|---|
 | Locked design / data model / decisions | **`DESIGN.md`** | **Wins on any conflict.** |
 | CLI + config + run layout + Python API | `API.md` | Reference |
-| Web API contract & design | `WEB_API_PLAN.md` | Reference (implemented in `watchtower/api/`) |
+| Web API contract & design | `WEB_API_PLAN.md` | Reference (implemented in `appsecwatch/api/`) |
 | UI stack & design system | `UI-SPEC.md` | Reference (implemented in `web/`) |
 | Top-level overview | `DOCS.md` | Summary |
 
@@ -25,10 +25,10 @@ If you change behavior, update the matching doc in the same change.
 ## Repo layout
 
 ```
-watchtower/              Python package (the engine)
+appsecwatch/              Python package (the engine)
 ├── cli.py             argparse CLI: scan, serve, init-config, verify-deps
 ├── runner.py          run_scan (+ make_run_dir)
-├── config.py          WatchTowerConfig (Pydantic) + throttle profiles
+├── config.py          AppSecWatchConfig (Pydantic) + throttle profiles
 ├── models.py          Finding, TLSHostReport, AppProfile, TriagedAsset, RunSummary, …
 ├── stages/            Stage protocol, pipeline assembly, capability registry, ScanState
 ├── recon/ audit/ ai/  tool wrappers (subfinder/dnsx/tlsx/httpx, sslscan/nuclei/crawler, LLM).
@@ -48,7 +48,7 @@ Dockerfile             multi-stage, layer-cached: deps installed in layers keyed
                        only on pyproject.toml / package-lock.json, source copied
                        LAST + BuildKit cache mounts — a code edit rebuilds in ~10s
                        (no dep reinstall / Chromium re-download). Don't move the
-                       `COPY watchtower`/`COPY web/` above the dep installs.
+                       `COPY appsecwatch`/`COPY web/` above the dep installs.
 example.config.yaml    scan config sample;  example.server.yaml  server config sample
 ```
 
@@ -58,10 +58,10 @@ example.config.yaml    scan config sample;  example.server.yaml  server config s
 # Python (a local venv lives at .venv; Python 3.11+):
 ./.venv/bin/python -m pytest -q                 # full suite (currently 263 passing)
 ./.venv/bin/python -m pytest tests/test_api.py  # just the Web API tests
-./.venv/bin/python -m watchtower --help
+./.venv/bin/python -m appsecwatch --help
 
-# Run the Web API locally (OPEN if WATCHTOWER_API_KEYS is unset):
-./.venv/bin/python -m watchtower serve -c example.server.yaml --host 127.0.0.1 --port 8099
+# Run the Web API locally (OPEN if APPSECWATCH_API_KEYS is unset):
+./.venv/bin/python -m appsecwatch serve -c example.server.yaml --host 127.0.0.1 --port 8099
 
 # UI:
 cd web && npm install
@@ -70,10 +70,10 @@ npm run build                                    # Node build
 NEXT_OUTPUT=export npm run build                 # static export → web/out (served by FastAPI)
 
 # Full image (UI + API + tools in one container):
-docker build -t watchtower .
-docker run --rm -p 8080:8080 -e WATCHTOWER_API_KEYS=key \
-  -v "$PWD/example.server.yaml:/etc/watchtower/server.yaml:ro" \
-  watchtower serve -c /etc/watchtower/server.yaml --host 0.0.0.0 --port 8080
+docker build -t appsecwatch .
+docker run --rm -p 8080:8080 -e APPSECWATCH_API_KEYS=key \
+  -v "$PWD/example.server.yaml:/etc/appsecwatch/server.yaml:ro" \
+  appsecwatch serve -c /etc/appsecwatch/server.yaml --host 0.0.0.0 --port 8080
 # → UI at /,  API at /api/...
 ```
 
@@ -81,7 +81,7 @@ docker run --rm -p 8080:8080 -e WATCHTOWER_API_KEYS=key \
 
 **Engine**
 - `runs/` is the source of truth; runs are self-describing. No DB, no cross-run state.
-- **Liveness, not ownership.** WatchTower is a Layer-7 AppSec tool, so assets are
+- **Liveness, not ownership.** AppSecWatch is a Layer-7 AppSec tool, so assets are
   NOT classified by where their IP is hosted. There is **no** `in_scope`/
   `shadow_it`/`dead` bucket model and **no** `sanctioned_cidrs`/`sanctioned_asns`
   (both removed). `TriagedAsset.status` is a single liveness axis: `live` (≥1 A
@@ -91,7 +91,7 @@ docker run --rm -p 8080:8080 -e WATCHTOWER_API_KEYS=key \
   regardless of hosting. ASN/org is **display-only** enrichment via an **optional**
   `mmdb_path` (`IPInfoLookup(mmdb_path=None)` degrades to no ASN, never errors) —
   it does **not** gate scans. `ScanState` exposes `live()`/`dead()`. Old stored
-  configs with the removed keys still load (`WatchTowerConfig` uses
+  configs with the removed keys still load (`AppSecWatchConfig` uses
   `ConfigDict(extra="ignore")`).
 - **TLS = sslscan** (`audit/sslscan_runner.py`, stage `audit.sslscan`, leaf token
   `tls`). `build_sslscan_cmd` → `sslscan --no-failed --xml=<path> … host:port`,
@@ -128,12 +128,12 @@ docker run --rm -p 8080:8080 -e WATCHTOWER_API_KEYS=key \
   Pydantic-validated with one retry then graceful degradation. Party-ness
   (1st/3rd) is decided in Python (`tldextract`), never by the LLM.
 - **LLM request attribution** (`LLMConfig.app_title`/`app_url`/`tag_requests`,
-  applied in `ai/client.py`): the client sets `X-Title` (default `WatchTower`) +
+  applied in `ai/client.py`): the client sets `X-Title` (default `AppSecWatch`) +
   optional `HTTP-Referer` default headers so OpenRouter can name/group the spend.
   `LLMClient.chat(..., label=...)` reuses the existing per-call label
   (`profile[host]`/`triage[host]`/`supply[host]`, plus `nuclei-gen` from
   `nuclei_custom`): when `tag_requests`, it overrides `X-Title` with the call
-  **purpose** (`WatchTower: profile`) so spend breaks down by call type, and on an
+  **purpose** (`AppSecWatch: profile`) so spend breaks down by call type, and on an
   OpenRouter `base_url` it sets the OpenAI `user` field to the full label for
   per-host granularity. Headers/`user` are ignored by other backends, so it's safe
   off OpenRouter. If you add a new `chat()` caller, pass a `label`.
@@ -249,7 +249,7 @@ docker run --rm -p 8080:8080 -e WATCHTOWER_API_KEYS=key \
   visible), and `require_profile` (default **false** — the profile is calibration,
   not a precondition). An AI degrade suppresses nothing, so the no-gating
   invariant holds. System prompts are overridable via `cfg.ai.prompts`
-  (`watchtower/ai/prompts.py` `PROMPT_SLOTS` registry; UI: the AI Tuning page);
+  (`appsecwatch/ai/prompts.py` `PROMPT_SLOTS` registry; UI: the AI Tuning page);
   shape-hints + user assembly stay in code so an override can't break JSON.
 - **`takeovers` has two halves** (`stages/audit.py` `TakeoversStage`): nuclei
   `http/takeovers/` templates all `GET {{BaseURL}}` + match a live unclaimed-page
@@ -309,7 +309,7 @@ docker run --rm -p 8080:8080 -e WATCHTOWER_API_KEYS=key \
   at a bank's few IPs trips temporary source-blocking → httpx returns 0 live while
   tlsx (TLS-only) still works. **Use `gentle` for hardened targets** (live A/B:
   threads 3 → 84 live, threads 50 → 0). This — not the stealth headers — was the fix.
-- **Stealth identity** (`config.IdentityConfig`, `WatchTowerConfig.identity`): a
+- **Stealth identity** (`config.IdentityConfig`, `AppSecWatchConfig.identity`): a
   `preset` (off | chrome-win | chrome-mac | firefox) bundles a coherent browser
   UA + headers + locale; `user_agent`/`headers`/`locale` override/extend it. The
   default is now **`chrome-win`** (every scan presents a Chrome-on-Windows identity
@@ -328,27 +328,27 @@ docker run --rm -p 8080:8080 -e WATCHTOWER_API_KEYS=key \
   rules only — NOT TLS/JA3 fingerprinting or IP-reputation (the crawler's real
   Chromium fingerprint is the genuinely stealthy surface). No proxy support yet.
 
-**Web API (`watchtower/api/`)**
+**Web API (`appsecwatch/api/`)**
 - Thin async layer over the **unchanged** engine; reuses `run_scan`
   with an injected `run_dir` + shared `ScanState` for live progress.
 - **Config is UI-managed and primary** (`GET`/`PUT /config`); `serve -c` is
   **optional**. `server.yaml` only *seeds* first boot; a writable JSON store
-  (`ConfigManager`, path via `WATCHTOWER_CONFIG_STORE`, default
+  (`ConfigManager`, path via `APPSECWATCH_CONFIG_STORE`, default
   `<output_root>/.config/server-config.json`, `0600`) is the source of truth and
   may be edited at runtime — `PUT` mutates the live `ServerConfig` in place (the
   same instance `JobManager` reads) + persists, so the next scan uses it with no
   restart. The whole scan config is editable. `llm.api_key` is UI-managed and
   **persists in the store** (write-only: masked `********` on GET; a blank/masked
   value on PUT keeps the stored key). Only the API's own auth
-  (`WATCHTOWER_API_KEYS`) + webhook secret stay env-only.
+  (`APPSECWATCH_API_KEYS`) + webhook secret stay env-only.
 - **No scan-target allowlist** (ZAP-like): the per-request `roots` is the only
   scope. The server boots even fully unconfigured; a scan is gated at submit on a
   *valid* base config (**llm endpoint only**; `mmdb` is optional — display-only
   ASN/org enrichment, not a gate) → `409 not_configured` until set via the UI,
   not on boot. NB this **removes** the earlier invariants ("secrets only from
   env", "`allowed_roots` 403 guardrail"). With auth OPEN there is now NO
-  server-side scope ceiling — keep `WATCHTOWER_API_KEYS` set before exposing it.
-- **SQLite** (`api/db.py`, `<output_root>/watchtower.db`, stdlib `sqlite3` off-loop
+  server-side scope ceiling — keep `APPSECWATCH_API_KEYS` set before exposing it.
+- **SQLite** (`api/db.py`, `<output_root>/appsecwatch.db`, stdlib `sqlite3` off-loop
   via `asyncio.to_thread`) is the cross-run **relational layer** — phase 1 ships the
   `assets` inventory (`api/assets.py`). **Server-only**: the engine + CLI `scan`
   stay DB-free; the server does all DB writes (UI CRUD + recon→assets sync after a
@@ -389,9 +389,9 @@ docker run --rm -p 8080:8080 -e WATCHTOWER_API_KEYS=key \
   /scan-templates`; New-Scan form has Load-template + Save-as-template + a one-click
   "Quick scan (roots only)" (selection=skip + recon.subfinder). The separate recon
   toggles were removed — subfinder/tlsx are controlled via the only/skip picker.
-- **Persistence**: config store + `watchtower.db` live under `output_root` (`/data/runs`),
+- **Persistence**: config store + `appsecwatch.db` live under `output_root` (`/data/runs`),
   so a Docker REBUILD wipes them unless mounted. `docker-compose.yml` mounts a named
-  volume `watchtower-data:/data/runs`; `/capabilities.paths` surfaces the live paths
+  volume `appsecwatch-data:/data/runs`; `/capabilities.paths` surfaces the live paths
   (shown on the Settings page). DB column adds use guarded `_MIGRATIONS` in `db.py`.
 - **DB tables (all server-only):** `assets`, `scans` (history index, written at
   terminal state by `history.ScanHistory`), `schedules`, `suppressions`,
@@ -422,14 +422,20 @@ docker run --rm -p 8080:8080 -e WATCHTOWER_API_KEYS=key \
 
 **UI (`web/`)**
 - Tailwind v4 oklch tokens in `src/app/globals.css`; always compose classes with
-  `cn()` (`src/lib/utils.ts`). Dark-first theme provider; shadcn/ui over Radix in
-  `src/components/ui/`. Typed API client in `src/lib/api.ts`; TS types in
-  `src/lib/types.ts` mirror `watchtower/api/models.py` — **keep them in sync**.
+  `cn()` (`src/lib/utils.ts`). **Light-first** theme provider (dark via toggle);
+  Geist Sans/Mono via the `geist` package (wired in `layout.tsx` + `@theme inline`);
+  a SINGLE desaturated-indigo accent (`--primary`; `--accent` is only the quiet
+  shadcn hover tint) plus semantic status/severity tokens (`--success`, `--warning`,
+  `--sev-critical…--sev-info`) — never hardcode status/severity hex in components.
+  shadcn/ui over Radix in `src/components/ui/`. Typed API client in `src/lib/api.ts`;
+  TS types in `src/lib/types.ts` mirror `appsecwatch/api/models.py` — **keep them in sync**.
+  NB `UI-SPEC.md` documents the parent AppSecMan system; AppSecWatch deliberately
+  diverges where the spec header notes it (fonts, light-first, severity tokens).
 - Must stay **static-export-safe** (no dynamic route segments — the scan detail page
   uses `/scans/detail?id=…`), so FastAPI can serve the built `out/` from one image.
 
 ## After you change things
 - Run `./.venv/bin/python -m pytest -q` (engine + API) and `cd web && npm run build`.
-- If you touched the API contract, update both `watchtower/api/models.py` and
+- If you touched the API contract, update both `appsecwatch/api/models.py` and
   `web/src/lib/types.ts`, plus `WEB_API_PLAN.md` / `API.md`.
 - Commit only when asked; this repo is currently not a git repository.

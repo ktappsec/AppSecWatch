@@ -12,13 +12,13 @@ import json
 import httpx
 import pytest
 
-from watchtower.audit.zap_runner import (
+from appsecwatch.audit.zap_runner import (
     ZAP_RISK_TO_SEVERITY,
     alerts_to_findings,
     run_zap,
 )
-from watchtower.config import ZapConfig
-from watchtower.logging import RunLogger
+from appsecwatch.config import ZapConfig
+from appsecwatch.logging import RunLogger
 
 
 def _cfg(**over) -> ZapConfig:
@@ -186,10 +186,10 @@ async def test_cancellation_stops_scans_and_reraises(tmp_path, log):
 # --- ZapStage scope-lock (defense-in-depth) -----------------------------------
 
 async def test_zapstage_drops_out_of_scope_targets(tmp_path, log, monkeypatch):
-    import watchtower.audit.zap_runner as zr
-    from watchtower.config import WatchTowerConfig
-    from watchtower.stages.audit import ZapStage
-    from watchtower.stages.state import ScanState
+    import appsecwatch.audit.zap_runner as zr
+    from appsecwatch.config import AppSecWatchConfig
+    from appsecwatch.stages.audit import ZapStage
+    from appsecwatch.stages.state import ScanState
 
     received: dict = {}
 
@@ -199,7 +199,7 @@ async def test_zapstage_drops_out_of_scope_targets(tmp_path, log, monkeypatch):
 
     monkeypatch.setattr(zr, "run_zap", fake_run_zap)
 
-    cfg = WatchTowerConfig(
+    cfg = AppSecWatchConfig(
         roots=["example.com"],
         llm={"base_url": "http://llm", "model": "m"},
         zap={"enabled": True, "base_url": "http://zap:8090",

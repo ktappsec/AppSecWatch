@@ -1,8 +1,8 @@
 """curated_surface(): names-only EASM projection of a CrawlerArtifact."""
 from __future__ import annotations
 
-from watchtower.audit.surface import curated_surface
-from watchtower.models import CrawlerArtifact
+from appsecwatch.audit.surface import curated_surface
+from appsecwatch.models import CrawlerArtifact
 
 
 def _artifact() -> CrawlerArtifact:

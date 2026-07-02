@@ -1,10 +1,10 @@
 """Manual suppression: fingerprint/apply (engine) + SuppressionManager (DB)."""
 from __future__ import annotations
 
-from watchtower.api.db import Database
-from watchtower.api.suppressions import SuppressionManager
-from watchtower.audit.suppress import apply_suppressions, finding_key, finding_matches
-from watchtower.models import AIFindingVerdict, Finding
+from appsecwatch.api.db import Database
+from appsecwatch.api.suppressions import SuppressionManager
+from appsecwatch.audit.suppress import apply_suppressions, finding_key, finding_matches
+from appsecwatch.models import AIFindingVerdict, Finding
 
 
 def F(**kw) -> Finding:

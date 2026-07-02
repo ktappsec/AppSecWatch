@@ -1,11 +1,11 @@
-# WatchTower — Design Specification
+# AppSecWatch — Design Specification
 
 > **Status:** Locked v1.1 — base from the `DOCS.md` grilling session; extended
 > with **context-aware AI profiling** (§2.3) and **selective stage invocation**
 > (§2.8) from a follow-up grilling session.
 > **Deployment target:** Docker on Debian Linux.
 
-WatchTower is a **point-in-time, single-run** external AppSec audit orchestrator. It executes a modular pipeline of recon and audit tools, augments the result set with a pluggable local LLM, and renders everything into a single self-contained HTML report. The **engine** has no database — each scan writes a complete, standalone artifact set under `runs/<id>/` (the source of truth). The **Web API** adds a server-side **SQLite relational layer** (`<output_root>/watchtower.db`) for cross-run state — the asset inventory (and, per the roadmap, scheduling/suppression/findings index) — but the engine and CLI stay DB-free, so `runs/` remains self-describing. See `WEB_API_PLAN.md`.
+AppSecWatch is a **point-in-time, single-run** external AppSec audit orchestrator. It executes a modular pipeline of recon and audit tools, augments the result set with a pluggable local LLM, and renders everything into a single self-contained HTML report. The **engine** has no database — each scan writes a complete, standalone artifact set under `runs/<id>/` (the source of truth). The **Web API** adds a server-side **SQLite relational layer** (`<output_root>/appsecwatch.db`) for cross-run state — the asset inventory (and, per the roadmap, scheduling/suppression/findings index) — but the engine and CLI stay DB-free, so `runs/` remains self-describing. See `WEB_API_PLAN.md`.
 
 ---
 
@@ -60,7 +60,7 @@ Each stage **always** emits its artifact, possibly empty. `errors.json` at the r
 
 #### 2.1.1 Triage classification rules (executed in order)
 
-WatchTower is a **Layer-7 AppSec tool**: assets are *not* classified by where their
+AppSecWatch is a **Layer-7 AppSec tool**: assets are *not* classified by where their
 IP is hosted. The configured `roots` are the **only** scope — `under_any_root` is the
 sole scope boundary, and every name resolving under a root is scanned regardless of
 hosting. Within that scope, triage assigns a single **liveness** status. For each
@@ -234,7 +234,7 @@ set. `executive.pdf` renders from `executive.html` via the bundled Chromium
 
 | Item | Value |
 |---|---|
-| CLI | `watchtower scan --config <path> [--output-dir runs/] [--progress plain\|rich\|quiet] [--verbose] [--only \| --skip <tokens>] [--strict]` |
+| CLI | `appsecwatch scan --config <path> [--output-dir runs/] [--progress plain\|rich\|quiet] [--verbose] [--only \| --skip <tokens>] [--strict]` |
 | Stage selection | `--only`/`--skip` take a comma-separated list of **capability tokens** (§2.8). Mutually exclusive. |
 | Config format | **YAML**. Sections: `roots`, `mmdb_path` (optional), `llm`, `ai`, `headers`, `concurrency`, `paths_per_host`, plus per-tool config blocks. |
 | Run dir | `runs/<UTC-ISO-timestamp>-<slug>/` |
@@ -269,7 +269,7 @@ stage names:
 | `nuclei` | main `nuclei` web-CVE scan | |
 | `headers` | deterministic header + CSP analysis (§2.2.1) | Passive over httpx headers; sub-tokens `headers.csp`, `headers.best-practice`. Full-scan only. |
 | `supply-chain` | the Playwright crawler | |
-| `zap` | OWASP ZAP **active scan** (sidecar daemon over REST) | **OPT-IN** — the one capability that breaks WatchTower's otherwise-passive posture. It is NEVER part of a default/preset/`--skip` selection (`OPT_IN_TOKENS` is subtracted from those caps seeds); it runs only via explicit `--only zap`, against operator-specified, scope-locked targets (`cfg.zap.targets` / `ScanRequest.zap_targets`, each `under_any_root`). The daemon is a sidecar (not bundled, not `run_tool` — driven over REST by `audit/zap_runner.py`); time-bounded by `zap.max_minutes_*`, exempt from `throttle`. Findings are `source='zap'` (risk→severity, no `critical`; `check_id=zap.<pluginId>`); they flow through `ai.triage` for FP suppression but there is **no cross-source dedup** (overlap with `headers`/`nuclei` is tolerated). Gated three ways: `/capabilities` omits it when the daemon is off, `submit` 409s (`zap_rejected`) on disabled/empty/out-of-scope, and the stage factory no-ops when unconfigured. Unauthenticated in v1. |
+| `zap` | OWASP ZAP **active scan** (sidecar daemon over REST) | **OPT-IN** — the one capability that breaks AppSecWatch's otherwise-passive posture. It is NEVER part of a default/preset/`--skip` selection (`OPT_IN_TOKENS` is subtracted from those caps seeds); it runs only via explicit `--only zap`, against operator-specified, scope-locked targets (`cfg.zap.targets` / `ScanRequest.zap_targets`, each `under_any_root`). The daemon is a sidecar (not bundled, not `run_tool` — driven over REST by `audit/zap_runner.py`); time-bounded by `zap.max_minutes_*`, exempt from `throttle`. Findings are `source='zap'` (risk→severity, no `critical`; `check_id=zap.<pluginId>`); they flow through `ai.triage` for FP suppression but there is **no cross-source dedup** (overlap with `headers`/`nuclei` is tolerated). Gated three ways: `/capabilities` omits it when the daemon is off, `submit` 409s (`zap_rejected`) on disabled/empty/out-of-scope, and the stage factory no-ops when unconfigured. Unauthenticated in v1. |
 | `ai` | `ai.profile` + cross-source triage + supply-chain analysis + executive summary | Supply-chain *analysis* requires the crawler (see resolution). `ai.triage` (formerly `ai.headers`) soft-suppresses false-positives across **all** deterministic findings + adds header-gap findings. `ai.summary` makes one whole-run LLM call at the **tail** of the AI phase for the `executive.html` narrative (§2.5); degrades to deterministic prose. |
 
 #### 2.8.2 Selection flags
@@ -375,7 +375,7 @@ So an operator can answer *"where did we hit the limit?"*, every subprocess flow
 ```
 runs/2026-05-26T10-24-00Z-prod-fleet/
 ├── config.snapshot.yaml         # exact config used for this run (llm.api_key redacted)
-├── versions.json                # tool versions, model, MMDB date, watchtower sha
+├── versions.json                # tool versions, model, MMDB date, appsecwatch sha
 ├── manifest.json                # capability coverage: ran / skipped + reason
 ├── run.log.jsonl                # structured event log (incl. the run_summary event)
 ├── errors.json                  # consolidated failures: stage crashes + every per-host error
@@ -418,9 +418,9 @@ runs/2026-05-26T10-24-00Z-prod-fleet/
 ## 4. Config schema (YAML)
 
 > The example below is illustrative. The canonical, always-current example is
-> produced by `watchtower init-config` (see API.md §1).
+> produced by `appsecwatch init-config` (see API.md §1).
 >
-> `WatchTowerConfig` sets `model_config = ConfigDict(extra="ignore")`, so older stored
+> `AppSecWatchConfig` sets `model_config = ConfigDict(extra="ignore")`, so older stored
 > configs that still carry the removed `sanctioned_cidrs` / `sanctioned_asns` keys load
 > without error (the keys are simply dropped).
 
@@ -476,7 +476,7 @@ tools:
     auto_scan: true
     rate_limit: 100
     timeout: 5
-    user_agent: "WatchTower/0.1"
+    user_agent: "AppSecWatch/0.1"
     extra_flags: []
   takeovers:
     severities: [high, critical]
@@ -687,9 +687,9 @@ returned by their stage as `StageResult.asset_errors` and folded by
 ## 6. Module layout
 
 ```
-watchtower/
+appsecwatch/
 ├── __init__.py
-├── __main__.py            # python -m watchtower
+├── __main__.py            # python -m appsecwatch
 ├── cli.py                 # argparse subcommands; --only/--skip token parsing
 ├── config.py              # YAML load + Pydantic models (incl. AIConfig)
 ├── models.py              # TriagedAsset, Finding, PageSignals, CrawlerArtifact, AppProfile, StageError, RunSummary, …
@@ -729,9 +729,9 @@ watchtower/
 
 ## 7. Operational notes
 
-* **Tool versions** captured in `versions.json` at run start: each tool's `-version`, nuclei templates SHA, MMDB build epoch, Python and key library versions, WatchTower git SHA, LLM `model` and `base_url`.
+* **Tool versions** captured in `versions.json` at run start: each tool's `-version`, nuclei templates SHA, MMDB build epoch, Python and key library versions, AppSecWatch git SHA, LLM `model` and `base_url`.
 * **Timeouts** — every tool invocation has a default outer timeout (subfinder/dnsx: 5 min; nuclei: 60 min; sslscan: 5 min/host; playwright: 30 s/host; LLM: 120 s/host).
-* **Resource limits** — each `asyncio.Semaphore` is configurable. sslscan and nuclei each have their own internal concurrency; WatchTower only bounds *parallel invocations*, not the parallelism inside each tool.
+* **Resource limits** — each `asyncio.Semaphore` is configurable. sslscan and nuclei each have their own internal concurrency; AppSecWatch only bounds *parallel invocations*, not the parallelism inside each tool.
 * **Rate-limit at the target** — `httpx` and `nuclei` both honor `-rl` from their config blocks. Playwright is gated by the parallel-context cap.
 * **Empty pipeline behavior** — even with zero subdomains found, the pipeline runs to completion and emits a report with "No assets discovered" across every section.
 

@@ -1,10 +1,10 @@
-# WatchTower UI
+# AppSecWatch UI
 
-A web front-end for WatchTower, built to the **AppSecMan** design system
+A web front-end for AppSecWatch, built to the **AppSecMan** design system
 (`UI-SPEC.md`): Next.js 16 (App Router) · React 19 · Tailwind v4 (oklch tokens) ·
 shadcn/ui pattern over Radix · lucide icons · recharts · sonner. Dark-first.
 
-It talks to the WatchTower FastAPI backend (`watchtower serve`) over the REST
+It talks to the AppSecWatch FastAPI backend (`appsecwatch serve`) over the REST
 contract in `../WEB_API_PLAN.md`.
 
 ## Quick start
@@ -13,10 +13,10 @@ contract in `../WEB_API_PLAN.md`.
 
 ```bash
 # auth disabled (handy for local dev — the API runs OPEN):
-watchtower serve -c example.server.yaml --host 127.0.0.1 --port 8099
+appsecwatch serve -c example.server.yaml --host 127.0.0.1 --port 8099
 
 # …or with an API key:
-WATCHTOWER_API_KEYS=devkey123 watchtower serve -c example.server.yaml --port 8099
+APPSECWATCH_API_KEYS=devkey123 appsecwatch serve -c example.server.yaml --port 8099
 ```
 
 **2. Start the UI**:
@@ -59,7 +59,7 @@ Open <http://localhost:3000>. If the backend uses an API key, set it under
 ## API client
 
 `src/lib/api.ts` is the single typed client; `src/lib/types.ts` mirrors the
-Pydantic models in `watchtower/api/models.py`. Base URL + key resolve from
+Pydantic models in `appsecwatch/api/models.py`. Base URL + key resolve from
 `localStorage` (Settings) first, then `NEXT_PUBLIC_*`. Swapping to a different
 backend is a one-line change in Settings.
 
@@ -74,21 +74,21 @@ NEXT_OUTPUT=export npm run build          # static export → out/ (served by Fa
 
 The repo `Dockerfile` is multi-stage: a Node stage runs `NEXT_OUTPUT=export
 npm run build` and the Python stage copies the result to `/app/web-dist`. At
-runtime `watchtower serve` detects `WATCHTOWER_UI_DIR` and serves the UI at `/` with
+runtime `appsecwatch serve` detects `APPSECWATCH_UI_DIR` and serves the UI at `/` with
 the API mounted under `/api` (same origin → no CORS, no baked URL).
 
 ```bash
-docker build -t watchtower .
+docker build -t appsecwatch .
 docker run --rm -p 8080:8080 \
   -v "$PWD/mmdb:/data/mmdb:ro" -v "$PWD/runs:/data/runs" \
-  -v "$PWD/example.server.yaml:/etc/watchtower/server.yaml:ro" \
-  -e WATCHTOWER_API_KEYS="$(cat api.key)" \
-  watchtower serve -c /etc/watchtower/server.yaml --host 0.0.0.0 --port 8080
+  -v "$PWD/example.server.yaml:/etc/appsecwatch/server.yaml:ro" \
+  -e APPSECWATCH_API_KEYS="$(cat api.key)" \
+  appsecwatch serve -c /etc/appsecwatch/server.yaml --host 0.0.0.0 --port 8080
 # → UI:  http://localhost:8080/        API: http://localhost:8080/api/...
 ```
 
 To run the combined app locally without Docker (after a static export build):
 
 ```bash
-watchtower serve -c example.server.yaml --port 8080 --ui-dir web/out
+appsecwatch serve -c example.server.yaml --port 8080 --ui-dir web/out
 ```

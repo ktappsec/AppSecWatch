@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import pytest
 
-from watchtower.stages.capabilities import (
+from appsecwatch.stages.capabilities import (
     ALL_TOKENS,
     NUCLEI_SEVERITIES,
     SelectionError,

@@ -1,0 +1,636 @@
+{% extends "_base.html.j2" %}
+{% block title %}<title>AppSecWatch Report — {{ run.label }}</title>{% endblock %}
+{% block header_title %}
+  <h1>AppSecWatch — {{ run.label }}</h1>
+  <div class="meta">
+    started {{ run.started_at }} · finished {{ run.finished_at }} · duration {{ run.duration }}
+  </div>
+{% endblock %}
+{% block content %}
+<main>
+
+  {% if coverage_strip %}
+  <div class="cov-strip">
+    <span class="cov-label">Coverage</span>
+    {% for c in coverage_strip %}
+      {% set cls = 'partial' if (c.ran and c.partial) else ('ran' if c.ran else 'skipped') %}
+      {% set sym = '~' if (c.ran and c.partial) else ('✓' if c.ran else '✗') %}
+      {% set detail %}{% if c.sub %} — {% for k, v in c.sub.items() %}{{ k.split('.')[1] }} {{ '✓' if v.ran else '✗' }}{{ ', ' if not loop.last else '' }}{% endfor %}{% endif %}{% endset %}
+      <span class="cov-chip {{ cls }}" title="{{ c.reason }}{{ detail }}">{{ c.token }} {{ sym }}{% if c.ran and c.partial %} (partial){% endif %}</span>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <!-- Executive Summary -->
+  <section id="summary">
+    <div class="head" onclick="toggleSection(this)"><h2>Executive Summary</h2><span class="toggle">▾</span></div>
+    <div class="body">
+      <div class="grid">
+        <div class="stat"><div class="k">Roots scanned</div><div class="v">{{ run.roots|length }}</div>
+          <div class="sub">{{ run.roots|join(", ") }}</div></div>
+        <div class="stat"><div class="k">Live web servers</div><div class="v">{{ recon.live_servers|length }}</div>
+          <div class="sub">scanned</div></div>
+        <div class="stat"><div class="k">Live assets</div><div class="v">{{ recon.live|length }}</div></div>
+        <div class="stat"><div class="k">Dead / dangling</div><div class="v">{{ recon.dead|length }}</div></div>
+      </div>
+
+      <h3 style="margin-top:18px;">Findings by severity</h3>
+      <div class="histo">
+        {% for sev in ["critical","high","medium","low","info"] %}
+          <div class="bucket">
+            <div class="k"><span class="{{ sev | sev_class }}">{{ sev }}</span></div>
+            <div class="v">{{ histogram_totals[sev] }}</div>
+            <div class="src">
+              {% set per = histogram[sev] %}
+              {% if per %}
+                {% for src, n in per.items() %}<span class="pill">{{ src }}: {{ n }}</span>{% endfor %}
+              {% else %}<span class="pill">—</span>{% endif %}
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+
+      {% if summary %}
+      <h3 style="margin-top:18px;">Run health</h3>
+      <div class="grid">
+        <div class="stat"><div class="k">Duration</div><div class="v">{{ summary.duration_s }}s</div></div>
+        <div class="stat"><div class="k">Errors</div><div class="v">{{ summary.errors_total }}</div>
+          <div class="sub">{% for s, n in summary.errors_by_stage.items() %}{{ s }}: {{ n }}{% if not loop.last %} · {% endif %}{% endfor %}</div></div>
+        <div class="stat"><div class="k">AI degraded</div><div class="v">{{ summary.ai.degraded }}</div>
+          <div class="sub">{{ summary.ai.profiled }} profiled</div></div>
+        <div class="stat"><div class="k">TLS errored</div><div class="v">{{ summary.tls.errored }}</div>
+          <div class="sub">{{ summary.tls.ok }}/{{ summary.tls.hosts }} hosts ok</div></div>
+        {% if summary.events %}
+        <div class="stat"><div class="k">Notable events</div><div class="v">{{ summary.events.values()|sum }}</div>
+          <div class="sub">{% for k, n in summary.events.items() %}{{ k }}: {{ n }}{% if not loop.last %} · {% endif %}{% endfor %}</div></div>
+        {% endif %}
+      </div>
+      {% if summary.stages %}
+      <details class="errors-block" style="margin-top:10px;">
+        <summary>Per-stage timings</summary>
+        <pre>{% for st in summary.stages %}{{ "%-24s"|format(st.name) }} {{ "%7.1f"|format(st.duration_s) }}s{% if st.errors %}  ({{ st.errors }} err){% endif %}
+{% endfor %}</pre>
+      </details>
+      {% endif %}
+      {% endif %}
+    </div>
+  </section>
+
+  <!-- Recon / Scope -->
+  <section id="recon">
+    <div class="head" onclick="toggleSection(this)"><h2>Recon &amp; Scope</h2><span class="toggle">▾</span></div>
+    <div class="body">
+      <div class="grid">
+        <div class="stat"><div class="k">Live (scanned)</div><div class="v">{{ recon.live|length }}</div></div>
+        <div class="stat"><div class="k">Dead / dangling</div><div class="v">{{ recon.dead|length }}</div></div>
+        <div class="stat"><div class="k">tlsx Wildcards recorded</div><div class="v">{{ recon.wildcards|length }}</div></div>
+      </div>
+
+      <h3 style="margin-top:18px;">Live web servers (scanned)</h3>
+      {% if recon.live_servers %}
+      <div class="controls">
+        <input type="text" data-search="livesrv" placeholder="filter by host / title / tech…">
+        <span class="count" data-count="livesrv"></span>
+      </div>
+      <table data-table="livesrv">
+        <thead><tr>
+          <th class="sortable">Host</th><th class="sortable">URL</th><th class="sortable">Status</th><th>Title</th><th>Tech</th>
+        </tr></thead>
+        <tbody>
+        {% for s in recon.live_servers %}
+          <tr data-row>
+            <td>{{ s.host }}</td>
+            <td><a href="{{ s.url }}" target="_blank" rel="noopener noreferrer">{{ s.url }}</a></td>
+            <td>{{ s.status_code or "" }}</td>
+            <td>{{ s.title or "" }}</td>
+            <td>{% for t in s.tech %}<span class="pill">{{ t }}</span>{% endfor %}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}<div class="empty">No live web servers discovered.</div>{% endif %}
+
+      <h3 style="margin-top:18px;">Dead / dangling records (takeover watch)</h3>
+      {% if recon.dead %}
+      <table>
+        <thead><tr><th>FQDN</th><th>CNAME chain</th></tr></thead>
+        <tbody>
+        {% for a in recon.dead %}
+          <tr><td>{{ a.fqdn }}</td><td class="evidence">{{ a.cname_chain|join(" → ") }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}<div class="empty">No dead records.</div>{% endif %}
+
+      <h3 style="margin-top:18px;">TLS certificates</h3>
+      <p class="empty" style="font-style:normal;">Captured from the recon cert-grab (tlsx) — one handshake per live IP, no extra requests. Inventory only; the TLS scorecard is the <code>tls</code> capability.</p>
+      {% if tls_certs %}
+      <div class="controls">
+        <input type="text" data-search="certs" placeholder="filter by IP / subject / issuer…">
+        <span class="count" data-count="certs"></span>
+      </div>
+      <table data-table="certs">
+        <thead><tr>
+          <th class="sortable">IP</th><th class="sortable">Subject CN</th><th class="sortable">Issuer</th>
+          <th class="sortable">Expires (days)</th><th>Flags</th><th>SANs</th>
+        </tr></thead>
+        <tbody>
+        {% for c in tls_certs %}
+          <tr data-row>
+            <td>{{ c.ip }}</td>
+            <td>{{ c.subject_cn or "" }}</td>
+            <td class="evidence">{{ c.issuer or "" }}</td>
+            <td>
+              {% if c.days_remaining is not none %}
+                <span class="{{ 'pf-fail' if (c.expired or c.days_remaining < 30) else 'pf-pass' }}">{{ c.days_remaining }}</span>
+              {% else %}—{% endif %}
+            </td>
+            <td>
+              {% if c.expired %}<span class="pf-badge pf-fail">expired</span>{% endif %}
+              {% if c.self_signed %}<span class="pf-badge pf-fail">self-signed</span>{% endif %}
+              {% if c.wildcard %}<span class="pill">wildcard</span>{% endif %}
+            </td>
+            <td class="evidence">{{ c.sans|length }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}<div class="empty">No certificates captured (tlsx skipped or no live IPs).</div>{% endif %}
+    </div>
+  </section>
+
+  <!-- Takeovers -->
+  <section id="takeovers">
+    <div class="head" onclick="toggleSection(this)"><h2>Subdomain Takeovers</h2><span class="toggle">▾</span></div>
+    <div class="body">
+      {% if not ran.takeovers %}
+      <div class="notrun">Not run in this scan{% if coverage.takeovers %} — {{ coverage.takeovers.reason }}{% endif %}.</div>
+      {% elif findings.takeovers %}
+      <table>
+        <thead><tr><th>Host</th><th>Severity</th><th>Title</th><th>Evidence</th></tr></thead>
+        <tbody>
+        {% for f in findings.takeovers %}
+          <tr>
+            <td>{{ f.host }}</td>
+            <td><span class="{{ f.severity | sev_class }}">{{ f.severity }}</span></td>
+            <td>{{ f.title }}</td>
+            <td class="evidence">{{ f.evidence_summary }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}<div class="empty">No takeover candidates flagged.</div>{% endif %}
+    </div>
+  </section>
+
+  <!-- TLS Health -->
+  <section id="tls">
+    <div class="head" onclick="toggleSection(this)"><h2>TLS Health</h2><span class="toggle">▾</span></div>
+    <div class="body">
+      {% if not ran.tls %}
+      <div class="notrun">Not run in this scan{% if coverage.tls %} — {{ coverage.tls.reason }}{% endif %}.</div>
+      {% else %}
+      <div class="grid">
+        <div class="stat"><div class="k">Hosts scanned</div><div class="v">{{ tls.reports|length }}</div></div>
+        <div class="stat"><div class="k">Total checks</div><div class="v">{{ tls.total_checks }}</div></div>
+        <div class="stat"><div class="k">Passed</div><div class="v pf-pass">{{ tls.passed }}</div></div>
+        <div class="stat"><div class="k">Failed</div><div class="v pf-fail">{{ tls.failed }}</div></div>
+      </div>
+
+      <h3 style="margin-top:18px;">Per-host checklist</h3>
+      {% if tls.reports %}
+      <div class="controls">
+        <input type="text" data-search="tls" placeholder="filter by host…">
+        <span class="count" data-count="tls"></span>
+      </div>
+      <table data-table="tls">
+        <thead><tr><th class="sortable">Host</th><th class="sortable">Pass / Total</th><th>Failures</th></tr></thead>
+        <tbody>
+        {% for r in tls.reports %}
+          <tr data-row>
+            <td>{{ r.host }}</td>
+            <td>
+              {% if r.error %}<span class="pf-badge pf-fail">error</span>
+              {% else %}<span class="{{ ((r.pass_count == r.total) and (r.total > 0)) | pf_class }}">{{ r.pass_count }}/{{ r.total }}</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if r.error %}<span class="evidence">{{ r.error }}</span>
+              {% else %}
+                {% for c in r.checks if not c.passed %}
+                  <div><span class="pf-badge pf-fail">fail</span> {{ c.name }} <span class="evidence">{{ c.detail }}</span></div>
+                {% endfor %}
+                {% if r.pass_count == r.total %}<span class="pf-badge pf-pass">all checks passed</span>{% endif %}
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}<div class="empty">No TLS scans performed.</div>{% endif %}
+      {% endif %}
+    </div>
+  </section>
+
+  <!-- Vulnerabilities -->
+  <section id="vulns">
+    <div class="head" onclick="toggleSection(this)"><h2>Vulnerabilities (nuclei)</h2><span class="toggle">▾</span></div>
+    <div class="body">
+      {% if not ran.nuclei %}
+      <div class="notrun">Not run in this scan{% if coverage.nuclei %} — {{ coverage.nuclei.reason }}{% endif %}.</div>
+      {% elif findings.nuclei %}
+      <div class="controls">
+        <input type="text" data-search="vulns" placeholder="filter by host / title…">
+        <select data-sevfilter="vulns">
+          <option value="">all severities</option>
+          {% for sev in ["critical","high","medium","low","info"] %}
+          <option value="{{ sev }}">{{ sev }}</option>
+          {% endfor %}
+        </select>
+        <span class="count" data-count="vulns"></span>
+      </div>
+      <table data-table="vulns">
+        <thead><tr>
+          <th class="sortable">Severity</th><th class="sortable">Hosts</th><th class="sortable">Title</th><th>Template</th>
+        </tr></thead>
+        <tbody>
+        {% for ttl, items in findings.nuclei | groupby('group_key') %}
+          <tr data-row data-severity="{{ items[0].severity }}">
+            <td><span class="{{ items[0].severity | sev_class }}">{{ items[0].severity }}</span></td>
+            <td title="{{ items | map(attribute='host') | join(', ') }}">{{ items | length }} host{{ '' if items|length == 1 else 's' }}</td>
+            <td>{{ items[0].title }}</td>
+            <td class="evidence">{{ items[0].evidence_summary }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}<div class="empty">No nuclei findings.</div>{% endif %}
+    </div>
+  </section>
+
+  <!-- Active scan (OWASP ZAP) — only shown when the opt-in zap capability ran -->
+  {% if ran.zap %}
+  <section id="zap">
+    <div class="head" onclick="toggleSection(this)"><h2>Active Scan (OWASP ZAP)</h2><span class="toggle">▾</span></div>
+    <div class="body">
+      {% if findings.zap %}
+      <div class="controls">
+        <input type="text" data-search="zap" placeholder="filter by host / title…">
+        <select data-sevfilter="zap">
+          <option value="">all severities</option>
+          {% for sev in ["critical","high","medium","low","info"] %}
+          <option value="{{ sev }}">{{ sev }}</option>
+          {% endfor %}
+        </select>
+        <span class="count" data-count="zap"></span>
+      </div>
+      <table data-table="zap">
+        <thead><tr>
+          <th class="sortable">Severity</th><th class="sortable">Hosts</th><th class="sortable">Title</th><th>Evidence</th>
+        </tr></thead>
+        <tbody>
+        {% for ttl, items in findings.zap | groupby('group_key') %}
+          <tr data-row data-severity="{{ items[0].severity }}">
+            <td><span class="{{ items[0].severity | sev_class }}">{{ items[0].severity }}</span></td>
+            <td title="{{ items | map(attribute='host') | join(', ') }}">{{ items | length }} host{{ '' if items|length == 1 else 's' }}</td>
+            <td>{{ items[0].title }}</td>
+            <td class="evidence">{{ items[0].evidence_summary }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}<div class="empty">Active scan ran; no findings.</div>{% endif %}
+    </div>
+  </section>
+  {% endif %}
+
+  <!-- Vulnerable JS libraries (retire.js-style, over crawler scripts) -->
+  {% if findings.js_lib %}
+  <section id="jslibs">
+    <div class="head" onclick="toggleSection(this)"><h2>Vulnerable JS Libraries</h2><span class="toggle">▾</span></div>
+    <div class="body">
+      <table data-table="jslibs">
+        <thead><tr>
+          <th class="sortable">Severity</th><th class="sortable">Hosts</th>
+          <th class="sortable">Library</th><th>Version</th><th>CVE</th>
+        </tr></thead>
+        <tbody>
+        {% for ttl, items in findings.js_lib | groupby('group_key') %}
+          <tr data-row data-severity="{{ items[0].severity }}">
+            <td><span class="{{ items[0].severity | sev_class }}">{{ items[0].severity }}</span></td>
+            <td title="{{ items | map(attribute='host') | join(', ') }}">{{ items | length }} host{{ '' if items|length == 1 else 's' }}</td>
+            <td>{{ items[0].evidence.library }}</td>
+            <td>{{ items[0].evidence.version }}</td>
+            <td class="evidence">{{ items[0].evidence.cve }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {% endif %}
+
+  <!-- Security Headers (deterministic) -->
+  <section id="headers">
+    <div class="head" onclick="toggleSection(this)"><h2>Security Headers</h2><span class="toggle">▾</span></div>
+    <div class="body">
+      {% if not ran.headers %}
+      <div class="notrun">Not run in this scan{% if coverage.headers %} — {{ coverage.headers.reason }}{% endif %}.</div>
+      {% else %}
+      {% set hdr_findings = findings.headers + findings.csp %}
+
+      <h3>Per-host header matrix</h3>
+      {% if header_matrix %}
+      <table>
+        <thead><tr><th>Host</th>
+          {% for col in header_matrix[0].cells %}<th>{{ col.label }}</th>{% endfor %}
+        </tr></thead>
+        <tbody>
+        {% for row in header_matrix %}
+          <tr>
+            <td>{{ row.host }}</td>
+            {% for cell in row.cells %}
+              <td>{% if cell.present %}<span class="pf-pass">✓</span>{% else %}<span class="pf-fail">✗</span>{% endif %}</td>
+            {% endfor %}
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}<div class="empty">No hosts with captured headers.</div>{% endif %}
+
+      <h3 style="margin-top:18px;">Header findings</h3>
+      {% if hdr_findings %}
+      <div class="controls">
+        <input type="text" data-search="hdr" placeholder="filter by host / title…">
+        <select data-sevfilter="hdr">
+          <option value="">all severities</option>
+          {% for sev in ["critical","high","medium","low","info"] %}
+          <option value="{{ sev }}">{{ sev }}</option>
+          {% endfor %}
+        </select>
+        <span class="count" data-count="hdr"></span>
+      </div>
+      <table data-table="hdr">
+        <thead><tr>
+          <th class="sortable">Severity</th><th class="sortable">Source</th><th class="sortable">Hosts</th><th class="sortable">Title</th><th>Evidence</th>
+        </tr></thead>
+        <tbody>
+        {% for ttl, items in hdr_findings | groupby('group_key') %}
+          <tr data-row data-severity="{{ items[0].severity }}">
+            <td><span class="{{ items[0].severity | sev_class }}">{{ items[0].severity }}</span></td>
+            <td><span class="pill">{{ items[0].source }}</span></td>
+            <td title="{{ items | map(attribute='host') | join(', ') }}">{{ items | length }} host{{ '' if items|length == 1 else 's' }}</td>
+            <td>{{ items[0].title }}</td>
+            <td class="evidence">{{ items[0].evidence_summary }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}<div class="empty">No deterministic header findings.</div>{% endif %}
+
+      {% if findings.suppressed %}
+      <div class="group" data-group style="margin-top:18px;">
+        <div class="grouphead" onclick="toggleGroup(this)">
+          <div><span class="name">Suppressed</span><span class="grouping">(AI: likely false-positive — excluded from counts)</span></div>
+          <span class="count">{{ findings.suppressed|length }} ▾</span>
+        </div>
+        <div class="group-rows">
+          <table>
+            <thead><tr><th>Severity</th><th>Host</th><th>Title</th><th>Why suppressed (AI)</th></tr></thead>
+            <tbody>
+            {% for f in findings.suppressed %}
+              <tr>
+                <td><span class="{{ f.severity | sev_class }}">{{ f.severity }}</span></td>
+                <td>{{ f.host }}</td>
+                <td>{{ f.title }}</td>
+                <td class="evidence">{% if f.ai_verdict %}<span class="pill">conf: {{ f.ai_verdict.confidence }}</span> {{ f.ai_verdict.reason }}{% endif %}</td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      {% endif %}
+      {% endif %}
+    </div>
+  </section>
+
+  <!-- AI Application Profiles -->
+  <section id="profiles">
+    <div class="head" onclick="toggleSection(this)"><h2>AI — Application Profiles</h2><span class="toggle">▾</span></div>
+    <div class="body">
+      {% if not ran.ai %}
+      <div class="notrun">Not run in this scan{% if coverage.ai %} — {{ coverage.ai.reason }}{% endif %}.</div>
+      {% elif app_profiles %}
+      <p class="empty" style="font-style:normal;">Each live app is profiled (what it is, who it serves, the controls it should have) so findings below are weighted to its context.</p>
+      {% for host, p in app_profiles.items() %}
+        <div class="profile-card">
+          <div class="pc-head">
+            <span class="pc-host">{{ host }}</span>
+            <span class="pill">{{ p.audience }}</span>
+            <span class="pill">conf: {{ p.confidence }}</span>
+            {% if p.error %}<span class="pf-badge pf-fail">profiling failed → default prompts</span>{% endif %}
+          </div>
+          {% if not p.error %}
+          <div class="pc-type">{{ p.app_type }}</div>
+          <div class="pc-flags">flags:
+            <span class="flag {{ 'on' if p.handles_auth else 'off' }}">auth {{ '✓' if p.handles_auth else '✗' }}</span>
+            <span class="flag {{ 'on' if p.handles_pii else 'off' }}">pii {{ '✓' if p.handles_pii else '✗' }}</span>
+            <span class="flag {{ 'on' if p.handles_payments else 'off' }}">pay {{ '✓' if p.handles_payments else '✗' }}</span>
+            <span class="flag {{ 'on' if p.has_file_upload else 'off' }}">upload {{ '✓' if p.has_file_upload else '✗' }}</span>
+            <span class="flag {{ 'on' if p.is_api else 'off' }}">api {{ '✓' if p.is_api else '✗' }}</span>
+          </div>
+          {% if p.expected_controls %}
+          <div class="pc-expected">expected: {% for c in p.expected_controls %}<span class="pill">{{ c }}</span>{% endfor %}</div>
+          {% endif %}
+          {% if p.reasoning %}
+          <div class="group" data-group style="margin-top:6px;">
+            <div class="grouphead" onclick="toggleGroup(this)"><div><span class="grouping">why this profile</span></div><span class="count">▾</span></div>
+            <div class="group-rows"><div class="evidence" style="padding:6px 0;">{{ p.reasoning }}</div></div>
+          </div>
+          {% endif %}
+          {% endif %}
+        </div>
+      {% endfor %}
+      {% else %}<div class="empty">No application profiles (profiling disabled or no live hosts).</div>{% endif %}
+    </div>
+  </section>
+
+  <!-- AI Header Analysis -->
+  <section id="ai-headers">
+    <div class="head" onclick="toggleSection(this)"><h2>AI — HTTP Header Analysis</h2><span class="toggle">▾</span></div>
+    <div class="body">
+      {% if not ran.ai %}
+      <div class="notrun">Not run in this scan{% if coverage.ai %} — {{ coverage.ai.reason }}{% endif %}.</div>
+      {% elif findings.ai_headers %}
+      <table>
+        <thead><tr><th>Severity</th><th>Hosts</th><th>Title</th><th>Description</th></tr></thead>
+        <tbody>
+        {% for ttl, items in findings.ai_headers | groupby('group_key') %}
+          <tr>
+            <td><span class="{{ items[0].severity | sev_class }}">{{ items[0].severity }}</span></td>
+            <td title="{{ items | map(attribute='host') | join(', ') }}">{{ items | length }} host{{ '' if items|length == 1 else 's' }}</td>
+            <td>{{ items[0].title }}</td>
+            <td class="evidence">{{ items[0].description }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}<div class="empty">No AI header findings.</div>{% endif %}
+    </div>
+  </section>
+
+  <!-- AI Supply Chain Analysis -->
+  <section id="ai-supply">
+    <div class="head" onclick="toggleSection(this)"><h2>AI — Supply Chain Analysis</h2><span class="toggle">▾</span></div>
+    <div class="body">
+      {% if not ran.ai and not ran.supply_chain %}
+      <div class="notrun">Not run in this scan{% if coverage.ai %} — {{ coverage.ai.reason }}{% endif %}.</div>
+      {% else %}
+      {% if not ran.ai %}
+      <div class="notrun">AI supply-chain analysis not run{% if coverage.ai %} — {{ coverage.ai.reason }}{% endif %}.</div>
+      {% elif findings.ai_supply_chain %}
+      <table>
+        <thead><tr><th>Severity</th><th>Hosts</th><th>Title</th><th>Description</th></tr></thead>
+        <tbody>
+        {% for ttl, items in findings.ai_supply_chain | groupby('group_key') %}
+          <tr>
+            <td><span class="{{ items[0].severity | sev_class }}">{{ items[0].severity }}</span></td>
+            <td title="{{ items | map(attribute='host') | join(', ') }}">{{ items | length }} host{{ '' if items|length == 1 else 's' }}</td>
+            <td>{{ items[0].title }}</td>
+            <td class="evidence">{{ items[0].description }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}<div class="empty">No AI supply chain findings.</div>{% endif %}
+
+      <h3 style="margin-top:18px;">Per-host script inventory</h3>
+      {% if not ran.supply_chain %}
+      <div class="notrun">Crawler not run{% if coverage['supply-chain'] %} — {{ coverage['supply-chain'].reason }}{% endif %}.</div>
+      {% else %}
+      {% for art in crawler %}
+        {% if art.scripts %}
+        <div class="group" data-group>
+          <div class="grouphead" onclick="toggleGroup(this)">
+            <div><span class="name">{{ art.host }}</span></div>
+            <span class="count">{{ art.scripts|length }} scripts ▾</span>
+          </div>
+          <div class="group-rows">
+            {% for s in art.scripts %}
+              <div class="row">
+                <div class="evidence">{{ s.url }}</div>
+                <div>{{ s.status or "" }}</div>
+                <div class="evidence">init: {{ s.initiator_url or "—" }}</div>
+              </div>
+            {% endfor %}
+          </div>
+        </div>
+        {% endif %}
+      {% endfor %}
+      {% endif %}
+      {% endif %}
+    </div>
+  </section>
+
+  <!-- Run errors -->
+  <section id="errors" class="collapsed">
+    <div class="head" onclick="toggleSection(this)"><h2>Run Errors ({{ errors|length }})</h2><span class="toggle">▾</span></div>
+    <div class="body">
+      {% if errors %}
+      <details class="errors-block" open>
+        <summary>{{ errors|length }} errors recorded — click to expand</summary>
+        <pre>{% for e in errors %}[{{ e.stage }}{% if e.error_type %}/{{ e.error_type }}{% endif %}] {{ e.target or "" }} — {{ e.message }}
+{% endfor %}</pre>
+      </details>
+      {% else %}<div class="empty">No errors recorded — clean run.</div>{% endif %}
+    </div>
+  </section>
+
+  <!-- Run provenance -->
+  <section id="provenance" class="collapsed">
+    <div class="head" onclick="toggleSection(this)"><h2>Run Provenance</h2><span class="toggle">▾</span></div>
+    <div class="body">
+      <table>
+        <thead><tr><th>Key</th><th>Value</th></tr></thead>
+        <tbody>
+        {% for k, v in versions.items() %}
+          <tr><td>{{ k }}</td><td class="evidence">{{ v }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+</main>
+{% endblock %}
+{% block footer %}AppSecWatch v{{ run.appsecwatch_version }} · {{ run.label }} · single-file report{% endblock %}
+{% block scripts %}
+<script>
+  // Section collapse
+  function toggleSection(el) {
+    el.parentElement.classList.toggle('collapsed');
+    const t = el.querySelector('.toggle');
+    if (t) t.textContent = el.parentElement.classList.contains('collapsed') ? '▸' : '▾';
+  }
+  function toggleGroup(el) {
+    el.parentElement.classList.toggle('expanded');
+  }
+
+  // Live filtering for tables with data-search / data-sevfilter
+  document.querySelectorAll('input[data-search]').forEach(function(input) {
+    const key = input.getAttribute('data-search');
+    input.addEventListener('input', () => applyFilter(key));
+  });
+  document.querySelectorAll('select[data-sevfilter]').forEach(function(sel) {
+    const key = sel.getAttribute('data-sevfilter');
+    sel.addEventListener('change', () => applyFilter(key));
+  });
+  function applyFilter(key) {
+    const search = document.querySelector(`input[data-search="${key}"]`);
+    const sevSel = document.querySelector(`select[data-sevfilter="${key}"]`);
+    const table = document.querySelector(`table[data-table="${key}"]`);
+    if (!table) return;
+    const q = (search && search.value || '').toLowerCase().trim();
+    const sev = (sevSel && sevSel.value || '').toLowerCase().trim();
+    const rows = table.querySelectorAll('tr[data-row]');
+    let shown = 0;
+    rows.forEach(r => {
+      const text = r.textContent.toLowerCase();
+      const rowSev = (r.getAttribute('data-severity') || '').toLowerCase();
+      const matchQ = !q || text.indexOf(q) !== -1;
+      const matchS = !sev || rowSev === sev;
+      const ok = matchQ && matchS;
+      r.style.display = ok ? '' : 'none';
+      if (ok) shown++;
+    });
+    const counter = document.querySelector(`[data-count="${key}"]`);
+    if (counter) counter.textContent = `${shown} / ${rows.length}`;
+  }
+  document.querySelectorAll('input[data-search], select[data-sevfilter]').forEach(el => {
+    const k = el.getAttribute('data-search') || el.getAttribute('data-sevfilter');
+    applyFilter(k);
+  });
+
+  // Column sort
+  document.querySelectorAll('table').forEach(function(table) {
+    const ths = table.querySelectorAll('th.sortable');
+    ths.forEach(function(th, idx) {
+      let asc = true;
+      th.addEventListener('click', () => {
+        const tbody = table.tBodies[0];
+        const rows = Array.from(tbody.querySelectorAll('tr[data-row]'));
+        rows.sort((a, b) => {
+          const av = a.children[idx].textContent.trim().toLowerCase();
+          const bv = b.children[idx].textContent.trim().toLowerCase();
+          const an = parseFloat(av), bn = parseFloat(bv);
+          if (!isNaN(an) && !isNaN(bn)) return asc ? an - bn : bn - an;
+          return asc ? av.localeCompare(bv) : bv.localeCompare(av);
+        });
+        asc = !asc;
+        rows.forEach(r => tbody.appendChild(r));
+      });
+    });
+  });
+</script>
+{% endblock %}

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import types
 
-from watchtower.ai.client import LLMClient
-from watchtower.config import LLMConfig
+from appsecwatch.ai.client import LLMClient
+from appsecwatch.config import LLMConfig
 
 
 class _Resp:
@@ -31,16 +31,16 @@ def _or_cfg(**kw) -> LLMConfig:
 
 
 def test_default_headers_carry_app_title_and_referer():
-    c = LLMClient(_or_cfg(app_title="WatchTower", app_url="https://wt.example"))
+    c = LLMClient(_or_cfg(app_title="AppSecWatch", app_url="https://wt.example"))
     # httpx Headers are case-insensitive.
-    assert c._client.headers["x-title"] == "WatchTower"
+    assert c._client.headers["x-title"] == "AppSecWatch"
     assert c._client.headers["http-referer"] == "https://wt.example"
 
 
 def test_no_referer_header_when_app_url_unset():
     c = LLMClient(_or_cfg())
     assert "http-referer" not in c._client.headers
-    assert c._client.headers["x-title"] == "WatchTower"
+    assert c._client.headers["x-title"] == "AppSecWatch"
 
 
 async def test_per_request_title_uses_call_purpose_and_user_field():
@@ -49,7 +49,7 @@ async def test_per_request_title_uses_call_purpose_and_user_field():
     _patch_post(c, cap)
     await c.chat("s", "u", label="profile[example.com]")
     # X-Title is overridden per request with the purpose so spend groups by it.
-    assert cap["headers"] == {"X-Title": "WatchTower: profile"}
+    assert cap["headers"] == {"X-Title": "AppSecWatch: profile"}
     # OpenRouter records the `user` field — tag it with the full per-host label.
     assert cap["json"]["user"] == "profile[example.com]"
 
@@ -61,7 +61,7 @@ async def test_user_field_omitted_off_openrouter():
     await c.chat("s", "u", label="triage[example.com]")
     assert "user" not in cap["json"]
     # The title header still groups by purpose (harmless if the backend ignores it).
-    assert cap["headers"] == {"X-Title": "WatchTower: triage"}
+    assert cap["headers"] == {"X-Title": "AppSecWatch: triage"}
 
 
 async def test_tag_requests_off_sends_no_per_request_override():
@@ -72,7 +72,7 @@ async def test_tag_requests_off_sends_no_per_request_override():
     assert cap["headers"] is None
     assert "user" not in cap["json"]
     # The static app title still rides on the client default headers.
-    assert c._client.headers["x-title"] == "WatchTower"
+    assert c._client.headers["x-title"] == "AppSecWatch"
 
 
 async def test_no_label_keeps_static_title():

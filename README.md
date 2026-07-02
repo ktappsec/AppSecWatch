@@ -1,4 +1,4 @@
-# WatchTower
+# AppSecWatch
 
 **Point-in-time, single-run external AppSec audit orchestrator.** A modular async
 pipeline — recon → triage → audit fan-out → AI analysis → aggregate → a single
@@ -85,18 +85,18 @@ A local venv lives at `.venv` (Python 3.11+).
 ### CLI scan
 Needs the toolchain (`subfinder dnsx tlsx httpx nuclei`, `sslyze`, Playwright +
 Chromium) and a MaxMind GeoLite2-ASN MMDB — easiest via the Docker image below.
-Check readiness with `watchtower verify-deps`.
+Check readiness with `appsecwatch verify-deps`.
 ```sh
 cp example.config.yaml config.yaml      # edit roots / llm / mmdb_path
-./.venv/bin/python -m watchtower scan -c config.yaml -o ./runs --progress rich
+./.venv/bin/python -m appsecwatch scan -c config.yaml -o ./runs --progress rich
 # → ./runs/<id>/report.html
 ```
 
 ### Web API + UI (local dev)
 The API boots **without a config file** — config is managed from the UI.
 ```sh
-# Terminal A — API on :8099 (OPEN if WATCHTOWER_API_KEYS unset; -o sets the data dir)
-./.venv/bin/python -m watchtower serve -o ./runs --host 127.0.0.1 --port 8099
+# Terminal A — API on :8099 (OPEN if APPSECWATCH_API_KEYS unset; -o sets the data dir)
+./.venv/bin/python -m appsecwatch serve -o ./runs --host 127.0.0.1 --port 8099
 
 # Terminal B — UI on :3000 (talks to :8099 by default)
 cd web && npm install && npm run dev
@@ -107,19 +107,19 @@ throttle, etc., then **New Scan**.
 ### Docker (single image: tools + API + UI)
 The build is layer-cached — a code edit rebuilds in ~10s (no dep reinstall). Use
 **docker-compose** so a named volume persists state across rebuilds (config +
-assets + `watchtower.db` live under `/data/runs`):
+assets + `appsecwatch.db` live under `/data/runs`):
 ```sh
 echo "my-secret-key" > api.key
-WATCHTOWER_API_KEYS="$(cat api.key)" docker compose up --build
+APPSECWATCH_API_KEYS="$(cat api.key)" docker compose up --build
 # → UI at http://localhost:8080/ , API at http://localhost:8080/api/...
 ```
 Or plain `docker run` (use a **named volume**, not a fresh dir, so a rebuild
 doesn't wipe config/assets):
 ```sh
-docker build -t watchtower .
-docker run --rm -p 8080:8080 -e WATCHTOWER_API_KEYS="$(cat api.key)" \
-  -v watchtower-data:/data/runs -v "$PWD/mmdb:/data/mmdb:ro" \
-  watchtower serve --host 0.0.0.0 --port 8080
+docker build -t appsecwatch .
+docker run --rm -p 8080:8080 -e APPSECWATCH_API_KEYS="$(cat api.key)" \
+  -v appsecwatch-data:/data/runs -v "$PWD/mmdb:/data/mmdb:ro" \
+  appsecwatch serve --host 0.0.0.0 --port 8080
 ```
 `-c /path/server.yaml` is optional (seeds first boot only). The Settings page shows
 the live config-store/DB paths so you know what to persist.
@@ -129,14 +129,14 @@ the live config-store/DB paths so you know what to persist.
 ## Configuration
 
 - **UI-managed, store-primary.** `server.yaml` only *seeds* first boot; a writable
-  JSON store (`WATCHTOWER_CONFIG_STORE`, default `<output_root>/.config/`) is the
+  JSON store (`APPSECWATCH_CONFIG_STORE`, default `<output_root>/.config/`) is the
   source of truth and is edited at runtime via `GET`/`PUT /config` (the Settings
-  page). The CLI (`watchtower scan`) still takes a YAML config directly.
-- **Secrets.** The API's own auth (`WATCHTOWER_API_KEYS`) and the webhook secret are
+  page). The CLI (`appsecwatch scan`) still takes a YAML config directly.
+- **Secrets.** The API's own auth (`APPSECWATCH_API_KEYS`) and the webhook secret are
   env-only. The **LLM api_key is UI-managed** and persists in the store
   (write-only: masked on read).
 - **No scan-target allowlist.** The per-scan `roots` is the only scope. ⚠️ With
-  auth **OPEN** (no `WATCHTOWER_API_KEYS`) there is no server-side scope ceiling —
+  auth **OPEN** (no `APPSECWATCH_API_KEYS`) there is no server-side scope ceiling —
   set API keys before exposing the server.
 
 See `example.config.yaml` / `example.server.yaml` and **[API.md](API.md)** §2,
@@ -147,7 +147,7 @@ See `example.config.yaml` / `example.server.yaml` and **[API.md](API.md)** §2,
 ## Repo layout
 
 ```
-watchtower/   Python engine (cli, runner, config, models, stages/, recon/ audit/ ai/, report/, api/)
+appsecwatch/   Python engine (cli, runner, config, models, stages/, recon/ audit/ ai/, report/, api/)
 web/        Next.js 16 UI over the Web API
 tests/      pytest suite (external tools mocked)
 Dockerfile  multi-stage, layer-cached: Node builds the UI → Python serves it

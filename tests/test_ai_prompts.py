@@ -1,7 +1,7 @@
 """Profile-aware prompt construction + the editable-prompt registry (DESIGN.md §2.3)."""
 from __future__ import annotations
 
-from watchtower.ai.prompts import (
+from appsecwatch.ai.prompts import (
     PROMPT_SLOTS,
     SLOT_TRIAGE_SYSTEM_DEFAULT,
     assemble_preview,
@@ -10,7 +10,7 @@ from watchtower.ai.prompts import (
     build_triage_prompt,
     resolved_prompt,
 )
-from watchtower.models import AppProfile, PageSignals
+from appsecwatch.models import AppProfile, PageSignals
 
 
 def _profile(**kw) -> AppProfile:

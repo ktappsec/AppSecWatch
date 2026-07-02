@@ -1,7 +1,7 @@
 """httpx + AI tech merge."""
 from __future__ import annotations
 
-from watchtower.audit.tech import merge_tech
+from appsecwatch.audit.tech import merge_tech
 
 
 def test_merge_dedupe_and_source():

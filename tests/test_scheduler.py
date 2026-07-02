@@ -4,10 +4,10 @@ from __future__ import annotations
 import types
 from datetime import datetime, timezone
 
-from watchtower.api.assets import AssetManager
-from watchtower.api.db import Database
-from watchtower.api.history import ScanHistory
-from watchtower.api.scheduler import ScheduleManager, compute_next
+from appsecwatch.api.assets import AssetManager
+from appsecwatch.api.db import Database
+from appsecwatch.api.history import ScanHistory
+from appsecwatch.api.scheduler import ScheduleManager, compute_next
 
 
 def _now():

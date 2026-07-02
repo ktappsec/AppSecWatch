@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
+import { Switch } from "@/components/ui/switch";
 import {
   Select,
   SelectTrigger,
@@ -219,8 +220,8 @@ export function ScanConfigCard() {
     <Card className="gap-5 p-6">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <SlidersHorizontal className="h-5 w-5 text-accent" />
-          <h3 className="text-lg font-bold">Scan configuration</h3>
+          <SlidersHorizontal className="h-5 w-5 text-primary" />
+          <h3 className="text-lg font-semibold">Scan configuration</h3>
         </div>
         <Button variant="outline" size="icon-sm" onClick={load} aria-label="Reload">
           <RefreshCw className="h-4 w-4" />
@@ -280,17 +281,16 @@ export function ScanConfigCard() {
               </div>
               <Field label="App title" hint="X-Title — the request name in OpenRouter's logs">
                 <Input value={llm.app_title ?? ""} onChange={(e) => setLlm({ ...llm, app_title: e.target.value })}
-                  placeholder="WatchTower" />
+                  placeholder="AppSecWatch" />
               </Field>
               <Field label="App URL" hint="optional HTTP-Referer">
                 <Input value={llm.app_url ?? ""} onChange={(e) => setLlm({ ...llm, app_url: e.target.value })}
-                  placeholder="https://watchtower.internal" />
+                  placeholder="https://appsecwatch.internal" />
               </Field>
               <Field label="Per-call attribution" hint="append the call purpose (profile/triage/…) so OpenRouter spend breaks down by call type">
-                <label className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <input type="checkbox" className="h-4 w-4 accent-accent"
-                    checked={llm.tag_requests !== false}
-                    onChange={(e) => setLlm({ ...llm, tag_requests: e.target.checked })} />
+                <label className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
+                  <Switch checked={llm.tag_requests !== false}
+                    onCheckedChange={(c) => setLlm({ ...llm, tag_requests: c })} />
                   Tag requests by purpose
                 </label>
               </Field>
@@ -361,13 +361,12 @@ export function ScanConfigCard() {
             <Field label="Logo path" hint="optional — embedded (base64) so the report stays self-contained">
               <Input value={report.logo_path ?? ""}
                 onChange={(e) => setReport({ ...report, logo_path: e.target.value })}
-                placeholder="/etc/watchtower/logo.png" className="font-mono text-xs" />
+                placeholder="/etc/appsecwatch/logo.png" className="font-mono text-xs" />
             </Field>
             <Field label="PDF" hint="also render executive.pdf via the bundled Chromium (best-effort)">
-              <label className="flex items-center gap-2 text-sm text-muted-foreground">
-                <input type="checkbox" className="h-4 w-4 accent-accent"
-                  checked={report.executive_pdf !== false}
-                  onChange={(e) => setReport({ ...report, executive_pdf: e.target.checked })} />
+              <label className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
+                <Switch checked={report.executive_pdf !== false}
+                  onCheckedChange={(c) => setReport({ ...report, executive_pdf: c })} />
                 Auto-render executive.pdf
               </label>
             </Field>
@@ -419,10 +418,9 @@ export function ScanConfigCard() {
               and point it at the daemon here.
             </p>
             <Field label="Enabled" hint="advertise + allow the zap capability">
-              <label className="flex items-center gap-2 text-sm text-muted-foreground">
-                <input type="checkbox" className="h-4 w-4 accent-accent"
-                  checked={zap.enabled === true}
-                  onChange={(e) => setZap({ ...zap, enabled: e.target.checked })} />
+              <label className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
+                <Switch checked={zap.enabled === true}
+                  onCheckedChange={(c) => setZap({ ...zap, enabled: c })} />
                 Allow active scans
               </label>
             </Field>
@@ -444,10 +442,9 @@ export function ScanConfigCard() {
                   placeholder="Default Policy" />
               </Field>
               <Field label="AJAX spider" hint="default for SPAs (slower); per-scan overridable on New Scan">
-                <label className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <input type="checkbox" className="h-4 w-4 accent-accent"
-                    checked={zap.ajax_spider === true}
-                    onChange={(e) => setZap({ ...zap, ajax_spider: e.target.checked })} />
+                <label className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
+                  <Switch checked={zap.ajax_spider === true}
+                    onCheckedChange={(c) => setZap({ ...zap, ajax_spider: c })} />
                   Run the AJAX spider
                 </label>
               </Field>
@@ -480,7 +477,7 @@ export function ScanConfigCard() {
               className="min-h-[160px] font-mono text-xs" placeholder="{}" />
             <p className="text-xs text-muted-foreground">
               Everything not surfaced above (per-tool tuning under <span className="font-mono">tools</span>,{" "}
-              <span className="font-mono">concurrency</span>, …). Mirrors <span className="font-mono">WatchTowerConfig</span>.
+              <span className="font-mono">concurrency</span>, …). Mirrors <span className="font-mono">AppSecWatchConfig</span>.
             </p>
             {jsonError && <p className="text-xs text-destructive">{jsonError}</p>}
           </div>

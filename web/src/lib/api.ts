@@ -1,6 +1,6 @@
 "use client";
 
-/** Typed client for the WatchTower FastAPI backend.
+/** Typed client for the AppSecWatch FastAPI backend.
  *
  * Base URL + API key resolve from localStorage first (set via Settings), then
  * from NEXT_PUBLIC_* env vars. Every error is normalized to ApiError carrying
@@ -32,8 +32,8 @@ import type {
   SuppressionCreate,
 } from "./types";
 
-const LS_BASE = "watchtower.apiBase";
-const LS_KEY = "watchtower.apiKey";
+const LS_BASE = "appsecwatch.apiBase";
+const LS_KEY = "appsecwatch.apiKey";
 
 export function getApiBase(): string {
   if (typeof window !== "undefined") {

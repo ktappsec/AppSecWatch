@@ -3,9 +3,9 @@ base, preserve the technical report's JS hooks, and render the exec one-pager fr
 the deterministic core (no AI overlay required)."""
 from __future__ import annotations
 
-from watchtower.models import ExecutiveSummary, ExecRiskNote, Finding
-from watchtower.report.aggregator import build_report_context, select_top_risks
-from watchtower.report.renderer import render_executive, render_report
+from appsecwatch.models import ExecutiveSummary, ExecRiskNote, Finding
+from appsecwatch.report.aggregator import build_report_context, select_top_risks
+from appsecwatch.report.renderer import render_executive, render_report
 
 _RUN = {
     "label": "2026-06-30T00-00-00Z-example_com",
@@ -13,7 +13,7 @@ _RUN = {
     "started_at": "2026-06-30T00:00:00+00:00",
     "finished_at": "2026-06-30T00:10:00+00:00",
     "duration": "600.0s",
-    "watchtower_version": "9.9.9",
+    "appsecwatch_version": "9.9.9",
 }
 
 

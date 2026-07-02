@@ -4,7 +4,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from watchtower.models import AppProfile
+from appsecwatch.models import AppProfile
 
 
 def test_defaults_are_lenient_and_usable():

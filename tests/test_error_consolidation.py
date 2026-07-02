@@ -2,17 +2,17 @@
 (state.errors), and roll up into a RunSummary."""
 from __future__ import annotations
 
-from watchtower.config import LLMConfig, WatchTowerConfig
-from watchtower.logging import RunLogger
-from watchtower.models import AppProfile, Finding, LiveWebServer, TLSHostReport
-from watchtower.report.aggregator import build_run_summary
-from watchtower.stages import audit, profile
-from watchtower.stages.base import Stage, execute_stages
-from watchtower.stages.state import ScanState
+from appsecwatch.config import LLMConfig, AppSecWatchConfig
+from appsecwatch.logging import RunLogger
+from appsecwatch.models import AppProfile, Finding, LiveWebServer, TLSHostReport
+from appsecwatch.report.aggregator import build_run_summary
+from appsecwatch.stages import audit, profile
+from appsecwatch.stages.base import Stage, execute_stages
+from appsecwatch.stages.state import ScanState
 
 
-def _cfg() -> WatchTowerConfig:
-    return WatchTowerConfig(
+def _cfg() -> AppSecWatchConfig:
+    return AppSecWatchConfig(
         roots=["example.com"], mmdb_path="/dev/null",
         llm=LLMConfig(base_url="http://localhost/v1", model="m"),
     )
@@ -105,7 +105,7 @@ def test_build_run_summary_counts():
     state.app_profiles = {"h": AppProfile(host="h", error="e"),
                           "h2": AppProfile(host="h2", confidence="high")}
     state.stage_durations = {"audit.sslscan": 5.0, "audit.nuclei": 2.0}
-    from watchtower.models import StageError, asset_error
+    from appsecwatch.models import StageError, asset_error
     state.errors = [
         asset_error("audit.sslscan", "a", "t"),                         # per-host failure
         StageError(stage="audit.nuclei", message="KeyError", error_type="KeyError"),  # crash

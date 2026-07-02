@@ -9,10 +9,10 @@ import argparse
 import io
 import json
 
-from watchtower import progress
-from watchtower.cli import _strict_exit
-from watchtower.logging import PlainRenderer, RunLogger
-from watchtower.models import RunSummary
+from appsecwatch import progress
+from appsecwatch.cli import _strict_exit
+from appsecwatch.logging import PlainRenderer, RunLogger
+from appsecwatch.models import RunSummary
 
 
 # ---- plain / quiet renderers ----------------------------------------------

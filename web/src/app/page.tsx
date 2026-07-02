@@ -69,7 +69,7 @@ export default function DashboardPage() {
     <div className="space-y-6">
       <div className="flex items-end justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Dashboard</h1>
+          <h1 className="text-xl font-semibold tracking-tight">Dashboard</h1>
           <p className="text-sm text-muted-foreground">
             Fleet-wide view of your external AppSec audits.
           </p>
@@ -84,7 +84,7 @@ export default function DashboardPage() {
       {/* KPIs */}
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
         {loading && jobs.length === 0 ? (
-          Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-32 rounded-xl" />)
+          Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-28 rounded-xl" />)
         ) : (
           <>
             <StatCard title="Total scans" value={data?.total ?? 0} icon={Radar} delay={0} />
@@ -93,7 +93,7 @@ export default function DashboardPage() {
               value={running}
               icon={Activity}
               delay={100}
-              iconClassName={running ? "bg-accent/20 text-accent" : undefined}
+              iconClassName={running ? "bg-primary/10 text-primary" : undefined}
               hint={running ? "running or queued" : "idle"}
             />
             <StatCard title="Completed" value={completed.length} icon={CheckCircle2} delay={200} />
@@ -102,7 +102,7 @@ export default function DashboardPage() {
               value={totalFindings}
               icon={ShieldAlert}
               delay={300}
-              iconClassName="bg-destructive/15 text-destructive"
+              iconClassName="bg-destructive/10 text-destructive"
             />
           </>
         )}
@@ -124,7 +124,7 @@ export default function DashboardPage() {
       {/* Recent activity */}
       <Card className="p-6">
         <div className="mb-4 flex items-center justify-between">
-          <h3 className="text-lg font-bold">Recent scans</h3>
+          <h3 className="text-lg font-semibold">Recent scans</h3>
           <Button asChild variant="ghost" size="sm">
             <Link href="/scans">View all</Link>
           </Button>
@@ -137,17 +137,20 @@ export default function DashboardPage() {
               <Link
                 key={j.id}
                 href={`/scans/detail?id=${encodeURIComponent(j.id)}`}
-                className="flex items-center justify-between gap-3 rounded-lg px-3 py-2.5 transition-smooth hover:bg-accent/5 animate-fade-in-up"
+                className="flex items-center justify-between gap-3 rounded-lg px-3 py-2.5 transition-smooth hover:bg-muted animate-fade-in-up"
                 style={{ animationDelay: `${i * 50}ms` }}
               >
                 <div className="flex min-w-0 items-center gap-3">
                   <StateBadge state={j.state} />
-                  <span className="truncate text-sm font-medium">
+                  <span
+                    className="truncate text-sm font-medium"
+                    title={j.roots?.length ? j.roots.join(", ") : undefined}
+                  >
                     {rootsLabel(j.roots)}
                   </span>
                 </div>
                 <div className="flex shrink-0 items-center gap-4 text-xs text-muted-foreground">
-                  <span>{j.finding_count} findings</span>
+                  <span className="tabular-nums">{j.finding_count} findings</span>
                   <span className="hidden md:inline">{relativeTime(j.submitted_at)}</span>
                 </div>
               </Link>
