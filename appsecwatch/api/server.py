@@ -46,6 +46,7 @@ from appsecwatch.api.models import (
     AssetBulkRequest,
     AssetGroup,
     AssetImportResult,
+    AssetUpdate,
     AssetUpsert,
     ConfigUpdate,
     ConfigView,
@@ -64,6 +65,7 @@ from appsecwatch.api.models import (
     PromptSlot,
     PromptUpdate,
     PromptsView,
+    ScanHistoryEntry,
     ScanRequest,
     ScanTemplate,
     ScanTemplateUpsert,
@@ -71,6 +73,7 @@ from appsecwatch.api.models import (
     ScheduleUpsert,
     Suppression,
     SuppressionCreate,
+    TrendPoint,
     error_response,
 )
 from appsecwatch.api.result import count_findings, load_scan_result
@@ -235,6 +238,9 @@ def _install(app: FastAPI, config: ServerConfig) -> None:
     def scan_tpl_mgr(request: Request) -> ScanTemplateManager:
         return request.app.state.scan_templates
 
+    def history_index(request: Request) -> ScanHistory:
+        return request.app.state.history
+
     @app.get("/healthz")
     async def healthz():
         return {"status": "ok", "version": __version__}
@@ -319,7 +325,9 @@ def _install(app: FastAPI, config: ServerConfig) -> None:
     async def add_asset(body: AssetUpsert, request: Request) -> Asset:
         am = assets_mgr(request)
         try:
-            await asyncio.to_thread(am.upsert_imported, body.fqdn, body.group, body.notes)
+            await asyncio.to_thread(
+                am.upsert_imported, body.fqdn, body.group, body.notes, body.priority
+            )
         except ValueError as e:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY, error_response("invalid_asset", str(e))
@@ -327,18 +335,14 @@ def _install(app: FastAPI, config: ServerConfig) -> None:
         return Asset(**(await asyncio.to_thread(am.get, body.fqdn)))
 
     @app.put("/assets/{fqdn}", dependencies=[Depends(require_api_key)])
-    async def update_asset(fqdn: str, body: AssetUpsert, request: Request) -> Asset:
+    async def update_asset(fqdn: str, body: AssetUpdate, request: Request) -> Asset:
+        """Partial edit of an existing asset (group/notes/priority); never changes source."""
         am = assets_mgr(request)
-        try:
-            await asyncio.to_thread(am.upsert_imported, fqdn, body.group, body.notes)
-        except ValueError as e:
-            raise HTTPException(
-                status.HTTP_422_UNPROCESSABLE_ENTITY, error_response("invalid_asset", str(e))
-            )
-        a = await asyncio.to_thread(am.get, fqdn)
-        if a is None:
+        fields = body.model_dump(exclude_unset=True)
+        ok = await asyncio.to_thread(am.update, fqdn, fields)
+        if not ok:
             raise HTTPException(status.HTTP_404_NOT_FOUND, error_response("not_found", "no such asset"))
-        return Asset(**a)
+        return Asset(**(await asyncio.to_thread(am.get, fqdn)))
 
     @app.delete("/assets/{fqdn}", dependencies=[Depends(require_api_key)])
     async def delete_asset(fqdn: str, request: Request):
@@ -618,6 +622,26 @@ def _install(app: FastAPI, config: ServerConfig) -> None:
         response.status_code = status.HTTP_202_ACCEPTED if created else status.HTTP_200_OK
         return _to_status(mgr, record)
 
+    @app.get("/history", dependencies=[Depends(require_api_key)])
+    async def scan_history(
+        request: Request,
+        group: str | None = Query(default=None),
+        limit: int = Query(default=100, ge=1, le=500),
+    ) -> list[ScanHistoryEntry]:
+        """Durable cross-run terminal-scan index (SQLite), with per-severity + risk."""
+        rows = await asyncio.to_thread(history_index(request).list, group=group, limit=limit)
+        return [ScanHistoryEntry(**r) for r in rows]
+
+    @app.get("/trends", dependencies=[Depends(require_api_key)])
+    async def scan_trends(
+        request: Request,
+        group: str | None = Query(default=None),
+        limit: int = Query(default=30, ge=1, le=200),
+    ) -> list[TrendPoint]:
+        """Chronological completed-scan points for the exposure/risk trend charts."""
+        rows = await asyncio.to_thread(history_index(request).trends, group=group, limit=limit)
+        return [TrendPoint(**r) for r in rows]
+
     @app.get("/scans", dependencies=[Depends(require_api_key)])
     async def list_scans(
         request: Request,
@@ -788,6 +812,7 @@ def create_app(config: ServerConfig) -> FastAPI:
     app.state.config = config
     app.state.config_manager = cfg_manager
     app.state.assets = assets
+    app.state.history = history
     app.state.suppressions = suppressions
     app.state.catalog = catalog
     app.state.custom_templates = custom_templates
@@ -829,6 +854,7 @@ def create_combined_app(config: ServerConfig, ui_dir: str | Path) -> FastAPI:
     api_app.state.config = config
     api_app.state.config_manager = cfg_manager
     api_app.state.assets = assets
+    api_app.state.history = history
     api_app.state.suppressions = suppressions
     api_app.state.catalog = catalog
     api_app.state.custom_templates = custom_templates

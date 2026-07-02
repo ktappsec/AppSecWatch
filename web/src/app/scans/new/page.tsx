@@ -178,9 +178,9 @@ export default function NewScanPage() {
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       <div>
-        <h1 className="text-2xl font-bold">New Scan</h1>
+        <h1 className="text-2xl font-bold tracking-tight">New audit</h1>
         <p className="text-sm text-muted-foreground">
-          Submit an external AppSec audit. Secrets live server-side.
+          Launch a point-in-time external AppSec audit. Secrets live server-side.
         </p>
       </div>
 

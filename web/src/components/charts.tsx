@@ -7,10 +7,12 @@ import {
   Cell,
   BarChart,
   Bar,
+  AreaChart,
+  Area,
+  CartesianGrid,
   XAxis,
   YAxis,
   Tooltip as RTooltip,
-  Legend,
 } from "recharts";
 import { SEVERITY_COLORS, SEVERITY_ORDER } from "@/lib/constants";
 import type { Severity } from "@/lib/types";
@@ -27,40 +29,51 @@ function tooltipStyle() {
   };
 }
 
-/** Donut of severity totals. `data` = {severity: count}. */
-export function SeverityPie({ totals }: { totals: Record<string, number> }) {
+/** Donut of severity totals with a center total. `data` = {severity: count}. */
+export function SeverityPie({
+  totals,
+  height = 200,
+}: {
+  totals: Record<string, number>;
+  height?: number;
+}) {
   const data = SEVERITY_ORDER.map((s) => ({ name: s, value: totals[s] || 0 })).filter(
     (d) => d.value > 0
   );
+  const total = data.reduce((a, d) => a + d.value, 0);
 
   if (data.length === 0) {
     return <EmptyChart label="No findings" />;
   }
 
   return (
-    <ResponsiveContainer width="100%" height={260}>
-      <PieChart>
-        <Pie
-          data={data}
-          dataKey="value"
-          nameKey="name"
-          cx="50%"
-          cy="50%"
-          innerRadius={60}
-          outerRadius={95}
-          paddingAngle={2}
-          stroke="var(--card)"
-        >
-          {data.map((d) => (
-            <Cell key={d.name} fill={SEVERITY_COLORS[d.name as Severity]} />
-          ))}
-        </Pie>
-        <RTooltip contentStyle={tooltipStyle()} />
-        <Legend
-          formatter={(v) => <span className="text-xs capitalize text-muted-foreground">{v}</span>}
-        />
-      </PieChart>
-    </ResponsiveContainer>
+    <div className="relative" style={{ height }}>
+      <ResponsiveContainer width="100%" height="100%">
+        <PieChart>
+          <Pie
+            data={data}
+            dataKey="value"
+            nameKey="name"
+            cx="50%"
+            cy="50%"
+            innerRadius="62%"
+            outerRadius="92%"
+            paddingAngle={2}
+            stroke="var(--card)"
+            strokeWidth={2}
+          >
+            {data.map((d) => (
+              <Cell key={d.name} fill={SEVERITY_COLORS[d.name as Severity]} />
+            ))}
+          </Pie>
+          <RTooltip contentStyle={tooltipStyle()} />
+        </PieChart>
+      </ResponsiveContainer>
+      <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+        <span className="text-2xl font-bold tabular-nums">{total}</span>
+        <span className="text-[10px] uppercase tracking-wider text-muted-foreground">findings</span>
+      </div>
+    </div>
   );
 }
 
@@ -112,9 +125,77 @@ export function FindingsByScan({
   );
 }
 
+/** One point of the exposure-over-time trend (findings by severity). */
+export interface TrendPoint {
+  label: string;
+  critical: number;
+  high: number;
+  medium: number;
+  low: number;
+  info: number;
+}
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+function TrendTooltip({ active, payload, label }: any) {
+  if (!active || !payload?.length) return null;
+  const total = payload.reduce((a: number, p: any) => a + (p.value || 0), 0);
+  return (
+    <div className="rounded-lg border border-border bg-popover px-3 py-2 text-xs shadow-pop">
+      <div className="mb-1.5 font-medium text-foreground">{label}</div>
+      {[...payload].reverse().map((p: any) => (
+        <div key={p.dataKey} className="flex items-center gap-2 py-0.5">
+          <span className="h-2 w-2 rounded-[3px]" style={{ background: p.color }} />
+          <span className="capitalize text-muted-foreground">{p.dataKey}</span>
+          <span className="ml-auto font-medium tabular-nums text-foreground">{p.value}</span>
+        </div>
+      ))}
+      <div className="mt-1.5 flex items-center justify-between border-t border-border pt-1.5">
+        <span className="text-muted-foreground">Total</span>
+        <span className="font-semibold tabular-nums text-foreground">{total}</span>
+      </div>
+    </div>
+  );
+}
+/* eslint-enable @typescript-eslint/no-explicit-any */
+
+/** Stacked-area exposure trend over time (findings by severity). */
+export function SeverityTrend({ data, height = 230 }: { data: TrendPoint[]; height?: number }) {
+  if (!data.length) return <EmptyChart label="No history yet" />;
+  const order: Severity[] = ["info", "low", "medium", "high", "critical"]; // stack bottom→top
+  return (
+    <ResponsiveContainer width="100%" height={height}>
+      <AreaChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: -18 }}>
+        <defs>
+          {order.map((s) => (
+            <linearGradient key={s} id={`trend-${s}`} x1="0" x2="0" y1="0" y2="1">
+              <stop offset="0" stopColor={SEVERITY_COLORS[s]} stopOpacity={s === "info" ? 0.5 : 0.8} />
+              <stop offset="1" stopColor={SEVERITY_COLORS[s]} stopOpacity={0.08} />
+            </linearGradient>
+          ))}
+        </defs>
+        <CartesianGrid vertical={false} stroke="var(--grid-line)" />
+        <XAxis dataKey="label" tick={axisStyle} axisLine={false} tickLine={false} minTickGap={20} />
+        <YAxis tick={axisStyle} axisLine={false} tickLine={false} allowDecimals={false} width={30} />
+        <RTooltip content={<TrendTooltip />} />
+        {order.map((s) => (
+          <Area
+            key={s}
+            type="monotone"
+            dataKey={s}
+            stackId="1"
+            stroke={SEVERITY_COLORS[s]}
+            strokeWidth={1.5}
+            fill={`url(#trend-${s})`}
+          />
+        ))}
+      </AreaChart>
+    </ResponsiveContainer>
+  );
+}
+
 export function EmptyChart({ label }: { label: string }) {
   return (
-    <div className="flex h-[260px] items-center justify-center text-sm text-muted-foreground">
+    <div className="flex h-[220px] items-center justify-center text-sm text-muted-foreground">
       {label}
     </div>
   );

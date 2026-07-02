@@ -927,3 +927,80 @@ def test_config_masks_zap_api_key(tmp_path, monkeypatch):
         got["zap"]["api_key"] = "********"
         put = client.put("/config", headers=H, json={"base_config": got})
         assert put.status_code == 200
+
+
+# --------------------------------------------------------------------------- #
+# trends / history / risk score / asset priority (redesign additions)
+# --------------------------------------------------------------------------- #
+def test_result_includes_risk_score_and_posture(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch, _make_fake_run(findings=3)) as client:
+        job_id = client.post("/scans", json=REQ, headers=H).json()["id"]
+        _wait_state(client, job_id, "completed")
+        rj = client.get(f"/scans/{job_id}/result", headers=H).json()
+        # 3 high findings -> HIGH posture, a mid/high risk score.
+        assert rj["posture"] == "HIGH"
+        assert 45 <= rj["risk_score"] <= 100
+
+
+def test_trends_and_history_after_scan(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch, _make_fake_run(findings=2)) as client:
+        job_id = client.post("/scans", json=REQ, headers=H).json()["id"]
+        _wait_state(client, job_id, "completed")
+
+        trends = client.get("/trends", headers=H)
+        assert trends.status_code == 200
+        pts = trends.json()
+        assert len(pts) == 1
+        p = pts[0]
+        assert p["id"] == job_id
+        assert p["high"] == 2 and p["finding_count"] == 2
+        assert p["risk_score"] is not None and p["risk_score"] > 0
+
+        hist = client.get("/history", headers=H)
+        assert hist.status_code == 200
+        entries = hist.json()
+        assert entries[0]["id"] == job_id
+        assert entries[0]["by_severity"]["high"] == 2
+
+        # both require auth
+        assert client.get("/trends").status_code == 401
+        assert client.get("/history").status_code == 401
+
+
+def test_asset_priority_set_and_persisted(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        # create with priority
+        r = client.post("/assets", json={"fqdn": "crown.example.com", "priority": 9},
+                        headers=H)
+        assert r.status_code == 201 and r.json()["priority"] == 9
+        # partial PUT changes only priority (group left untouched)
+        client.post("/assets", json={"fqdn": "a.example.com", "group": "G1"}, headers=H)
+        up = client.put("/assets/a.example.com", json={"priority": 7}, headers=H)
+        assert up.status_code == 200
+        a = up.json()
+        assert a["priority"] == 7 and a["group"] == "G1"
+        # out-of-range rejected by the model (1..10)
+        assert client.put("/assets/a.example.com", json={"priority": 42},
+                          headers=H).status_code == 422
+        # PUT on a missing asset -> 404
+        assert client.put("/assets/nope.example.com", json={"priority": 3},
+                          headers=H).status_code == 404
+        # CSV import accepts a 3rd priority column
+        client.post("/assets/import",
+                    json={"csv": "d.example.com,G2,5\n"}, headers=H)
+        d = [x for x in client.get("/assets", headers=H).json() if x["fqdn"] == "d.example.com"][0]
+        assert d["priority"] == 5
+
+
+def test_risk_score_monotonic_by_dominant_severity():
+    from appsecwatch.report.aggregator import risk_score
+    none = risk_score({})
+    low = risk_score({"low": 1})
+    med = risk_score({"medium": 1})
+    high = risk_score({"high": 1})
+    crit = risk_score({"critical": 1})
+    assert none == 0
+    assert low < med < high < crit <= 100
+    # volume raises the score within a band but never past 100
+    assert risk_score({"critical": 20, "high": 30}) <= 100
+    assert risk_score({"high": 5}) >= high

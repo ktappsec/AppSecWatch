@@ -30,6 +30,16 @@ def _valid(domain: str) -> bool:
     return bool(_DOMAIN_RE.match(domain))
 
 
+def _clamp_priority(value: Any) -> int | None:
+    """Coerce a manual priority to an int in 1..10, or None if unset/invalid."""
+    if value is None or value == "":
+        return None
+    try:
+        return max(1, min(10, int(value)))
+    except (TypeError, ValueError):
+        return None
+
+
 def _root_of(fqdn: str, scanned_roots: list[str]) -> str | None:
     """The longest scanned root that fqdn sits under (or equals)."""
     best = None
@@ -85,32 +95,57 @@ class AssetManager:
         return self._row(rows[0]) if rows else None
 
     # ----- write (UI CRUD + CSV) ----------------------------------------- #
-    def upsert_imported(self, fqdn: str, group: str | None, notes: str | None = None) -> bool:
-        """Add/update an imported asset (a root). Returns True if newly added."""
+    def upsert_imported(
+        self, fqdn: str, group: str | None, notes: str | None = None,
+        priority: int | None = None,
+    ) -> bool:
+        """Add/update an imported asset (a root). Returns True if newly added.
+        `priority` (1..10) is operator-set business criticality; COALESCE on
+        update so re-import never wipes an existing value."""
         d = _norm(fqdn)
         if not _valid(d):
             raise ValueError(f"invalid domain: {fqdn!r}")
+        pr = _clamp_priority(priority)
         existing = self.get(d)
         now = _now()
         if existing:
             self.db.execute(
                 'UPDATE assets SET "group"=?, notes=COALESCE(?, notes), '
+                "priority=COALESCE(?, priority), "
                 "source='imported', root=COALESCE(root, ?), last_seen=? WHERE fqdn=?",
-                (group, notes, d, now, d),
+                (group, notes, pr, d, now, d),
             )
             return False
         self.db.execute(
-            'INSERT INTO assets (fqdn, "group", source, root, notes, first_seen, last_seen) '
-            "VALUES (?, ?, 'imported', ?, ?, ?, ?)",
-            (d, group, d, notes, now, now),
+            'INSERT INTO assets (fqdn, "group", source, root, notes, priority, '
+            "first_seen, last_seen) VALUES (?, ?, 'imported', ?, ?, ?, ?, ?)",
+            (d, group, d, notes, pr, now, now),
         )
         return True
+
+    def update(self, fqdn: str, fields: dict[str, Any]) -> bool:
+        """Partial edit of an existing asset (group/notes/priority only); does NOT
+        change `source`. Returns True if a row was updated."""
+        d = _norm(fqdn)
+        sets, p = [], []
+        for k in ("group", "notes", "priority"):
+            if k not in fields:
+                continue
+            v = _clamp_priority(fields[k]) if k == "priority" else fields[k]
+            sets.append(f'"group"=?' if k == "group" else f"{k}=?")
+            p.append(v)
+        if not sets:
+            return self.get(d) is not None
+        sets.append("last_seen=?")
+        p.append(_now())
+        p.append(d)
+        return self.db.execute(f"UPDATE assets SET {', '.join(sets)} WHERE fqdn=?", tuple(p)) > 0
 
     def delete(self, fqdn: str) -> bool:
         return self.db.execute("DELETE FROM assets WHERE fqdn = ?", (_norm(fqdn),)) > 0
 
     def import_csv(self, text: str) -> dict[str, int]:
-        """Upsert rows from a `domain,group` CSV. Header optional."""
+        """Upsert rows from a `domain,group[,priority]` CSV. Header optional."""
         added = updated = skipped = 0
         reader = csv.reader(io.StringIO(text))
         for row in reader:
@@ -121,7 +156,8 @@ class AssetManager:
                 skipped += 1
                 continue
             group = (row[1].strip() if len(row) > 1 else "") or None
-            if self.upsert_imported(domain, group):
+            priority = _clamp_priority(row[2].strip()) if len(row) > 2 else None
+            if self.upsert_imported(domain, group, priority=priority):
                 added += 1
             else:
                 updated += 1

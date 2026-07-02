@@ -38,6 +38,7 @@ _SCHEMA: list[str] = [
         profile      TEXT,                                 -- JSON AppProfile (ai.profile)
         finding_counts TEXT,                               -- JSON {sev: n} from last scan
         surface      TEXT,                                 -- JSON curated surface (EASM): domains/endpoints/keys
+        priority     INTEGER,                              -- manual business criticality 1..10 (10 highest)
         notes        TEXT,
         first_seen   TEXT,
         last_seen    TEXT,
@@ -60,6 +61,12 @@ _SCHEMA: list[str] = [
         started_at    TEXT,
         finished_at   TEXT,
         finding_count INTEGER DEFAULT 0,
+        sev_critical  INTEGER DEFAULT 0,                    -- per-severity breakdown (for trends)
+        sev_high      INTEGER DEFAULT 0,
+        sev_medium    INTEGER DEFAULT 0,
+        sev_low       INTEGER DEFAULT 0,
+        sev_info      INTEGER DEFAULT 0,
+        risk_score    INTEGER,                              -- derived 0..100 (see aggregator.risk_score)
         source        TEXT DEFAULT 'manual',               -- manual | schedule
         schedule_id   TEXT
     )
@@ -146,6 +153,13 @@ _MIGRATIONS: list[tuple[str, str, str]] = [
     ("assets", "finding_counts", "TEXT"),
     ("assets", "status", "TEXT"),          # buckets → liveness; backfilled in _init_schema
     ("assets", "surface", "TEXT"),         # curated EASM surface from the last scan
+    ("assets", "priority", "INTEGER"),     # manual business criticality 1..10
+    ("scans", "sev_critical", "INTEGER DEFAULT 0"),   # per-severity trend columns
+    ("scans", "sev_high", "INTEGER DEFAULT 0"),
+    ("scans", "sev_medium", "INTEGER DEFAULT 0"),
+    ("scans", "sev_low", "INTEGER DEFAULT 0"),
+    ("scans", "sev_info", "INTEGER DEFAULT 0"),
+    ("scans", "risk_score", "INTEGER"),               # derived 0..100
 ]
 
 

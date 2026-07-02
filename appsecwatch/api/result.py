@@ -11,7 +11,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from appsecwatch.report.aggregator import severity_histogram
+from appsecwatch.report.aggregator import posture_rating, risk_score, severity_histogram
 from appsecwatch.stages.state import ScanState
 
 RESULT_FILENAME = "result.json"
@@ -40,12 +40,15 @@ def build_scan_result(
     # Suppressed findings stay in the payload (UI shows them collapsed) but are
     # excluded from the severity histogram, matching the HTML report.
     histogram = severity_histogram([f for f in findings if not f.suppressed])
+    totals = {sev: sum(by.values()) for sev, by in histogram.items()}
     return {
         "id": job_id,
         "state": job_state,
         "coverage": state.coverage,
         "histogram": histogram,
-        "histogram_totals": {sev: sum(by.values()) for sev, by in histogram.items()},
+        "histogram_totals": totals,
+        "risk_score": risk_score(totals),
+        "posture": posture_rating(totals)[0],
         "findings": [f.model_dump() for f in findings],
         "tls": [t.model_dump() for t in state.tls_reports],
         "tls_certs": [c.model_dump() for c in state.tls_certs],

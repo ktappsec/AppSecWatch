@@ -9,7 +9,12 @@ export function LayoutWrapper({ children }: { children: React.ReactNode }) {
   const [mobileOpen, setMobileOpen] = React.useState(false);
 
   return (
-    <div className="flex h-screen w-full overflow-hidden bg-background">
+    <>
+      {/* Ambient layers — behind all app content (z-0); content sits at z-10 */}
+      <div className="app-aurora" aria-hidden />
+      <div className="app-grain" aria-hidden />
+
+      <div className="relative z-10 flex h-screen w-full overflow-hidden">
       {/* Desktop sidebar */}
       <div className="hidden md:block">
         <Sidebar />
@@ -37,6 +42,7 @@ export function LayoutWrapper({ children }: { children: React.ReactNode }) {
         <TopBar onOpenSidebar={() => setMobileOpen(true)} />
         <main className="flex-1 overflow-y-auto p-4 md:p-6">{children}</main>
       </div>
-    </div>
+      </div>
+    </>
   );
 }

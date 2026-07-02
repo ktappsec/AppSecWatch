@@ -57,18 +57,21 @@ export default function ScansPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">Scans</h1>
-          <p className="text-sm text-muted-foreground">
-            {data ? `${data.total} total` : "Loading…"}
+          <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-brand">
+            External attack surface
+          </div>
+          <h1 className="text-2xl font-bold tracking-tight">Audits</h1>
+          <p className="mt-0.5 text-sm text-muted-foreground">
+            {data ? `${data.total} point-in-time audits` : "Loading…"}
           </p>
         </div>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="icon-sm" onClick={refresh} aria-label="Refresh">
             <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />
           </Button>
-          <Button asChild size="sm">
+          <Button asChild size="sm" className="gradient-brand text-white shadow-glow hover:brightness-105">
             <Link href="/scans/new">
-              <Plus className="h-4 w-4" /> New Scan
+              <Plus className="h-4 w-4" /> New audit
             </Link>
           </Button>
         </div>
@@ -82,11 +85,11 @@ export default function ScansPage() {
             onClick={() => setFilter(f.value)}
             aria-pressed={filter === f.value}
             className={cn(
-              "rounded-lg border px-3 py-1.5 text-xs font-medium transition-smooth",
+              "rounded-full border px-3.5 py-1.5 text-xs font-medium transition-smooth",
               "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
               filter === f.value
-                ? "border-primary/40 bg-primary/10 text-primary"
-                : "border-border text-muted-foreground hover:bg-muted"
+                ? "border-brand/40 bg-brand/10 text-brand"
+                : "border-border text-muted-foreground hover:bg-overlay"
             )}
           >
             {f.label}
@@ -103,14 +106,14 @@ export default function ScansPage() {
           </div>
         ) : jobs.length === 0 ? (
           <div className="py-16 text-center text-sm text-muted-foreground">
-            No scans match this filter.
+            No audits match this filter.
           </div>
         ) : (
           <Table>
             <TableHeader>
               <TableRow>
                 <TableHead>Status</TableHead>
-                <TableHead>Roots</TableHead>
+                <TableHead>Target</TableHead>
                 <TableHead>Findings</TableHead>
                 <TableHead className="hidden lg:table-cell">Stage</TableHead>
                 <TableHead className="hidden sm:table-cell">Duration</TableHead>

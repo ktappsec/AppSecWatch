@@ -68,3 +68,71 @@ export function useMounted(): boolean {
   React.useEffect(() => setM(true), []);
   return m;
 }
+
+/** Animated count-up to `target` (rAF, cubic ease-out). Respects reduced motion. */
+export function useCountUp(target: number, duration = 700): number {
+  const [val, setVal] = React.useState(target);
+  React.useEffect(() => {
+    if (
+      typeof window === "undefined" ||
+      window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
+    ) {
+      setVal(target);
+      return;
+    }
+    let raf = 0;
+    const start = performance.now();
+    const tick = (now: number) => {
+      const t = Math.min(1, (now - start) / duration);
+      const eased = 1 - Math.pow(1 - t, 3);
+      setVal(target * eased);
+      if (t < 1) raf = requestAnimationFrame(tick);
+      else setVal(target);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [target, duration]);
+  return val;
+}
+
+/** Fire `handler` on a ⌘/Ctrl + `key` chord (or plain key when meta=false). */
+export function useHotkey(key: string, handler: () => void, meta = true) {
+  const ref = React.useRef(handler);
+  ref.current = handler;
+  React.useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const chord = meta ? e.metaKey || e.ctrlKey : true;
+      if (chord && e.key.toLowerCase() === key.toLowerCase()) {
+        e.preventDefault();
+        ref.current();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [key, meta]);
+}
+
+/** localStorage-backed state, SSR-safe (returns `initial` until mounted). */
+export function useLocalStorage<T extends string>(storageKey: string, initial: T) {
+  const [value, setValue] = React.useState<T>(initial);
+  React.useEffect(() => {
+    try {
+      const v = localStorage.getItem(storageKey);
+      if (v !== null) setValue(v as T);
+    } catch {
+      /* ignore */
+    }
+  }, [storageKey]);
+  const set = React.useCallback(
+    (v: T) => {
+      setValue(v);
+      try {
+        localStorage.setItem(storageKey, v);
+      } catch {
+        /* ignore */
+      }
+    },
+    [storageKey]
+  );
+  return [value, set] as const;
+}

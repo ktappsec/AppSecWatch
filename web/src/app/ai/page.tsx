@@ -140,7 +140,7 @@ export default function AITuningPage() {
         <div className="flex items-center gap-3">
           <Sparkles className="h-6 w-6 text-primary" />
           <div>
-            <h1 className="text-xl font-semibold tracking-tight">AI Tuning</h1>
+            <h1 className="text-2xl font-bold tracking-tight">AI tuning</h1>
             <p className="text-sm text-muted-foreground">
               Profiling, cross-source false-positive suppression (the <code>ai.triage</code> pass),
               and the editable AI system prompts.

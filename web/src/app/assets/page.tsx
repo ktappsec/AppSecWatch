@@ -12,6 +12,8 @@ import {
   Table, TableHeader, TableBody, TableRow, TableHead, TableCell,
 } from "@/components/ui/table";
 import { SeverityBadge, SeverityCounts } from "@/components/badges";
+import { ScoreMeter } from "@/components/score-meter";
+import { PriorityBadge } from "@/components/priority-badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
@@ -30,6 +32,7 @@ import { cn } from "@/lib/utils";
 import { api, ApiError } from "@/lib/api";
 import { useMounted } from "@/lib/hooks";
 import { relativeTime } from "@/lib/format";
+import { dominantSeverity, exposureScore, sumCounts } from "@/lib/risk";
 import type { Asset, Finding } from "@/lib/types";
 
 const STATUS_STYLE: Record<string, string> = {
@@ -122,6 +125,13 @@ export default function AssetsPage() {
     catch (e) { toast.error(e instanceof ApiError ? e.message : "Delete failed"); }
   };
 
+  // Manual business priority (1..10). Optimistic; reload on error.
+  const setPriority = async (fqdn: string, p: number | null) => {
+    setAssets((as) => as.map((a) => (a.fqdn === fqdn ? { ...a, priority: p } : a)));
+    try { await api.updateAsset(fqdn, { priority: p }); }
+    catch (e) { toast.error(e instanceof ApiError ? e.message : "Update failed"); load(); }
+  };
+
   // Deep-link into the New-Scan form (prefilled) so you get the full controls.
   const scan = (req: { group?: string; assets?: string[] }) => {
     const qs = req.group ? `?group=${encodeURIComponent(req.group)}`
@@ -138,6 +148,8 @@ export default function AssetsPage() {
   const [deleteOpen, setDeleteOpen] = React.useState(false);
   const [groupOpen, setGroupOpen] = React.useState(false);
   const [groupValue, setGroupValue] = React.useState("");
+  const [prioOpen, setPrioOpen] = React.useState(false);
+  const [prioValue, setPrioValue] = React.useState("");
 
   const bulkDelete = async () => {
     setDeleteOpen(false);
@@ -156,8 +168,24 @@ export default function AssetsPage() {
       toast.success(`Regrouped ${r.affected}`); setSelected(new Set()); load();
     } catch (e) { toast.error(e instanceof ApiError ? e.message : "Bulk set-group failed"); }
   };
+  const bulkSetPriority = async () => {
+    setPrioOpen(false);
+    const p = prioValue === "" ? null : Number(prioValue);
+    const fqdns = [...selected];
+    try {
+      await Promise.all(fqdns.map((f) => api.updateAsset(f, { priority: p })));
+      toast.success(`Priority set on ${fqdns.length}`); setSelected(new Set()); load();
+    } catch (e) { toast.error(e instanceof ApiError ? e.message : "Bulk priority failed"); }
+  };
   const toggle = (g: string) =>
     setCollapsed((s) => { const n = new Set(s); n.has(g) ? n.delete(g) : n.add(g); return n; });
+
+  const summary = React.useMemo(() => ({
+    total: assets.length,
+    live: assets.filter((a) => a.status === "live").length,
+    dead: assets.filter((a) => a.status === "dead").length,
+    exposed: assets.filter((a) => sumCounts(a.finding_counts || {}) > 0).length,
+  }), [assets]);
 
   // Per-asset detail (profile + tech + findings + surface + screenshot) — inline row.
   const [expanded, setExpanded] = React.useState<Set<string>>(new Set());
@@ -187,9 +215,13 @@ export default function AssetsPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">Assets</h1>
-          <p className="text-sm text-muted-foreground">
-            Inventory grouped by iştirak. Imported roots + subdomains discovered by recon.
+          <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-brand">
+            External attack surface
+          </div>
+          <h1 className="text-2xl font-bold tracking-tight">Inventory</h1>
+          <p className="mt-0.5 text-sm text-muted-foreground">
+            Assets grouped by iştirak — imported roots + subdomains discovered by recon. Set a
+            business priority (1–10) to drive the dashboard&apos;s prioritization.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -204,6 +236,16 @@ export default function AssetsPage() {
         </div>
       </div>
 
+      {/* Summary */}
+      {loaded && assets.length > 0 && (
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <SummaryTile n={summary.total} l="Assets" />
+          <SummaryTile n={summary.live} l="Internet-facing" tone="success" />
+          <SummaryTile n={summary.dead} l="Takeover-watch" tone={summary.dead ? "critical" : undefined} />
+          <SummaryTile n={summary.exposed} l="With findings" tone={summary.exposed ? "high" : undefined} />
+        </div>
+      )}
+
       {/* Bulk action bar */}
       {selected.size > 0 && (
         <Card className="flex flex-row flex-wrap items-center gap-2 p-3">
@@ -214,6 +256,9 @@ export default function AssetsPage() {
           </Button>
           <Button variant="outline" size="sm" onClick={() => { setGroupValue(""); setGroupOpen(true); }}>
             Set group…
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => { setPrioValue(""); setPrioOpen(true); }}>
+            Set priority…
           </Button>
           <Button variant="outline" size="sm" className="gap-1.5 text-destructive"
             onClick={() => setDeleteOpen(true)}>
@@ -246,7 +291,7 @@ export default function AssetsPage() {
             </Select>
           </div>
         </div>
-        <p className="text-xs text-muted-foreground">CSV format: <code>domain,group</code> (header optional).</p>
+        <p className="text-xs text-muted-foreground">CSV format: <code>domain,group,priority</code> (group + priority optional; header optional).</p>
       </Card>
 
       {!loaded ? (
@@ -289,9 +334,11 @@ export default function AssetsPage() {
                         <TableHead>FQDN</TableHead>
                         <TableHead>Source</TableHead>
                         <TableHead>Status</TableHead>
+                        <TableHead>Priority</TableHead>
+                        <TableHead className="hidden sm:table-cell">Exposure</TableHead>
                         <TableHead>Findings</TableHead>
-                        <TableHead className="hidden lg:table-cell">A records</TableHead>
-                        <TableHead className="hidden md:table-cell">Last seen</TableHead>
+                        <TableHead className="hidden xl:table-cell">A records</TableHead>
+                        <TableHead className="hidden lg:table-cell">Last seen</TableHead>
                         <TableHead className="text-right">Actions</TableHead>
                       </TableRow>
                     </TableHeader>
@@ -314,11 +361,13 @@ export default function AssetsPage() {
                               </span>
                             )}
                           </TableCell>
+                          <TableCell><PriorityCell asset={a} onSet={setPriority} /></TableCell>
+                          <TableCell className="hidden sm:table-cell"><ExposureCell counts={a.finding_counts} /></TableCell>
                           <TableCell><FindingCounts counts={a.finding_counts} /></TableCell>
-                          <TableCell className="hidden lg:table-cell text-xs text-muted-foreground">
+                          <TableCell className="hidden xl:table-cell text-xs text-muted-foreground">
                             {a.a_records.slice(0, 3).join(", ")}
                           </TableCell>
-                          <TableCell className="hidden md:table-cell text-xs text-muted-foreground">
+                          <TableCell className="hidden lg:table-cell text-xs text-muted-foreground">
                             {a.last_seen ? relativeTime(a.last_seen) : "—"}
                           </TableCell>
                           <TableCell className="text-right">
@@ -342,7 +391,7 @@ export default function AssetsPage() {
                         </TableRow>
                         {expanded.has(a.fqdn) && (
                           <TableRow className="hover:bg-transparent">
-                            <TableCell colSpan={8} className="bg-secondary/30 p-4">
+                            <TableCell colSpan={10} className="bg-overlay/40 p-4">
                               <AssetDetailPanel asset={a} findings={findingsCache[a.fqdn]} screenshot={shotCache[a.fqdn]} />
                             </TableCell>
                           </TableRow>
@@ -403,8 +452,80 @@ export default function AssetsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Bulk set-priority */}
+      <Dialog open={prioOpen} onOpenChange={setPrioOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Set priority</DialogTitle>
+            <DialogDescription>
+              Business criticality (1 lowest → 10 highest) for {selected.size} selected asset
+              {selected.size === 1 ? "" : "s"}. Leave blank to clear.
+            </DialogDescription>
+          </DialogHeader>
+          <Select value={prioValue || "none"} onValueChange={(v) => setPrioValue(v === "none" ? "" : v)}>
+            <SelectTrigger aria-label="Priority"><SelectValue placeholder="Priority" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="none">— (clear)</SelectItem>
+              {Array.from({ length: 10 }, (_, i) => 10 - i).map((n) => (
+                <SelectItem key={n} value={String(n)}>{n}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPrioOpen(false)}>Cancel</Button>
+            <Button onClick={bulkSetPriority}>Save</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
+}
+
+/** Summary KPI tile for the inventory header. */
+function SummaryTile({ n, l, tone }: { n: number; l: string; tone?: string }) {
+  const color = tone === "success" ? "var(--success)"
+    : tone === "critical" ? "var(--sev-critical)"
+      : tone === "high" ? "var(--sev-high)" : undefined;
+  return (
+    <Card className="gap-0.5 p-3">
+      <span className="text-2xl font-bold tabular-nums" style={color ? { color } : undefined}>{n}</span>
+      <span className="text-xs text-muted-foreground">{l}</span>
+    </Card>
+  );
+}
+
+/** Inline priority editor — click the badge to pick 1–10 (or clear). */
+function PriorityCell({ asset, onSet }: { asset: Asset; onSet: (fqdn: string, p: number | null) => void }) {
+  const [editing, setEditing] = React.useState(false);
+  if (editing) {
+    return (
+      <select
+        autoFocus
+        defaultValue={asset.priority?.toString() ?? ""}
+        onChange={(e) => { const v = e.target.value; onSet(asset.fqdn, v === "" ? null : Number(v)); setEditing(false); }}
+        onBlur={() => setEditing(false)}
+        className="h-7 rounded-md border border-border bg-input px-1 text-xs"
+      >
+        <option value="">—</option>
+        {Array.from({ length: 10 }, (_, i) => 10 - i).map((n) => <option key={n} value={n}>{n}</option>)}
+      </select>
+    );
+  }
+  return (
+    <button onClick={() => setEditing(true)} aria-label="Edit priority"
+      className="rounded transition-smooth hover:opacity-80">
+      <PriorityBadge p={asset.priority} />
+    </button>
+  );
+}
+
+/** Weighted exposure meter from an asset's last-scan finding counts. */
+function ExposureCell({ counts }: { counts?: Record<string, number> }) {
+  const total = sumCounts(counts || {});
+  if (!total) return <span className="text-xs text-muted-foreground">—</span>;
+  const worst = dominantSeverity(counts || {}) ?? "low";
+  return <ScoreMeter value={exposureScore(counts || {})} max={10} tone={worst} className="w-[120px]" />;
 }
 
 /** Inline detail panel shown under an expanded asset row. */

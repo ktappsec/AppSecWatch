@@ -69,6 +69,7 @@ export interface Asset {
     cookie_keys?: string[];
     storage_keys?: string[];
   } | null;
+  priority?: number | null;   // manual business criticality 1..10 (10 highest)
   notes?: string | null;
   first_seen?: string | null;
   last_seen?: string | null;
@@ -292,12 +293,16 @@ export interface CertInfo {
   wildcard: boolean;
 }
 
+export type Posture = "CRITICAL" | "HIGH" | "MODERATE" | "LOW";
+
 export interface ScanResult {
   id: string;
   state: JobState;
   coverage: Record<string, CoverageEntry>;
   histogram: Record<string, Record<string, number>>;
   histogram_totals: Record<string, number>;
+  risk_score: number;          // derived 0..100
+  posture: Posture;            // highest severity present
   findings: Finding[];
   tls: TLSHostReport[];
   tls_certs: CertInfo[];
@@ -309,6 +314,35 @@ export interface ScanResult {
   report_url: string;
   executive_url?: string | null;
   executive_pdf_url?: string | null;
+}
+
+/** Durable cross-run terminal-scan record (GET /history). */
+export interface ScanHistoryEntry {
+  id: string;
+  state?: string | null;
+  roots: string[];
+  group?: string | null;
+  submitted_at?: string | null;
+  finished_at?: string | null;
+  finding_count: number;
+  by_severity: Record<string, number>;
+  risk_score?: number | null;
+  source: string;
+  schedule_id?: string | null;
+}
+
+/** One chronological point for the exposure/risk trend charts (GET /trends). */
+export interface TrendPoint {
+  id: string;
+  label: string;
+  finished_at?: string | null;
+  finding_count: number;
+  risk_score?: number | null;
+  critical: number;
+  high: number;
+  medium: number;
+  low: number;
+  info: number;
 }
 
 export interface RunSummary {

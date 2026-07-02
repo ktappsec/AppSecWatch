@@ -23,6 +23,7 @@ import type {
   NucleiTemplate,
   PromptPreview,
   PromptsView,
+  ScanHistoryEntry,
   ScanRequest,
   ScanResult,
   Schedule,
@@ -30,6 +31,7 @@ import type {
   ServerConfigView,
   Suppression,
   SuppressionCreate,
+  TrendPoint,
 } from "./types";
 
 const LS_BASE = "appsecwatch.apiBase";
@@ -125,6 +127,24 @@ export const api = {
     return request<JobList>(`/scans${q ? `?${q}` : ""}`);
   },
 
+  // Chronological exposure/risk trend points (durable SQLite scans index).
+  trends: (opts: { group?: string; limit?: number } = {}) => {
+    const qs = new URLSearchParams();
+    if (opts.group) qs.set("group", opts.group);
+    if (opts.limit != null) qs.set("limit", String(opts.limit));
+    const q = qs.toString();
+    return request<TrendPoint[]>(`/trends${q ? `?${q}` : ""}`);
+  },
+
+  // Durable cross-run terminal-scan history index.
+  history: (opts: { group?: string; limit?: number } = {}) => {
+    const qs = new URLSearchParams();
+    if (opts.group) qs.set("group", opts.group);
+    if (opts.limit != null) qs.set("limit", String(opts.limit));
+    const q = qs.toString();
+    return request<ScanHistoryEntry[]>(`/history${q ? `?${q}` : ""}`);
+  },
+
   getScan: (id: string) => request<JobStatus>(`/scans/${encodeURIComponent(id)}`),
 
   getResult: (id: string) => request<ScanResult>(`/scans/${encodeURIComponent(id)}/result`),
@@ -194,8 +214,12 @@ export const api = {
 
   assetGroups: () => request<AssetGroup[]>("/assets/groups"),
 
-  addAsset: (a: { fqdn: string; group?: string | null; notes?: string | null }) =>
+  addAsset: (a: { fqdn: string; group?: string | null; notes?: string | null; priority?: number | null }) =>
     request<Asset>("/assets", { method: "POST", body: JSON.stringify(a) }),
+
+  // Partial edit of an existing asset (group/notes/priority); never changes source.
+  updateAsset: (fqdn: string, patch: { group?: string | null; notes?: string | null; priority?: number | null }) =>
+    request<Asset>(`/assets/${encodeURIComponent(fqdn)}`, { method: "PUT", body: JSON.stringify(patch) }),
 
   deleteAsset: (fqdn: string) =>
     request<{ deleted: string }>(`/assets/${encodeURIComponent(fqdn)}`, { method: "DELETE" }),

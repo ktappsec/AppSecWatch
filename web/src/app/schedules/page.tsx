@@ -87,8 +87,8 @@ export default function SchedulesPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">Schedules</h1>
-          <p className="text-sm text-muted-foreground">Recurring scans of an iştirak (times are UTC).</p>
+          <h1 className="text-2xl font-bold tracking-tight">Schedules</h1>
+          <p className="text-sm text-muted-foreground">Recurring audits of an iştirak (times are UTC).</p>
         </div>
         <Button variant="outline" size="icon-sm" onClick={load} aria-label="Reload">
           <RefreshCw className="h-4 w-4" />

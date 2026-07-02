@@ -43,9 +43,9 @@ export default function SuppressionsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">Suppressions</h1>
+          <h1 className="text-2xl font-bold tracking-tight">Suppressions</h1>
           <p className="text-sm text-muted-foreground">
-            Manually-suppressed findings. Hidden + uncounted on every scan until removed here.
+            Manually-suppressed findings. Hidden + uncounted on every audit until removed here.
           </p>
         </div>
         <Button variant="outline" size="icon-sm" onClick={load} aria-label="Reload">

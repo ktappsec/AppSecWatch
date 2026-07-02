@@ -152,6 +152,40 @@ class JobList(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
+# Scans history + trends (durable SQLite `scans` index)
+# --------------------------------------------------------------------------- #
+class ScanHistoryEntry(BaseModel):
+    """One durable terminal-scan record from the cross-run history index."""
+
+    id: str
+    state: str | None = None
+    roots: list[str] = Field(default_factory=list)
+    group: str | None = None
+    submitted_at: str | None = None
+    finished_at: str | None = None
+    finding_count: int = 0
+    by_severity: dict[str, int] = Field(default_factory=dict)
+    risk_score: int | None = None
+    source: str = "manual"
+    schedule_id: str | None = None
+
+
+class TrendPoint(BaseModel):
+    """One chronological point for the exposure-over-time / risk trend charts."""
+
+    id: str
+    label: str
+    finished_at: str | None = None
+    finding_count: int = 0
+    risk_score: int | None = None
+    critical: int = 0
+    high: int = 0
+    medium: int = 0
+    low: int = 0
+    info: int = 0
+
+
+# --------------------------------------------------------------------------- #
 # Machine-readable result (/result)
 # --------------------------------------------------------------------------- #
 class ScanResult(BaseModel):
@@ -162,6 +196,9 @@ class ScanResult(BaseModel):
     coverage: dict[str, dict] = Field(default_factory=dict)
     histogram: dict[str, dict[str, int]] = Field(default_factory=dict)
     histogram_totals: dict[str, int] = Field(default_factory=dict)
+    # Derived 0–100 score + categorical posture (highest severity present).
+    risk_score: int = 0
+    posture: str = "LOW"
     findings: list[Finding] = Field(default_factory=list)
     tls: list[TLSHostReport] = Field(default_factory=list)
     tls_certs: list[CertInfo] = Field(default_factory=list)
@@ -194,6 +231,7 @@ class Asset(BaseModel):
     profile: dict[str, Any] | None = None        # AI AppProfile (when ai.profile ran)
     finding_counts: dict[str, int] = Field(default_factory=dict)  # last scan, by severity
     surface: dict[str, Any] | None = None        # curated EASM surface (names only) from last crawl
+    priority: int | None = None                  # manual business criticality 1..10 (10 highest)
     notes: str | None = None
     first_seen: str | None = None
     last_seen: str | None = None
@@ -201,10 +239,19 @@ class Asset(BaseModel):
 
 
 class AssetUpsert(BaseModel):
-    """POST/PUT body for a single imported asset."""
+    """POST body for a single imported asset."""
     fqdn: str
     group: str | None = None
     notes: str | None = None
+    priority: int | None = Field(default=None, ge=1, le=10)
+
+
+class AssetUpdate(BaseModel):
+    """PUT body — partial edit of an existing asset (only provided fields change;
+    source is never changed). `priority` is the manual business criticality 1..10."""
+    group: str | None = None
+    notes: str | None = None
+    priority: int | None = Field(default=None, ge=1, le=10)
 
 
 class AssetGroup(BaseModel):

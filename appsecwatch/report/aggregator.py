@@ -97,6 +97,26 @@ def posture_rating(histogram_totals: dict[str, int]) -> tuple[str, str]:
     return rating, note
 
 
+def risk_score(histogram_totals: dict[str, int]) -> int:
+    """Derived 0–100 risk score from the VISIBLE severity totals.
+
+    Companion to `posture_rating` (the categorical truth stays primary): a
+    per-dominant-severity floor sets the band (critical≈70+, high≈45+, …) and a
+    saturating volume bonus fills the remaining headroom, so more findings raise
+    the score without ever exceeding the next band's ceiling. Monotonic and
+    deterministic; the exact weights are a tunable policy knob.
+    """
+    dominant = _dominant_severity(histogram_totals)
+    if dominant is None:
+        return 0
+    floor = {"critical": 70, "high": 45, "medium": 25, "low": 8, "info": 3}[dominant]
+    weights = {"critical": 45, "high": 20, "medium": 7, "low": 2, "info": 0.5}
+    raw = sum(weights[s] * max(0, int(histogram_totals.get(s, 0) or 0)) for s in _SEVERITIES)
+    headroom = 100 - floor
+    bonus = headroom * (raw / (raw + 120.0))  # saturating volume contribution
+    return int(min(100, round(floor + bonus)))
+
+
 def select_top_risks(visible: list[Finding], *, limit: int = 5) -> list[ExecRisk]:
     """Deterministically select the executive top-N risks from the VISIBLE findings.
 

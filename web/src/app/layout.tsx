@@ -19,6 +19,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         className={`${GeistSans.variable} ${GeistMono.variable} font-sans`}
         suppressHydrationWarning
       >
+        {/* Anti-FOUC: apply the stored theme before paint (light is the default,
+            so this only matters for returning dark-mode users). Static-export safe. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{var t=localStorage.getItem('theme')||'light';var d=t==='dark'||(t==='system'&&window.matchMedia('(prefers-color-scheme: dark)').matches);var c=d?'dark':'light';var e=document.documentElement;e.classList.remove('dark','light');e.classList.add(c);e.style.colorScheme=c;}catch(e){}})();`,
+          }}
+        />
         <ThemeProvider attribute="class" defaultTheme="light" enableSystem>
           <TooltipProvider delayDuration={200}>
             <LayoutWrapper>{children}</LayoutWrapper>

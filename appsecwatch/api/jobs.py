@@ -500,7 +500,14 @@ class JobManager:
             log.warning("result.json write failed for %s: %r", rec.id, e)
         if self.history is not None:
             try:
-                self.history.record(rec, rec.finding_count)
+                from appsecwatch.report.aggregator import risk_score, severity_histogram
+                visible = [f for f in state.all_findings() if not f.suppressed]
+                hist = severity_histogram(visible)
+                by_sev = {sev: sum(by.values()) for sev, by in hist.items()}
+                self.history.record(
+                    rec, rec.finding_count,
+                    by_severity=by_sev, risk_score=risk_score(by_sev),
+                )
             except Exception as e:  # noqa: BLE001
                 log.warning("scans-history record failed for %s: %r", rec.id, e)
         self._persist(rec)
