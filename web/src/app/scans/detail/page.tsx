@@ -225,6 +225,15 @@ function ScanDetail() {
 // --------------------------------------------------------------------------- //
 // Overview landing
 // --------------------------------------------------------------------------- //
+function DiffStat({ n, label, tone }: { n: number; label: string; tone: string }) {
+  return (
+    <div className="rounded-lg border border-border bg-secondary/30 p-3 text-center">
+      <div className={cn("text-2xl font-bold tabular-nums", tone)}>{n}</div>
+      <div className="text-xs text-muted-foreground">{label}</div>
+    </div>
+  );
+}
+
 function OverviewTab({
   job, result, totals, findingTotal,
 }: { job: JobStatus; result: ScanResult; totals: Record<string, number>; findingTotal: number }) {
@@ -274,6 +283,17 @@ function OverviewTab({
           )}
         </Card>
       </div>
+
+      {result.diff && (
+        <Card className="p-5">
+          <div className="mb-3 text-sm font-semibold">Changes since last scan</div>
+          <div className="grid grid-cols-3 gap-4">
+            <DiffStat n={result.diff.new} label="New" tone="text-sev-high" />
+            <DiffStat n={result.diff.recurring} label="Recurring" tone="text-sev-medium" />
+            <DiffStat n={result.diff.resolved} label="Resolved" tone="text-success" />
+          </div>
+        </Card>
+      )}
 
       {/* coverage + severity */}
       <div className="grid gap-4 lg:grid-cols-[1.4fr_1fr]">

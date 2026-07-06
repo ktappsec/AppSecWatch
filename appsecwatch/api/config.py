@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, Field
@@ -52,6 +52,17 @@ class WebhookConfig(BaseModel):
     timeout_seconds: int = 10
 
 
+class NotifierConfig(BaseModel):
+    """Outbound notifications (new-domain alerts, etc.). The in-app channel is
+    always on (writes the `notifications` table). A webhook is opt-in. Email is a
+    documented future channel (the schema/stub exists; no SMTP impl in v1)."""
+    webhook_url: str = ""                                       # Slack/Teams/generic incoming webhook
+    webhook_format: Literal["generic", "slack", "teams"] = "generic"
+    timeout_seconds: int = 10
+    # Future: email (SMTP host/port/from/to). Not implemented in v1.
+    email_enabled: bool = False
+
+
 class ServerConfig(BaseModel):
     """Server configuration + resolved secrets and base scan config.
 
@@ -66,6 +77,7 @@ class ServerConfig(BaseModel):
     bind: BindConfig = Field(default_factory=BindConfig)
     limits: LimitsConfig = Field(default_factory=LimitsConfig)
     webhook: WebhookConfig = Field(default_factory=WebhookConfig)
+    notifier: NotifierConfig = Field(default_factory=NotifierConfig)
     docs_enabled: bool = True
     output_root: str = "/data/runs"
 

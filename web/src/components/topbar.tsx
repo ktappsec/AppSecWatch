@@ -5,6 +5,7 @@ import { Menu, Moon, Sun, Plus, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ApiStatus } from "@/components/api-status";
 import { CommandPalette } from "@/components/command-palette";
+import { NotificationsBell } from "@/components/notifications-bell";
 import { useTheme } from "@/components/theme-provider";
 import { useMounted } from "@/lib/hooks";
 
@@ -35,6 +36,8 @@ export function TopBar({ onOpenSidebar }: { onOpenSidebar?: () => void }) {
       </button>
 
       <div className="flex-1" />
+
+      <NotificationsBell />
 
       <ApiStatus />
 

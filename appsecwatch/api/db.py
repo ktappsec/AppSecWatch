@@ -15,10 +15,15 @@ from __future__ import annotations
 import os
 import sqlite3
 import threading
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 ENV_DB_PATH = "APPSECWATCH_DB_PATH"
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 # Each phase appends its statements here; all must be idempotent (IF NOT EXISTS).
 _SCHEMA: list[str] = [
@@ -142,6 +147,70 @@ _SCHEMA: list[str] = [
         created_at TEXT
     )
     """,
+    # --- cross-scan finding state (UNIFIED identity + lifecycle + tags) ---- #
+    # Keyed on the suppression fingerprint `source|host|group_key` (host '*' =
+    # global). Suppression is now just one `status`; freeform `tags` carry
+    # workflow ("sent-to-dev" etc.). `consecutive_absent` drives the 2-scan
+    # resolve rule (only incremented when the producing source actually ran).
+    # Supersedes `suppressions` (retained for rollback; backfilled in _init_schema).
+    """
+    CREATE TABLE IF NOT EXISTS finding_state (
+        fingerprint        TEXT PRIMARY KEY,               -- source|host|group_key
+        source             TEXT,
+        host               TEXT,                           -- '*' = global
+        group_key          TEXT,
+        finding_class      TEXT,                           -- controlled taxonomy
+        category           TEXT,
+        severity           TEXT,                           -- last-seen severity
+        title              TEXT,                           -- last-seen human title
+        status             TEXT DEFAULT 'open',            -- open|resolved|suppressed|accepted
+        tags               TEXT DEFAULT '[]',              -- JSON list[str] (freeform)
+        reason             TEXT DEFAULT '',                -- suppression/accept note
+        scope              TEXT DEFAULT 'host',            -- host | global
+        consecutive_absent INTEGER DEFAULT 0,
+        first_seen_scan    TEXT,
+        last_seen_scan     TEXT,
+        "group"            TEXT,                           -- owning asset group (analytics)
+        created_at         TEXT,
+        updated_at         TEXT
+    )
+    """,
+    'CREATE INDEX IF NOT EXISTS idx_fstate_status ON finding_state(status)',
+    "CREATE INDEX IF NOT EXISTS idx_fstate_group_key ON finding_state(group_key)",
+    'CREATE INDEX IF NOT EXISTS idx_fstate_group ON finding_state("group")',
+    "CREATE INDEX IF NOT EXISTS idx_fstate_class ON finding_state(finding_class)",
+    # --- in-app notifications (pluggable notifier: in-app channel sink) ---- #
+    """
+    CREATE TABLE IF NOT EXISTS notifications (
+        id         TEXT PRIMARY KEY,
+        type       TEXT,                                   -- e.g. asset.new
+        title      TEXT,
+        body       TEXT,
+        payload    TEXT,                                   -- JSON
+        "group"    TEXT,
+        scan_id    TEXT,
+        read       INTEGER DEFAULT 0,
+        created_at TEXT
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_notifications_read ON notifications(read)",
+    "CREATE INDEX IF NOT EXISTS idx_notifications_created ON notifications(created_at)",
+]
+
+# FTS5 virtual tables — created SEPARATELY + GUARDED (a stripped SQLite build may
+# lack the fts5 module; putting these in the unguarded _SCHEMA loop would raise).
+_FTS_SCHEMA: list[str] = [
+    """
+    CREATE VIRTUAL TABLE IF NOT EXISTS assets_fts USING fts5(
+        fqdn, "group", tech, domains, endpoints, profile_summary
+    )
+    """,
+    """
+    CREATE VIRTUAL TABLE IF NOT EXISTS findings_fts USING fts5(
+        title, description, host, category, source,
+        fingerprint UNINDEXED, scan_id UNINDEXED
+    )
+    """,
 ]
 
 
@@ -154,6 +223,7 @@ _MIGRATIONS: list[tuple[str, str, str]] = [
     ("assets", "status", "TEXT"),          # buckets → liveness; backfilled in _init_schema
     ("assets", "surface", "TEXT"),         # curated EASM surface from the last scan
     ("assets", "priority", "INTEGER"),     # manual business criticality 1..10
+    ("assets", "first_seen_scan", "TEXT"), # scan id that first discovered the asset (new-domain alert)
     ("scans", "sev_critical", "INTEGER DEFAULT 0"),   # per-severity trend columns
     ("scans", "sev_high", "INTEGER DEFAULT 0"),
     ("scans", "sev_medium", "INTEGER DEFAULT 0"),
@@ -179,12 +249,23 @@ class Database:
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
+        # Set by _init_schema: True when the fts5 module is available (search uses
+        # LIKE fallback when False so the box never breaks).
+        self.fts_enabled: bool = False
         self._init_schema()
 
     def _init_schema(self) -> None:
         with self._lock:
             for stmt in _SCHEMA:
                 self._conn.execute(stmt)
+            # FTS5 is optional — a stripped SQLite build lacks it. Create guarded
+            # and record availability; search falls back to LIKE when unavailable.
+            try:
+                for stmt in _FTS_SCHEMA:
+                    self._conn.execute(stmt)
+                self.fts_enabled = True
+            except sqlite3.OperationalError:
+                self.fts_enabled = False
             # Idempotent column migrations for DBs created before a column existed
             # (fresh DBs already have it via the CREATE above).
             for table, col, ddl in _MIGRATIONS:
@@ -199,6 +280,24 @@ class Database:
                 self._conn.execute(
                     "UPDATE assets SET status = CASE WHEN bucket='dead' THEN 'dead' "
                     "ELSE 'live' END WHERE status IS NULL AND bucket IS NOT NULL"
+                )
+            except sqlite3.OperationalError:
+                pass
+            # One-time migration of legacy manual suppressions into the unified
+            # finding_state table (status='suppressed'). INSERT OR IGNORE so an
+            # already-migrated / re-opened fingerprint is never resurrected, and
+            # the legacy `suppressions` table is retained for rollback.
+            try:
+                now = _now_iso()
+                self._conn.execute(
+                    "INSERT OR IGNORE INTO finding_state "
+                    "(fingerprint, source, host, group_key, status, scope, reason, "
+                    " tags, created_at, updated_at) "
+                    "SELECT fingerprint, source, host, key, 'suppressed', "
+                    "       COALESCE(scope,'host'), COALESCE(reason,''), '[]', "
+                    "       COALESCE(created_at, ?), COALESCE(created_at, ?) "
+                    "FROM suppressions",
+                    (now, now),
                 )
             except sqlite3.OperationalError:
                 pass

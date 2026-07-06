@@ -28,7 +28,17 @@ import json
 from collections.abc import Mapping
 from typing import Any
 
+from appsecwatch.audit.taxonomy import vocabulary_hint
 from appsecwatch.models import AppProfile, PageSignals
+
+# Injected into the finding shape-hints so AI findings carry a STABLE class from
+# the controlled taxonomy (their cross-scan identity keys on (host, class), not
+# the drifting title). The analyzer coerces an out-of-vocab class, so this is a
+# steer, never a hard validator.
+_CLASS_FIELD_LINE = (
+    '      "class": "the ONE finding-class from this fixed vocabulary that best '
+    'fits — ' + vocabulary_hint() + '",'
+)
 
 # Slot ids — stable keys for the editable system prompts (config `ai.prompts`
 # field names mirror these; the UI/API address slots by id).
@@ -50,6 +60,7 @@ Return ONLY a JSON object of this exact shape, no prose, no markdown:
   "findings": [
     {
       "type": "string-tag",
+""" + _CLASS_FIELD_LINE + """
       "severity": "info" | "low" | "medium" | "high" | "critical",
       "title": "Short human-readable title",
       "description": "1-3 sentence explanation",
@@ -66,6 +77,7 @@ Return ONLY a JSON object of this exact shape, no prose, no markdown:
   "findings": [
     {
       "type": "string-tag",
+""" + _CLASS_FIELD_LINE + """
       "severity": "info" | "low" | "medium" | "high" | "critical",
       "title": "Short human-readable title",
       "description": "1-3 sentence explanation",
@@ -341,6 +353,33 @@ def resolved_prompt(slot_id: str, overrides: Mapping[str, str] | None = None) ->
 
 
 # ---------------------------------------------------------------------------
+# Language directives (report.language == "tr"). Appended to the SYSTEM prompt so
+# the AI writes its FREE-TEXT prose in Turkish. Vulnerability/finding NAMES, enum
+# tokens and technology names stay English (translating them reads sloppy and
+# breaks the enum validators). Only the profile summary + executive summary get
+# this; triage/supply-chain finding text stays English.
+# ---------------------------------------------------------------------------
+
+_TR_PROFILE_DIRECTIVE = (
+    "\n\nÖNEMLİ (dil): `app_type` ve `reasoning` alanlarını TÜRKÇE yaz. Ancak enum "
+    "değerlerini (`audience`, `confidence`) ve `expected_controls` token'larını "
+    "İngilizce bırak (HSTS, Content-Security-Policy, Secure-cookies, ...). "
+    "`detected_tech` teknoloji adları orijinal/İngilizce kalsın."
+)
+
+_TR_SUMMARY_DIRECTIVE = (
+    "\n\nÖNEMLİ (dil): Tüm serbest metin alanlarını — `posture_narrative`, "
+    "`risk_notes[].why` ve `recommendations` — TÜRKÇE yaz; bu yönetici raporu Türk "
+    "üst yönetime sunulacak. Ancak güvenlik açığı / bulgu ADLARINI ve teknik "
+    "terimleri İngilizce bırak (ör. 'HSTS', 'SQL Injection', 'CSP'); bunları çevirme."
+)
+
+
+def _with_language(system: str, language: str, directive: str) -> str:
+    return system + directive if language == "tr" else system
+
+
+# ---------------------------------------------------------------------------
 # Builders
 # ---------------------------------------------------------------------------
 
@@ -350,6 +389,7 @@ def build_profile_prompt(
     *,
     rendered_text: str | None = None,
     surface: dict | None = None,
+    language: str = "en",
 ) -> tuple[str, str]:
     payload = {
         "host": signals.host,
@@ -374,7 +414,9 @@ def build_profile_prompt(
         f"```json\n{json.dumps(payload, indent=2, ensure_ascii=False)}\n```\n\n"
         f"{_PROFILE_SHAPE_HINT}"
     )
-    return resolved_prompt(SLOT_PROFILE_SYSTEM, overrides), user_msg
+    system = _with_language(resolved_prompt(SLOT_PROFILE_SYSTEM, overrides),
+                            language, _TR_PROFILE_DIRECTIVE)
+    return system, user_msg
 
 
 def _profile_context_block(profile: AppProfile) -> str:
@@ -474,6 +516,7 @@ def build_summary_prompt(
     scale: dict[str, int],
     risks: list[dict[str, Any]],
     overrides: Mapping[str, str] | None = None,
+    language: str = "en",
 ) -> tuple[str, str]:
     """Whole-run executive summary (the `ai.summary` call). The deterministic core
     is supplied as facts; the LLM only writes prose keyed to the given risk `ref`s.
@@ -493,7 +536,9 @@ def build_summary_prompt(
         f"```json\n{json.dumps(payload, indent=2, ensure_ascii=False)}\n```\n\n"
         f"{_EXEC_SUMMARY_SHAPE_HINT}"
     )
-    return resolved_prompt(SLOT_SUMMARY_SYSTEM, overrides), user_msg
+    system = _with_language(resolved_prompt(SLOT_SUMMARY_SYSTEM, overrides),
+                            language, _TR_SUMMARY_DIRECTIVE)
+    return system, user_msg
 
 
 def assemble_preview(slot_id: str, candidate_text: str) -> tuple[str, str]:

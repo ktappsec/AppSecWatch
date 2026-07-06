@@ -38,7 +38,10 @@ export default function AttackSurfacePage() {
     () => api.listScans({ limit: 30 }),
     { intervalMs: 6000 }
   );
-  const assetsPoll = usePoll<Asset[]>(() => api.listAssets({}), { intervalMs: 30000 });
+  // summary=true → slim projection (fqdn/group/status/priority/finding_counts),
+  // the only fields the tiles / matrix / prioritized list read. Avoids pulling
+  // the full ~420 KB inventory (tech/profile/surface) the dashboard never uses.
+  const assetsPoll = usePoll<Asset[]>(() => api.listAssets({ summary: true }), { intervalMs: 30000 });
   const trendsPoll = usePoll<TrendPoint[]>(() => api.trends({ limit: 30 }), { intervalMs: 30000 });
 
   const assets = React.useMemo(() => assetsPoll.data ?? [], [assetsPoll.data]);

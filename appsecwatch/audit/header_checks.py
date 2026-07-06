@@ -220,14 +220,17 @@ def check_best_practice(url: str, signals: PageSignals, em: _Emitter) -> None:
         if is_infra_cookie(name):
             continue
         session_like = bool(_SESSION_COOKIE_RE.search(name))
+        # NB check_id is the cookie *flag class* (not per-cookie-name) so the same
+        # class collapses across cookies/hosts into one report row; the specific
+        # cookie name lives in `evidence`/title and surfaces in the expanded detail.
         if https and not _has_flag(raw, "secure"):
-            em.add(source="headers", check_id=f"cookie.secure.{name}", severity="medium",
+            em.add(source="headers", check_id="cookie.secure", severity="medium",
                    title=f"Cookie '{name}' missing Secure flag",
                    description="Cookie set without Secure on an HTTPS host; it may be sent over "
                                "plaintext HTTP.",
                    evidence={"cookie": name, "flag": "Secure"})
         if not _has_flag(raw, "httponly"):
-            em.add(source="headers", check_id=f"cookie.httponly.{name}",
+            em.add(source="headers", check_id="cookie.httponly",
                    severity="medium" if session_like else "low",
                    title=f"Cookie '{name}' missing HttpOnly flag",
                    description="Cookie is readable from JavaScript (no HttpOnly); a session/auth "
@@ -236,7 +239,7 @@ def check_best_practice(url: str, signals: PageSignals, em: _Emitter) -> None:
                                "Cookie is readable from JavaScript (no HttpOnly).",
                    evidence={"cookie": name, "flag": "HttpOnly"})
         if not _has_flag(raw, "samesite"):
-            em.add(source="headers", check_id=f"cookie.samesite.{name}", severity="low",
+            em.add(source="headers", check_id="cookie.samesite", severity="low",
                    title=f"Cookie '{name}' missing SameSite attribute",
                    description="No SameSite attribute; the cookie may be sent on cross-site "
                                "requests, aiding CSRF.",

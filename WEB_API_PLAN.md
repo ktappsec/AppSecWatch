@@ -248,6 +248,23 @@ bundled into the server image.
 | `PUT` | `/nuclei/custom/{id}` | (same) | `200 CustomTemplate` | 401, 404 |
 | `DELETE` | `/nuclei/custom/{id}` | — | `200 {deleted}` | 401, 404 |
 | `POST` | `/nuclei/custom/generate` | `{description}` | `200 {yaml,valid,error}` | 401, 409 (LLM not configured) |
+| `GET` | `/finding-state` | `?status=&group=&finding_class=&host=&sort=&limit=` | `200 [FindingStateRow]` (cross-scan lifecycle + tags) | 401 |
+| `PATCH` | `/finding-state/{fingerprint}` | `{tags?, status?}` (freeform tags / open\|resolved\|suppressed\|accepted) | `200 FindingStateRow` | 401, 404 |
+| `GET` | `/analytics` | `?group=` | `200 {by_status,by_category,by_severity,open_total,resolved_total,widespread,longest_open,by_priority}` | 401 |
+| `GET` | `/search` | `?q=&kind=&limit=` | `200 {assets:[…], findings:[…]}` (FTS5, LIKE fallback) | 401 |
+| `GET` | `/notifications` | `?unread_only=&limit=` | `200 [Notification]` (in-app channel) | 401 |
+| `POST` | `/notifications/read` | `?id=` (omit → mark all) | `200 {marked}` | 401 |
+
+**Cross-scan finding state** (`finding_state` table): every finding is keyed by the
+suppression fingerprint `source|host|group_key` and carries a lifecycle (open →
+resolved after absence for **2 consecutive scans that ran its producing source**),
+freeform **`tags`** (e.g. `sent-to-dev`), and suppression as one `status`.
+`SuppressionManager` is now a thin adapter over it. Each completed scan records a
+diff (`ScanResult.diff = {new,recurring,resolved,reopened}`). New-domain discovery
+fires the pluggable **notifier** (`api/notify.py`: in-app + webhook now, email
+stub) on `asset.new`. `GET /assets` also accepts `q` (now over fqdn/tech/surface/
+profile), `new_since_scan`, and `sort=priority`. `report.language` (`en|tr`) makes
+the AI profile summary + executive report Turkish (finding names stay English).
 
 Schedules fire normal scans via the JobManager (source=`schedule`). Suppressions
 are injected into `run_scan` and mark matching findings cross-run (hidden +

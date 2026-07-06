@@ -4,12 +4,13 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Radar, Network, ScanLine, CalendarClock, EyeOff, FileCode, Sparkles,
-  Settings, ShieldCheck, BookOpen,
+  Settings, ShieldCheck, BookOpen, LineChart,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const MONITOR = [
   { href: "/", label: "Attack surface", icon: Radar },
+  { href: "/analytics", label: "Analytics", icon: LineChart },
   { href: "/assets", label: "Inventory", icon: Network },
   { href: "/scans", label: "Audits", icon: ScanLine },
   { href: "/schedules", label: "Schedules", icon: CalendarClock },
@@ -42,6 +43,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
       <Link
         key={entry.href}
         href={entry.href}
+        prefetch={false}
         onClick={onNavigate}
         aria-current={active ? "page" : undefined}
         className={cn(

@@ -46,6 +46,7 @@ class AIProfileStage(Stage):
             surface_by_host=surface_by_host,
             rendered_by_host=rendered_by_host,
             prompt_overrides=cfg.ai.prompts.as_overrides(),
+            language=cfg.report.language,
         )
         # A host that hard-failed profiling degrades to default prompts — surface it.
         return StageResult([

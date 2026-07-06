@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from appsecwatch.audit.taxonomy import classify_findings
 from appsecwatch.report.aggregator import posture_rating, risk_score, severity_histogram
 from appsecwatch.stages.state import ScanState
 
@@ -37,6 +38,9 @@ def build_scan_result(
     executive_pdf_url is None when the PDF wasn't rendered (toggle off / best-effort
     render skipped); the executive HTML is always produced alongside report.html."""
     findings = _all_findings(state)
+    # Stamp the controlled-taxonomy category/class on every finding so result.json
+    # carries them (matches the report context; idempotent with the report pass).
+    classify_findings(findings)
     # Suppressed findings stay in the payload (UI shows them collapsed) but are
     # excluded from the severity histogram, matching the HTML report.
     histogram = severity_histogram([f for f in findings if not f.suppressed])

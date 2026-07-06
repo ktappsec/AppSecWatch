@@ -6,6 +6,7 @@ from appsecwatch.ai.prompts import (
     SLOT_TRIAGE_SYSTEM_DEFAULT,
     assemble_preview,
     build_profile_prompt,
+    build_summary_prompt,
     build_supply_chain_prompt,
     build_triage_prompt,
     resolved_prompt,
@@ -37,6 +38,24 @@ def test_profile_prompt_mentions_pre_js_and_expected_controls():
     # Without a render, the rendered/observed payload fields are absent.
     assert "rendered_body_text" not in user
     assert "observed_resources" not in user
+
+
+def test_shape_hints_carry_finding_class_vocabulary():
+    # AI findings must emit a class from the controlled taxonomy for stable identity.
+    _, user = build_triage_prompt("h", {}, findings=[{"ref": 0, "source": "headers"}])
+    assert '"class"' in user and "supply.vulnerable-js-lib" in user
+
+
+def test_turkish_language_directive_on_profile_and_summary():
+    sig = PageSignals(host="h", title="Acme Login")
+    sys_en, _ = build_profile_prompt(sig, language="en")
+    sys_tr, _ = build_profile_prompt(sig, language="tr")
+    assert "TÜRKÇE" not in sys_en
+    assert "TÜRKÇE" in sys_tr and "expected_controls" in sys_tr  # enum tokens kept EN
+
+    s_en, _ = build_summary_prompt({"rating": "HIGH"}, {}, {}, [], language="en")
+    s_tr, _ = build_summary_prompt({"rating": "HIGH"}, {}, {}, [], language="tr")
+    assert "TÜRKÇE" not in s_en and "TÜRKÇE" in s_tr
 
 
 def test_profile_prompt_includes_rendered_and_surface_when_present():

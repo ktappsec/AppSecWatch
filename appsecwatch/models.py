@@ -68,6 +68,11 @@ class Finding(BaseModel):
     # AI judgment on a deterministic finding (see AIFindingVerdict). Set by the
     # ai.triage pass for any source; an AI degrade leaves it None (finding stands).
     ai_verdict: AIFindingVerdict | None = None
+    # Controlled-taxonomy classification (audit/taxonomy.py). Stamped by a
+    # classification pass before serialization so result.json + the report context
+    # carry them (a Pydantic @property is not dumped). None until classified.
+    finding_class: str | None = None    # e.g. "headers.hsts-missing"
+    category: str | None = None         # e.g. "headers" (a CATEGORY_LABELS key)
 
     @property
     def suppressed(self) -> bool:
@@ -120,8 +125,8 @@ class Finding(BaseModel):
                 ("params", ", ".join(ev.get("params") or [])),
                 ("solution", ev.get("solution")),
             ]
-        else:  # headers / csp / ai_headers / ai_supply_chain — "type"/"check_id" internal
-            rows = [(k, v) for k, v in ev.items() if k not in ("type", "check_id")]
+        else:  # headers / csp / ai_headers / ai_supply_chain — internal keys hidden
+            rows = [(k, v) for k, v in ev.items() if k not in ("type", "check_id", "class")]
         return [(k, str(v)) for k, v in rows if v not in (None, "", [], {})]
 
     @property
@@ -184,6 +189,9 @@ class CrawlerArtifact(BaseModel):
     cookies: list[dict[str, Any]] = Field(default_factory=list)     # name + flags, NO value
     local_storage_keys: list[str] = Field(default_factory=list)     # key names only
     session_storage_keys: list[str] = Field(default_factory=list)   # key names only
+    # JS libraries detected by scanning script BODIES in memory (version not in the
+    # URL). Only {library, version, url} is kept — never the body. See audit/js_libs.
+    detected_libs: list[dict[str, Any]] = Field(default_factory=list)
     rendered_text: str = ""                                         # body.innerText, normalized + <=2KB
     screenshot: str | None = None                                   # per-host PNG filename (dashboard only)
     errors: list[str] = Field(default_factory=list)

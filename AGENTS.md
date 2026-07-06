@@ -394,11 +394,119 @@ docker run --rm -p 8080:8080 -e APPSECWATCH_API_KEYS=key \
   volume `appsecwatch-data:/data/runs`; `/capabilities.paths` surfaces the live paths
   (shown on the Settings page). DB column adds use guarded `_MIGRATIONS` in `db.py`.
 - **DB tables (all server-only):** `assets`, `scans` (history index, written at
-  terminal state by `history.ScanHistory`), `schedules`, `suppressions`,
-  `nuclei_templates` (catalog), `custom_templates`.
+  terminal state by `history.ScanHistory`), `schedules`, `suppressions` (legacy —
+  retained for rollback; superseded by `finding_state`), `finding_state`,
+  `notifications`, `nuclei_templates` (catalog), `custom_templates`, plus the
+  guarded FTS5 virtual tables `assets_fts` / `findings_fts` (created only when the
+  SQLite build has fts5; `Database.fts_enabled` gates search, LIKE fallback else).
+  `assets_fts` is kept in sync on **every asset CRUD** (not just at scan end):
+  `AssetManager` holds an optional `.search` (set to the `FTSIndex` in the app
+  factories) and its write methods reindex/remove/rebuild best-effort —
+  `upsert_imported`/`update` → `reindex_asset`, `delete` → `remove_asset`,
+  `bulk_*` → `rebuild_assets` — so a freshly-imported (never-scanned) asset is
+  findable in global search immediately. `FTSIndex._asset_fts_fields`/`_names`
+  accept BOTH raw JSON-string rows and parsed `AssetManager` rows (`_coerce`), so
+  tech/contacted-domains/profile index correctly from the scan-end reindex too.
+- **Controlled finding taxonomy** (`audit/taxonomy.py`): a closed ~53-class
+  vocabulary (`FINDING_CLASSES`) grouped into ~11 `CATEGORY_LABELS`. `classify()`
+  maps every `FindingSource` to one class (total — falls back to
+  `misc.uncategorized`); a classification pass stamps real `finding_class`/
+  `category` fields on `Finding` in `build_report_context` + `build_scan_result`.
+  AI findings emit a `class` from this vocabulary (aliased `finding_class` on
+  `AIFinding`); their cross-scan identity + `check_id` now key on `(source, class)`
+  via `analyzer._ai_check_id`, NOT the drifting title. This taxonomy is the ONE
+  cross-source category dimension reused by the report/UI category collapse + the
+  analytics breakdowns.
+- **Unified cross-scan finding state** (`api/finding_state.FindingStateManager`,
+  `finding_state` table keyed on the suppression fingerprint `source|host|group_key`):
+  lifecycle (`first/last_seen_scan`, `status` open|resolved|suppressed|accepted,
+  `consecutive_absent`) + freeform `tags`. **`SuppressionManager` is now a thin
+  adapter over it** (suppression = `status='suppressed'`; delete = un-suppress);
+  the legacy `suppressions` table is backfilled once at `db._init_schema`. RESOLVE
+  RULE: a finding flips to `resolved` after being ABSENT for **2 consecutive scans
+  that actually ran its producing source** (`audit/lifecycle.source_ran` +
+  `state.coverage`); manual suppressed/accepted are sticky. `sync()` runs at scan
+  end from `jobs._sync_finding_state` and returns the per-scan diff
+  (new/recurring/resolved/reopened), persisted onto `JobRecord.diff` + `result.json`.
+  The report note + exec risk-trend chart are fed by **injecting** `prior_open` +
+  `report_history` into `run_scan` (engine stays DB-free; CLI passes None → degrade).
+- **Pluggable notifier** (`api/notify.py`): `Channel` protocol + `Notifier.dispatch`
+  (best-effort). Ships `InAppChannel` (writes `notifications`) + `WebhookChannel`
+  (Slack/Teams/generic, from `ServerConfig.notifier`); `EmailChannel` is a stub
+  seam. Fired on `asset.new` when `assets.sync_discovered` returns FQDNs with no
+  prior row (new `assets.first_seen_scan`).
+- **JS-lib content scan** (`audit/js_libs.py` + `audit/crawler._scan_script_bodies`):
+  in addition to URL-version matching, the crawler reads each script BODY in memory,
+  runs retire.js-style `filecontent` signatures, and records only
+  `{library,version,url}` onto `CrawlerArtifact.detected_libs` — **never the body**
+  (shareable-artifact invariant). `library_inventory()` feeds detected libs into
+  asset tech at `_sync_assets`.
+- **Report language** (`ReportConfig.language` en|tr): when `tr`, the AI profile
+  summary + executive-summary narrative are written in Turkish and executive.html
+  chrome is Turkish (`_EXEC_STRINGS`); vuln/finding NAMES + technical report stay
+  English. Executive charts are server-rendered inline SVG (`report/svg.py`:
+  donut/trend/delta), self-contained + print-friendly.
+- **New API routes:** `GET /finding-state` (+ `PATCH` tags/status), `GET /analytics`,
+  `GET /search` (FTS), `GET /notifications` (+ `POST /notifications/read`); `diff`
+  on `ScanResult`; `GET /assets` gained `q` over tech/surface/profile + `new_since_scan`
+  + `sort=priority` + **`summary=1`** (slim projection: only
+  `fqdn,group,source,status,priority,finding_counts` — drops the heavy
+  `tech`/`profile`/`surface` JSON; the rest of `Asset` fills from defaults). The
+  **dashboard uses `summary=1`** (`listAssets({summary:true})`) since it only reads
+  those fields — avoids pulling the full ~420 KB inventory. Mirrored in
+  `web/src/lib/{types,api}.ts`. **Still TODO (UI):** dashboard notifications widget.
+- **Inventory filtering** (`web/src/app/assets/page.tsx`): an inline filter bar —
+  search + Status/Findings/Priority/Source selects (self-describing options) + Sort
+  + a New toggle, with removable active-filter chips + Clear all. Facets are
+  **client-side** (the full list is loaded; instant) and applied before grouping;
+  the view stays **grouped by iştirak** and Sort applies **within each group** (no
+  flatten). `q`/`status` stay server-side via `listAssets`, **debounced 250 ms**
+  (`useDebouncedValue`) so typing fires one refetch, not one per keystroke. Rows are
+  a memoized `AssetRow` (stable `useCallback` handlers) + the grouped list is
+  `useDeferredValue`d — so a keystroke over ~468 rows no longer re-renders the whole
+  table (was ~1.2 s INP → ~215 ms).
+- **Inventory is window-virtualized** (`@tanstack/react-virtual`): the
+  grouped/filtered/sorted assets are FLATTENED into one `flatItems` list of virtual
+  rows (`group` divider · `colhead` · `asset`, collapsed groups contribute only
+  their header) and `useVirtualizer` renders **only the ~30 rows in view** — the DOM
+  holds **~960 nodes instead of ~19,500**. This was THE fix for the profiled jank:
+  scroll went **13→60 fps** (max frame 833→18 ms at 4× CPU) and the route-in DOM
+  cost collapsed, because scroll smoothness + the per-navigation forced reflow
+  (Next's `ScrollAndFocusHandler` reads `getBoundingClientRect` after every mount)
+  both scale with DOM size. Key invariants: **the real scroll container is the
+  nested `<main className="overflow-y-auto">`, NOT the window** — `useScrollParent`
+  (in `hooks.ts`) walks up to find it and feeds it to `getScrollElement`. It MUST
+  use a **callback ref**, not a plain ref + mount effect: the virtualized list
+  mounts LATE (after the async asset load), so a mount-time effect runs while the
+  list element is still absent and wrongly falls back to `document.scrollingElement`
+  (the `<html>`, which never scrolls) → react-virtual binds its scroll listener to
+  the wrong element and **the list never advances past the first screen** (the bug
+  this shipped with once). The callback ref resolves the scroll parent exactly when
+  the node attaches. The list starts below the header/summary/filter cards so the
+  virtualizer needs a
+  **`scrollMargin`** = that offset (recomputed in a `useIsomorphicLayoutEffect` on
+  load/bulk-bar/chip/resize changes, item transform is `translateY(start -
+  scrollMargin)`). Rows are **flex divs, not `<table>`** (absolute positioning +
+  `<table>` don't mix): a shared `COL` class map keeps the column header and every
+  asset row aligned, optional columns hide at the same breakpoints on all rows.
+  Per-kind heights are FIXED and exact (`ROW_SIZE`, rows render `h-full` in a
+  fixed-size wrapper) so estimates never drift → no `measureElement`, no scroll
+  jump. `content-visibility:auto` was REMOVED (it caused the 833 ms reveal spikes
+  and is redundant once virtualized). The view still **groups by iştirak** and Sort
+  still applies **within each group**; select-all-per-group / collapse / Scan group
+  live on the `GroupHeaderRow`.
 - **Scheduling** (`api/scheduler.py`): in-process asyncio loop over `schedules`;
   friendly cadence (hourly/daily/weekly + at_time/weekday, UTC), fires a normal
-  scan via JobManager (skip-if-running; run-overdue-once-on-boot).
+  scan via JobManager (skip-if-running; run-overdue-once-on-boot). **The New-Scan
+  builder is the single scan-config surface** — a `Run now ▾` split button also
+  offers **Schedule…** (a cadence dialog `POST`s the full config as a schedule).
+  The Schedules page is a **management list**: light fields (name/cadence/time/
+  weekday/enabled) edit inline; **Edit config ⇢** deep-links to
+  `/scans/new?schedule=<id>` where the builder loads it (banner + **Update
+  schedule** `PUT` / **Save as new**); each row has **Run now**. There is no
+  separate schedule-create form. Every schedule `PUT` sends a COMPLETE
+  `ScheduleUpsert` (via `toUpsert`) so a toggle/edit never drops only/skip/throttle.
+  Cadence controls are the shared `web/src/components/schedule/cadence-fields.tsx`.
 - **Manual suppression** (`api/suppressions.py` + `audit/suppress.py`): fingerprint
   `source|host|key` (host `*` = global); the server injects the set into `run_scan`,
   and `SuppressionStage` (just before report) marks matches via the verdict path
@@ -419,6 +527,12 @@ docker run --rm -p 8080:8080 -e APPSECWATCH_API_KEYS=key \
 - Add API tests to `tests/test_api.py` with the runner mocked (no external tools);
   manager unit tests live in `tests/test_{assets,scheduler,suppress,js_libs,tech,nuclei}.py`.
 - In the single image the API is mounted under `/api`; standalone it's at root.
+- **Compression + static caching** (`server.py`): `GZipMiddleware` is added to the
+  standalone `create_app` app AND to the `create_combined_app` **`parent`** (which
+  wraps both the `/` static-UI mount and the `/api` sub-app — do NOT also add it to
+  `api_app` or `_install`, that double-encodes `/api`). `_SPAStaticFiles` stamps
+  `Cache-Control: …immutable` on `_next/static/*` (content-hashed → safe forever);
+  `index.html`/other paths keep default revalidation.
 
 **UI (`web/`)**
 - Tailwind v4 oklch tokens in `src/app/globals.css`; always compose classes with
@@ -433,6 +547,23 @@ docker run --rm -p 8080:8080 -e APPSECWATCH_API_KEYS=key \
   diverges where the spec header notes it (fonts, light-first, severity tokens).
 - Must stay **static-export-safe** (no dynamic route segments — the scan detail page
   uses `/scans/detail?id=…`), so FastAPI can serve the built `out/` from one image.
+- **Polling/fetch** (`src/lib/hooks.ts`, `src/lib/api.ts`): `usePoll` is the one
+  polling primitive and now **gates its interval on tab visibility** — it pauses
+  while `document.hidden` and fires one immediate refresh on becoming visible again
+  (so background tabs don't re-download/re-render). Anything that needs periodic
+  refresh should use `usePoll`, not a raw `setInterval` (`api-status.tsx` was
+  converted). `request()` in `api.ts` **dedupes concurrent identical GETs** via an
+  in-flight map. There is intentionally **no** SWR/react-query — keep it hand-rolled.
+- **Charts are lazy** (`src/components/charts.tsx`): Recharts lives in
+  `charts-impl.tsx` and is loaded via `next/dynamic({ssr:false})` behind
+  `charts.tsx`, so non-chart routes don't ship it. `EmptyChart` is a light static
+  export in `charts-empty.tsx` (no Recharts). Sidebar `<Link>`s use `prefetch={false}`
+  so mounting the app doesn't eagerly prefetch every route (hover still prefetches).
+- **`.transition-smooth`** (`globals.css`) transitions color/bg/border/opacity/
+  transform but **deliberately NOT `box-shadow`** — shadow is the priciest property
+  to transition (re-rasterizes the blur each frame) and this utility is on many
+  hover targets, so shadows snap instead of fading. Keep box-shadow out of any
+  broadly-applied transition.
 
 ## After you change things
 - Run `./.venv/bin/python -m pytest -q` (engine + API) and `cd web && npm run build`.

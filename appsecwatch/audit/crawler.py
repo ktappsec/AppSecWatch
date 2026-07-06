@@ -30,6 +30,9 @@ from appsecwatch.util.domains import host_to_filename
 _RENDERED_TEXT_CAP = 2048
 # Bound the resource manifest so a chatty SPA can't bloat the artifact.
 _RESOURCE_CAP = 500
+# In-memory JS-library content scan bounds (bodies are read but NEVER persisted).
+_CONTENT_SCAN_MAX_SCRIPTS = 80
+_CONTENT_SCAN_MAX_BYTES = 3_000_000
 
 
 def _dedup_by_url(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -90,6 +93,30 @@ async def _capture_state(
             artifact.errors.append(f"screenshot: {e}")
 
 
+async def _scan_script_bodies(
+    script_responses: list[Response], artifact: CrawlerArtifact
+) -> None:
+    """Read each script body IN MEMORY, match JS-library version signatures, and
+    record only ``{library, version, url}`` onto the artifact. The body is NEVER
+    persisted (runs/<id>/ stays a shareable artifact set). Best-effort per script."""
+    from appsecwatch.audit.js_libs import detect_in_content, load_db
+
+    db = load_db()
+    seen: set[tuple[str, str]] = set()
+    for resp in script_responses[:_CONTENT_SCAN_MAX_SCRIPTS]:
+        try:
+            body = await resp.text()
+        except Exception:  # body gone / binary / decode error — skip
+            continue
+        if not body or len(body) > _CONTENT_SCAN_MAX_BYTES:
+            continue
+        for lib, ver in detect_in_content(body, db):
+            if (lib, ver) in seen:
+                continue
+            seen.add((lib, ver))
+            artifact.detected_libs.append({"library": lib, "version": ver, "url": resp.url})
+
+
 async def _crawl_one(
     browser: Browser,
     server: LiveWebServer,
@@ -118,6 +145,10 @@ async def _crawl_one(
     context: BrowserContext = await browser.new_context(**context_args)
     page: Page = await context.new_page()
 
+    # Script Response objects captured for the in-memory body scan (below); the
+    # bodies themselves are read after load and never stored.
+    script_responses: list[Response] = []
+
     # Track every response (incl. dynamically injected / transitively loaded). The
     # network-level hook captures scripts a script pulled in, not just <script> tags.
     def on_response(resp: Response) -> None:
@@ -137,6 +168,7 @@ async def _crawl_one(
                     "initiator_url": req.frame.url if req.frame else None,
                     "method": req.method,
                 })
+                script_responses.append(resp)
         except Exception as e:
             artifact.errors.append(f"on_response: {e}")
 
@@ -164,6 +196,9 @@ async def _crawl_one(
         # Post-load structural capture (names/flags only — never values). Runs once,
         # after the root nav has settled, while the context is still open.
         await _capture_state(page, context, artifact, out_dir, cfg)
+        # In-memory JS-library content scan: read script bodies (still available
+        # pre-close), match version signatures, keep ONLY {library, version, url}.
+        await _scan_script_bodies(script_responses, artifact)
     finally:
         try:
             await context.close()

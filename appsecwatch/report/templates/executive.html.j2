@@ -27,14 +27,18 @@
   ul.recos li { margin:4px 0; }
   .exec-foot { color:var(--muted); font-size:12px; margin-top:10px; }
   .more-note { color:var(--muted); font-size:12px; font-style:italic; margin-top:8px; }
+  .exec-charts { display:grid; grid-template-columns: auto 1fr; gap:20px; align-items:center; margin-top:14px; }
+  .exec-charts .chart-block { min-width:0; }
+  .exec-charts .chart-label { color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.4px; margin-bottom:4px; }
   @media print { @page { margin:14mm; } section { break-inside: avoid; } }
+  @media (max-width:640px) { .exec-charts { grid-template-columns: 1fr; } }
 {% endblock %}
 {% block header_title %}
   <div class="exec-letterhead">
     {% if executive.logo_data_uri %}<img class="logo" src="{{ executive.logo_data_uri }}" alt="logo">{% endif %}
     <div>
       <div class="lh-org">{{ executive.org_name }}</div>
-      <div class="lh-sub">External Application-Security Assessment · Executive Summary</div>
+      <div class="lh-sub">{{ executive.strings.subtitle }}</div>
     </div>
   </div>
 {% endblock %}
@@ -45,16 +49,33 @@
 <main>
 
   <section id="exec-overview">
-    <div class="head"><h2>Risk posture</h2></div>
+    <div class="head"><h2>{{ executive.strings.risk_posture }}</h2></div>
     <div class="body">
       <div class="lh-sub" style="margin-bottom:8px;">
-        {% if executive.scope %}Scope: <strong>{{ executive.scope }}</strong> · {% endif %}{{ executive.date }}
+        {% if executive.scope %}{{ executive.strings.scope }}: <strong>{{ executive.scope }}</strong> · {% endif %}{{ executive.date }}
       </div>
       <div class="posture">
-        <span class="rating r-{{ executive.rating }}">{{ executive.rating }}</span>
+        <span class="rating r-{{ executive.rating }}">{{ executive.rating_label }}</span>
         <span class="volume">{{ executive.volume_note }}</span>
       </div>
       <p class="narrative">{{ executive.narrative }}</p>
+
+      <div class="exec-charts">
+        <div class="chart-block">
+          <div class="chart-label">{{ executive.strings.findings_by_severity }}</div>
+          {{ executive.charts.donut | safe }}
+        </div>
+        <div class="chart-block">
+          {% if executive.has_history %}
+          <div class="chart-label">{{ executive.strings.risk_trend }}</div>
+          {{ executive.charts.trend | safe }}
+          {% endif %}
+          {% if executive.diff %}
+          <div class="chart-label" style="margin-top:10px;">{{ executive.strings.since_last_scan }}</div>
+          {{ executive.charts.delta | safe }}
+          {% endif %}
+        </div>
+      </div>
 
       <div class="counts">
         {% for sev in ["critical","high","medium","low","info"] %}
@@ -63,17 +84,17 @@
       </div>
 
       <div class="grid" style="margin-top:12px;">
-        <div class="stat"><div class="k">Live web servers</div><div class="v">{{ executive.scale.live_servers }}</div>
-          <div class="sub">responded to HTTP</div></div>
-        <div class="stat"><div class="k">Live assets</div><div class="v">{{ executive.scale.live }}</div>
-          <div class="sub">resolved in DNS</div></div>
-        <div class="stat"><div class="k">Dead / dangling</div><div class="v">{{ executive.scale.dead }}</div>
-          <div class="sub">takeover watch</div></div>
+        <div class="stat"><div class="k">{{ executive.strings.live_web_servers }}</div><div class="v">{{ executive.scale.live_servers }}</div>
+          <div class="sub">{{ executive.strings.responded_http }}</div></div>
+        <div class="stat"><div class="k">{{ executive.strings.live_assets }}</div><div class="v">{{ executive.scale.live }}</div>
+          <div class="sub">{{ executive.strings.resolved_dns }}</div></div>
+        <div class="stat"><div class="k">{{ executive.strings.dead_dangling }}</div><div class="v">{{ executive.scale.dead }}</div>
+          <div class="sub">{{ executive.strings.takeover_watch }}</div></div>
       </div>
 
       {% if executive.coverage_strip %}
       <div class="cov-strip" style="margin-top:14px;">
-        <span class="cov-label">Assessed</span>
+        <span class="cov-label">{{ executive.strings.assessed }}</span>
         {% for c in executive.coverage_strip %}
           {% set cls = 'partial' if (c.ran and c.partial) else ('ran' if c.ran else 'skipped') %}
           {% set sym = '~' if (c.ran and c.partial) else ('✓' if c.ran else '✗') %}
@@ -85,7 +106,7 @@
   </section>
 
   <section id="exec-risks">
-    <div class="head"><h2>Top risks</h2></div>
+    <div class="head"><h2>{{ executive.strings.top_risks }}</h2></div>
     <div class="body">
       {% if executive.risks %}
       {% for r in executive.risks %}
@@ -93,21 +114,21 @@
           <div class="rk-head">
             <span class="{{ r.severity | sev_class }}">{{ r.severity }}</span>
             <span class="rk-title">{{ r.title }}</span>
-            <span class="rk-hosts">· {{ r.host_count }} host{{ '' if r.host_count == 1 else 's' }}</span>
+            <span class="rk-hosts">· {{ r.host_count }} {{ executive.strings.host if r.host_count == 1 else executive.strings.hosts }}</span>
           </div>
           <div class="rk-why">{{ r.why }}</div>
         </div>
       {% endfor %}
-      <div class="more-note">Full findings, evidence, and per-host detail are in the technical report.</div>
+      <div class="more-note">{{ executive.strings.full_findings_note }}</div>
       {% else %}
-      <div class="empty">No findings to report — clean assessment.</div>
+      <div class="empty">{{ executive.strings.clean_assessment }}</div>
       {% endif %}
     </div>
   </section>
 
   {% if executive.recommendations %}
   <section id="exec-recos">
-    <div class="head"><h2>Recommended next steps</h2></div>
+    <div class="head"><h2>{{ executive.strings.recommended_next_steps }}</h2></div>
     <div class="body">
       <ul class="recos">
         {% for rec in executive.recommendations %}<li>{{ rec }}</li>{% endfor %}
@@ -117,7 +138,7 @@
   {% endif %}
 
   <div class="exec-foot">
-    {% if not executive.ai_used %}Narrative generated deterministically (AI summary not run for this scan). {% endif %}
+    {% if not executive.ai_used %}{{ executive.strings.ai_not_run }} {% endif %}
     Generated by AppSecWatch{% if run.appsecwatch_version %} v{{ run.appsecwatch_version }}{% endif %} · point-in-time external assessment.
   </div>
 

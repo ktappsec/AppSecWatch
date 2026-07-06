@@ -44,17 +44,29 @@ export function usePoll<T>(
         if (!cancelled) setLoading(false);
       }
     };
-    run();
+    run(); // always fetch once so the first paint has data, even if hidden
 
-    if (intervalMs > 0) {
-      const h = setInterval(run, intervalMs);
-      return () => {
-        cancelled = true;
-        clearInterval(h);
-      };
+    if (intervalMs <= 0) {
+      return () => { cancelled = true; }; // one-shot
     }
+
+    // Gate the interval on tab visibility: pause polling while the tab is
+    // backgrounded (don't re-download/re-render for an unseen page), and fire
+    // one immediate refresh when it becomes visible again.
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const start = () => { if (timer === null) timer = setInterval(run, intervalMs); };
+    const stop = () => { if (timer !== null) { clearInterval(timer); timer = null; } };
+    const onVisibility = () => {
+      if (document.hidden) stop();
+      else { run(); start(); }
+    };
+
+    if (typeof document === "undefined" || !document.hidden) start();
+    document.addEventListener("visibilitychange", onVisibility);
     return () => {
       cancelled = true;
+      stop();
+      document.removeEventListener("visibilitychange", onVisibility);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, intervalMs, tick, ...deps]);
@@ -67,6 +79,59 @@ export function useMounted(): boolean {
   const [m, setM] = React.useState(false);
   React.useEffect(() => setM(true), []);
   return m;
+}
+
+/** Debounce a rapidly-changing value; returns the latest value after `delayMs`
+ * of quiet. Used to throttle server refetches driven by a text input so a
+ * keystroke doesn't fire a request (and a full re-render) per character. */
+export function useDebouncedValue<T>(value: T, delayMs = 250): T {
+  const [debounced, setDebounced] = React.useState(value);
+  React.useEffect(() => {
+    const h = setTimeout(() => setDebounced(value), delayMs);
+    return () => clearTimeout(h);
+  }, [value, delayMs]);
+  return debounced;
+}
+
+/** `useLayoutEffect` on the client, `useEffect` on the server — avoids the
+ *  "useLayoutEffect does nothing on the server" warning during static export
+ *  prerender while still running before paint in the browser. */
+export const useIsomorphicLayoutEffect =
+  typeof window !== "undefined" ? React.useLayoutEffect : React.useEffect;
+
+/** Resolve the nearest scrollable ancestor (overflow-y auto|scroll) of the
+ *  element the returned `ref` is attached to — used to point a virtualizer at
+ *  the app's real scroll container (the nested `<main>`, not the window).
+ *
+ *  Uses a CALLBACK ref, not a plain ref + mount effect: the virtualized list
+ *  often mounts LATE (after async data load), so a mount-time effect would run
+ *  while the element is still absent and wrongly fall back to the document
+ *  scroller. A callback ref fires exactly when the node attaches (or re-attaches
+ *  after a filter empties/refills the list), so detection always sees the node.
+ *  `nodeRef` exposes the attached element for layout reads (e.g. scrollMargin). */
+export function useScrollParent(): {
+  ref: (node: HTMLElement | null) => void;
+  scrollEl: HTMLElement | null;
+  nodeRef: React.RefObject<HTMLElement | null>;
+} {
+  const [scrollEl, setScrollEl] = React.useState<HTMLElement | null>(null);
+  const nodeRef = React.useRef<HTMLElement | null>(null);
+  const ref = React.useCallback((node: HTMLElement | null) => {
+    nodeRef.current = node;
+    if (!node) return;
+    let n: HTMLElement | null = node.parentElement;
+    while (n) {
+      const oy = getComputedStyle(n).overflowY;
+      if (oy === "auto" || oy === "scroll") {
+        setScrollEl((prev) => (prev === n ? prev : n));
+        return;
+      }
+      n = n.parentElement;
+    }
+    const doc = (document.scrollingElement as HTMLElement) ?? null;
+    setScrollEl((prev) => (prev === doc ? prev : doc));
+  }, []);
+  return { ref, scrollEl, nodeRef };
 }
 
 /** Animated count-up to `target` (rAF, cubic ease-out). Respects reduced motion. */

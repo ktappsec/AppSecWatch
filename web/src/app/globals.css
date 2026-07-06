@@ -283,7 +283,11 @@
 .animate-delay-300 { animation-delay: 0.18s; }
 .animate-delay-400 { animation-delay: 0.24s; }
 .transition-smooth {
-  transition-property: color, background-color, border-color, box-shadow, opacity, transform;
+  /* box-shadow deliberately excluded — it is the most expensive property to
+     transition (re-rasterizes the blurred shadow every frame) and this utility
+     is applied to many hover targets (rows, cards, buttons, nav items). Shadows
+     snap instead of fading — visually negligible, materially cheaper under load. */
+  transition-property: color, background-color, border-color, opacity, transform;
   transition-duration: 0.2s;
   transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
 }

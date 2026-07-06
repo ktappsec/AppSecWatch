@@ -97,12 +97,16 @@ class ZapRejected(Exception):
 
 class JobManager:
     def __init__(self, server: ServerConfig, asset_manager=None, history=None,
-                 suppressions=None, nuclei_custom=None) -> None:
+                 suppressions=None, nuclei_custom=None, finding_state=None,
+                 search=None, notifier=None) -> None:
         self.server = server
         self.assets = asset_manager  # AssetManager | None (for recon→assets sync)
         self.history = history       # ScanHistory | None (scans index)
         self.suppressions = suppressions  # SuppressionManager | None
         self.nuclei_custom = nuclei_custom  # CustomTemplateManager | None
+        self.finding_state = finding_state  # FindingStateManager | None (cross-scan lifecycle)
+        self.search = search         # FTSIndex | None (all-in-one search)
+        self.notifier = notifier     # Notifier | None (new-domain alerts)
         self.output_root = Path(server.output_root)
         self.output_root.mkdir(parents=True, exist_ok=True)
         self.semaphore = asyncio.Semaphore(server.limits.max_concurrent_scans)
@@ -315,6 +319,25 @@ class JobManager:
                     supp = await asyncio.to_thread(self.suppressions.fingerprints)
                 except Exception as e:  # noqa: BLE001
                     log.warning("suppression load failed for %s: %r", job_id, e)
+            # Cross-scan report data (report note + exec risk-trend chart). Scoped
+            # to this scan's target so the note reflects the same estate; best-effort.
+            prior_open: set[str] | None = None
+            report_history: list[dict] | None = None
+            if self.finding_state is not None:
+                try:
+                    prior_open = await asyncio.to_thread(
+                        self.finding_state.open_fingerprints,
+                        group=rec.group, roots=rec.roots,
+                    )
+                except Exception as e:  # noqa: BLE001
+                    log.warning("prior-open load failed for %s: %r", job_id, e)
+            if self.history is not None:
+                try:
+                    report_history = await asyncio.to_thread(
+                        self.history.trends, rec.group, 30
+                    )
+                except Exception as e:  # noqa: BLE001
+                    log.warning("trend history load failed for %s: %r", job_id, e)
             cfg = self._merged_config(rec)
             # Materialize enabled custom nuclei templates into the run dir + add to -t.
             if self.nuclei_custom is not None:
@@ -330,9 +353,11 @@ class JobManager:
                 cfg, self.output_root, "quiet", False,
                 compress=rec.compress, only=only, skip=skip,
                 run_dir=run_dir, state=state, suppressions=supp,
+                prior_open=prior_open, report_history=report_history,
             )
             rec.state = "completed"
             await self._sync_assets(rec, state)
+            await self._sync_finding_state(rec, state)
             self._finish(rec, run_dir, state)
             await self._fire_webhook(rec)
         except asyncio.CancelledError:
@@ -438,15 +463,90 @@ class JobManager:
         surface_by_host: dict[str, dict] = {
             a.host: curated_surface(a) for a in state.crawler_artifacts
         }
+        # Fold in the per-host JS-library inventory (URL + in-memory content scan)
+        # so the asset tech list reflects detected libraries too (dedup by name).
         try:
-            n = await asyncio.to_thread(
+            from appsecwatch.audit.js_libs import library_inventory
+            for host, libs in library_inventory(state.crawler_artifacts).items():
+                existing = tech_by_host.get(host, [])
+                names = {t["name"].lower() for t in existing}
+                for x in libs:
+                    label = f"{x['name']} {x['version']}".strip()
+                    if label.lower() not in names:
+                        existing.append({"name": label, "source": "js_lib"})
+                        names.add(label.lower())
+                if existing:
+                    tech_by_host[host] = existing
+        except Exception as e:  # noqa: BLE001
+            log.warning("js-lib inventory merge failed for %s: %r", rec.id, e)
+        try:
+            n, new_fqdns = await asyncio.to_thread(
                 self.assets.sync_discovered, state.triaged, rec.roots or [], rec.id,
                 rec.group, tech_by_host, profile_by_host, finding_counts,
                 surface_by_host,
             )
-            log.info("assets sync: %s upserted from %s", n, rec.id)
+            log.info("assets sync: %s upserted from %s (%s new)", n, rec.id, len(new_fqdns))
+            await self._notify_new_domains(rec, new_fqdns)
+            await self._sync_search(rec, state)
         except Exception as e:  # noqa: BLE001
             log.warning("assets sync failed for %s: %r", rec.id, e)
+
+    async def _notify_new_domains(self, rec: JobRecord, new_fqdns: list[str]) -> None:
+        """Fire a 'new domain discovered' notification (in-app + configured channels)
+        when recon surfaced FQDNs never seen before. Best-effort."""
+        if not new_fqdns or self.notifier is None:
+            return
+        from appsecwatch.api.notify import Event
+        preview = ", ".join(new_fqdns[:20]) + (" …" if len(new_fqdns) > 20 else "")
+        try:
+            await self.notifier.dispatch(Event(
+                type="asset.new",
+                title=f"{len(new_fqdns)} new domain(s) discovered",
+                body=preview,
+                payload={"fqdns": new_fqdns, "count": len(new_fqdns)},
+                group=rec.group, scan_id=rec.id,
+            ))
+        except Exception as e:  # noqa: BLE001
+            log.warning("new-domain notify failed for %s: %r", rec.id, e)
+
+    async def _sync_search(self, rec: JobRecord, state: ScanState) -> None:
+        """Reindex the scanned assets + their visible findings into the FTS index."""
+        if self.search is None or self.assets is None:
+            return
+        try:
+            def _reindex() -> None:
+                for s in state.live_servers:
+                    row = self.assets.get(s.host)
+                    if row:
+                        self.search.reindex_asset(row)
+                visible = [f for f in state.all_findings() if not f.suppressed]
+                hosts = {s.host for s in state.live_servers} | {f.host for f in visible if f.host}
+                self.search.index_findings(rec.id, visible, hosts)
+            await asyncio.to_thread(_reindex)
+        except Exception as e:  # noqa: BLE001
+            log.warning("search reindex failed for %s: %r", rec.id, e)
+
+    async def _sync_finding_state(self, rec: JobRecord, state: ScanState) -> None:
+        """Update the unified cross-scan finding-state and record the per-scan diff
+        (new/recurring/resolved) on the JobRecord. Best-effort."""
+        if self.finding_state is None:
+            return
+        try:
+            from appsecwatch.audit.taxonomy import classify_findings
+            current = state.all_findings()
+            classify_findings(current)  # idempotent; ensures class/category set
+            scanned_hosts = ({s.host for s in state.live_servers}
+                             | {a.fqdn for a in state.triaged}
+                             | {f.host for f in current if f.host})
+            diff = await asyncio.to_thread(
+                self.finding_state.sync, current,
+                scanned_hosts=scanned_hosts, coverage=state.coverage,
+                group=rec.group, scan_id=rec.id,
+            )
+            rec.diff = diff
+            log.info("finding-state sync %s: %s", rec.id, diff)
+        except Exception as e:  # noqa: BLE001
+            log.warning("finding-state sync failed for %s: %r", rec.id, e)
 
     async def _render_partial(
         self, rec: JobRecord, run_dir: Path, state: ScanState
@@ -495,6 +595,7 @@ class JobManager:
                 executive_url=f"/scans/{rec.id}/executive",
                 executive_pdf_url=exec_pdf_url,
             )
+            result["diff"] = rec.diff   # cross-scan new/recurring/resolved (may be None)
             write_scan_result(run_dir, result)
         except Exception as e:  # noqa: BLE001
             log.warning("result.json write failed for %s: %r", rec.id, e)

@@ -2,11 +2,17 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class AIFinding(BaseModel):
+    # `class` is a Python keyword → aliased. populate_by_name lets tests/code set
+    # `finding_class=` directly. A missing/invalid class never fails validation:
+    # the analyzer coerces it to a valid taxonomy member via `classify()`.
+    model_config = ConfigDict(populate_by_name=True)
+
     type: str
+    finding_class: str = Field("", alias="class")
     severity: Literal["info", "low", "medium", "high", "critical"]
     title: str
     description: str = ""

@@ -51,6 +51,7 @@ class ExecSummaryStage(Stage):
             cfg=cfg.llm,
             log=log,
             prompt_overrides=cfg.ai.prompts.as_overrides(),
+            language=cfg.report.language,
         )
 
         # Re-bind each note (keyed by ephemeral ref) to the stable risk key, so the

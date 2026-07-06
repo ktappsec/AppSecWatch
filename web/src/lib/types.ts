@@ -74,6 +74,7 @@ export interface Asset {
   first_seen?: string | null;
   last_seen?: string | null;
   last_scan_id?: string | null;
+  first_seen_scan?: string | null;  // scan id that first discovered this asset (new-domain alert)
 }
 
 export interface AssetGroup {
@@ -230,6 +231,16 @@ export interface Finding {
   evidence?: Record<string, unknown>;
   check_id?: string | null;
   ai_verdict?: AIFindingVerdict | null;
+  finding_class?: string | null;   // controlled taxonomy, e.g. "headers.hsts-missing"
+  category?: string | null;        // e.g. "headers"
+}
+
+/** A cross-scan diff summary vs the previous scan of this scope. */
+export interface ScanDiff {
+  new: number;
+  recurring: number;
+  resolved: number;
+  reopened?: number;
 }
 
 export interface TLSCheck {
@@ -314,6 +325,66 @@ export interface ScanResult {
   report_url: string;
   executive_url?: string | null;
   executive_pdf_url?: string | null;
+  diff?: ScanDiff | null;          // cross-scan new/recurring/resolved vs previous scan
+}
+
+/** A row of the unified finding_state table (GET /finding-state). */
+export interface FindingStateRow {
+  fingerprint: string;
+  source?: string | null;
+  host?: string | null;
+  group_key?: string | null;
+  finding_class?: string | null;
+  category?: string | null;
+  severity?: string | null;
+  title?: string | null;
+  status: "open" | "resolved" | "suppressed" | "accepted";
+  tags: string[];
+  reason?: string;
+  consecutive_absent?: number;
+  first_seen_scan?: string | null;
+  last_seen_scan?: string | null;
+  group?: string | null;
+}
+
+export interface FindingStatePatch {
+  tags?: string[];
+  status?: "open" | "resolved" | "suppressed" | "accepted";
+}
+
+/** In-app notification (GET /notifications). */
+export interface Notification {
+  id: string;
+  type: string;
+  title: string;
+  body?: string;
+  payload?: Record<string, unknown>;
+  group?: string | null;
+  scan_id?: string | null;
+  read: number;
+  created_at?: string | null;
+}
+
+/** All-in-one search results (GET /search). */
+export interface SearchResults {
+  assets: Array<{ fqdn: string; group?: string | null }>;
+  findings: Array<{
+    title: string; host: string; category: string; source: string;
+    fingerprint: string; scan_id?: string | null;
+  }>;
+}
+
+/** Posture-over-time analytics (GET /analytics). */
+export interface AnalyticsResponse {
+  by_status: Record<string, number>;
+  by_category: Record<string, number>;
+  by_severity: Record<string, number>;
+  open_total: number;
+  resolved_total: number;
+  suppressed_total: number;
+  widespread: Array<{ key: string; title?: string | null; category?: string | null; host_count: number }>;
+  longest_open: Array<{ title?: string | null; host?: string | null; category?: string | null; severity?: string | null; first_seen_scan?: string | null }>;
+  by_priority: Array<{ priority: number; open: number }>;
 }
 
 /** Durable cross-run terminal-scan record (GET /history). */

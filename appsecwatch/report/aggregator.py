@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from appsecwatch.audit.lifecycle import diff_findings
+from appsecwatch.audit.taxonomy import classify_findings
 from appsecwatch.models import (
     AppProfile,
     CrawlerArtifact,
@@ -167,6 +169,41 @@ def _embed_logo(logo_path: str | None) -> str | None:
         return None
 
 
+# Executive-report chrome strings (en/tr). Turkish is used when report.language=tr;
+# vulnerability/finding NAMES are never translated (kept English by design).
+_EXEC_STRINGS: dict[str, dict[str, str]] = {
+    "en": {
+        "risk_posture": "Risk posture", "top_risks": "Top risks",
+        "recommended_next_steps": "Recommended next steps", "scope": "Scope",
+        "assessed": "Assessed", "live_web_servers": "Live web servers",
+        "responded_http": "responded to HTTP", "live_assets": "Live assets",
+        "resolved_dns": "resolved in DNS", "dead_dangling": "Dead / dangling",
+        "takeover_watch": "takeover watch", "findings_by_severity": "Findings by severity",
+        "risk_trend": "Risk-score trend", "since_last_scan": "Change since last scan",
+        "host": "host", "hosts": "hosts",
+        "full_findings_note": "Full findings, evidence, and per-host detail are in the technical report.",
+        "clean_assessment": "No findings to report — clean assessment.",
+        "subtitle": "External Application-Security Assessment · Executive Summary",
+        "ai_not_run": "Narrative generated deterministically (AI summary not run for this scan).",
+    },
+    "tr": {
+        "risk_posture": "Risk durumu", "top_risks": "Öne çıkan riskler",
+        "recommended_next_steps": "Önerilen sonraki adımlar", "scope": "Kapsam",
+        "assessed": "Değerlendirilen", "live_web_servers": "Aktif web sunucuları",
+        "responded_http": "HTTP yanıtı verdi", "live_assets": "Aktif varlıklar",
+        "resolved_dns": "DNS'te çözüldü", "dead_dangling": "Ölü / sahipsiz",
+        "takeover_watch": "devralma takibi", "findings_by_severity": "Önem derecesine göre bulgular",
+        "risk_trend": "Risk skoru eğilimi", "since_last_scan": "Son taramadan bu yana değişim",
+        "host": "sunucu", "hosts": "sunucu",
+        "full_findings_note": "Tüm bulgular, kanıtlar ve sunucu bazlı ayrıntılar teknik rapordadır.",
+        "clean_assessment": "Raporlanacak bulgu yok — temiz değerlendirme.",
+        "subtitle": "Harici Uygulama Güvenliği Değerlendirmesi · Yönetici Özeti",
+        "ai_not_run": "Anlatı deterministik olarak üretildi (bu tarama için AI özeti çalışmadı).",
+    },
+}
+_RATING_LABEL_TR = {"CRITICAL": "KRİTİK", "HIGH": "YÜKSEK", "MODERATE": "ORTA", "LOW": "DÜŞÜK"}
+
+
 def build_executive_context(
     *,
     run_meta: dict[str, Any],
@@ -176,10 +213,20 @@ def build_executive_context(
     coverage_strip: list[dict],
     report_cfg: "ReportConfig | None" = None,
     exec_summary: ExecutiveSummary | None = None,
+    report_history: list[dict] | None = None,
+    diff: dict[str, int] | None = None,
+    language: str = "en",
 ) -> dict[str, Any]:
     """Build the executive one-pager context: deterministic core (ALWAYS complete)
     plus an optional AI prose overlay merged by stable key. `visible` MUST be the
-    same suppression-filtered finding list the technical report uses."""
+    same suppression-filtered finding list the technical report uses.
+
+    `report_history` (oldest→newest trend points) + `diff` (new/recurring/resolved)
+    are injected by the server for the risk-trend + delta charts; both degrade
+    gracefully when absent (CLI runs)."""
+    from appsecwatch.report import svg
+
+    strings = _EXEC_STRINGS.get(language, _EXEC_STRINGS["en"])
     rating, base_note = posture_rating(histogram_totals)
 
     # Enrich the volume note with the dominant bucket's distinct-host count.
@@ -232,6 +279,12 @@ def build_executive_context(
                 seen.add(theme)
                 recommendations.append(theme)
 
+    counts = {s: histogram_totals.get(s, 0) for s in _SEVERITIES}
+    charts = {
+        "donut": svg.donut_svg(counts),
+        "trend": svg.trend_line_svg(report_history or []),
+        "delta": svg.delta_bars_svg(diff),
+    }
     return {
         "org_name": org_name,
         "classification": classification,
@@ -239,8 +292,9 @@ def build_executive_context(
         "scope": scope,
         "date": run_meta.get("finished_at") or run_meta.get("started_at") or "",
         "rating": rating,
+        "rating_label": (_RATING_LABEL_TR.get(rating, rating) if language == "tr" else rating),
         "volume_note": volume_note,
-        "counts": {s: histogram_totals.get(s, 0) for s in _SEVERITIES},
+        "counts": counts,
         "scale": {
             "live": len(recon.get("live") or []),
             "dead": len(recon.get("dead") or []),
@@ -251,6 +305,11 @@ def build_executive_context(
         "risks": enriched,
         "recommendations": recommendations,
         "ai_used": ai_usable,
+        "language": language,
+        "strings": strings,
+        "charts": charts,
+        "diff": diff,
+        "has_history": bool(report_history and len(report_history) >= 2),
     }
 
 # Headers shown in the per-host presence matrix (Security Headers section).
@@ -380,6 +439,8 @@ def build_report_context(
     summary: RunSummary | None = None,
     report_cfg: "ReportConfig | None" = None,
     exec_summary: ExecutiveSummary | None = None,
+    prior_open: set[str] | None = None,
+    report_history: list[dict] | None = None,
 ) -> dict[str, Any]:
     live = [a for a in triaged if a.status == "live"]
     dead = [a for a in triaged if a.status == "dead"]
@@ -397,6 +458,9 @@ def build_report_context(
         + list(ai_headers_findings)
         + list(ai_supply_findings)
     )
+    # Stamp the controlled-taxonomy category/class on every finding (in place) so
+    # the report can group by category and result.json carries the class.
+    classify_findings(all_findings)
     # Suppressed findings are kept (collapsible section + findings.json) but
     # excluded from the histogram and the per-source finding tables.
     visible = [f for f in all_findings if not f.suppressed]
@@ -430,6 +494,11 @@ def build_report_context(
         "wildcards": wildcards,
         "live_servers": live_servers,
     }
+    language = (report_cfg.language if report_cfg else "en") or "en"
+    # Cross-scan incremental diff vs the previously-open fingerprints the server
+    # injected (None on the CLI → no note). Approximate for the report note; the
+    # authoritative lifecycle is persisted server-side after the run.
+    diff = diff_findings(visible, prior_open, coverage) if prior_open is not None else None
     # Executive one-pager context (deterministic core + optional AI overlay), built
     # from the SAME `visible` list so the technical and executive views never diverge.
     executive = build_executive_context(
@@ -440,10 +509,15 @@ def build_report_context(
         coverage_strip=coverage_strip,
         report_cfg=report_cfg,
         exec_summary=exec_summary,
+        report_history=report_history,
+        diff=diff,
+        language=language,
     )
 
     return {
         "run": run_meta,
+        "lang": language,
+        "diff": diff,
         "versions": versions,
         "errors": errors,
         "summary": summary,

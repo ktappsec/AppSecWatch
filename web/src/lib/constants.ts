@@ -47,6 +47,12 @@ export const SEVERITY_CLASSES: Record<
 
 export const SEVERITY_ORDER: Severity[] = ["critical", "high", "medium", "low", "info"];
 
+/** Asset liveness status badge styling (shared by the inventory + asset drawer). */
+export const STATUS_STYLE: Record<string, string> = {
+  live: "text-success border-success/40",
+  dead: "text-muted-foreground border-border",
+};
+
 export const CHART_COLORS = {
   critical: "var(--sev-critical)",
   high: "var(--sev-high)",

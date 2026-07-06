@@ -22,6 +22,11 @@ def _by_id(findings) -> dict[str, object]:
     return {f.check_id: f for f in findings}
 
 
+def _cookie_names(findings, check_id) -> set[str]:
+    """Cookie names for a coarsened cookie check_id (name lives in evidence now)."""
+    return {f.evidence.get("cookie") for f in findings if f.check_id == check_id}
+
+
 # --------------------------------------------------------------------------- #
 # HSTS
 # --------------------------------------------------------------------------- #
@@ -97,12 +102,13 @@ def test_xss_protection_legacy_flagged_when_enabled():
 # cookies (per cookie, list preserved)
 # --------------------------------------------------------------------------- #
 def test_cookie_flags_per_cookie():
-    fs = _by_id(_run("https://h", _sig(set_cookies=["SID=abc; Path=/"])))
-    assert "cookie.secure.SID" in fs
-    assert "cookie.httponly.SID" in fs
-    assert "cookie.samesite.SID" in fs
-    # a session-like cookie missing HttpOnly is escalated
-    assert fs["cookie.httponly.SID"].severity == "medium"
+    findings = _run("https://h", _sig(set_cookies=["SID=abc; Path=/"]))
+    # check_id is now the coarsened flag class; the cookie name is in evidence.
+    assert _cookie_names(findings, "cookie.secure") == {"SID"}
+    assert _cookie_names(findings, "cookie.httponly") == {"SID"}
+    assert _cookie_names(findings, "cookie.samesite") == {"SID"}
+    httponly = next(f for f in findings if f.check_id == "cookie.httponly")
+    assert httponly.severity == "medium"  # session-like cookie escalated
 
 
 def test_cookie_fully_flagged_is_clean():
@@ -112,17 +118,16 @@ def test_cookie_fully_flagged_is_clean():
 
 
 def test_multiple_cookies_each_checked():
-    fs = _by_id(_run("https://h", _sig(set_cookies=[
+    findings = _run("https://h", _sig(set_cookies=[
         "a=1; Secure; HttpOnly; SameSite=Lax",
-        "tracker=2"])))
-    assert "cookie.secure.tracker" in fs
-    assert "cookie.secure.a" not in fs
+        "tracker=2"]))
+    assert _cookie_names(findings, "cookie.secure") == {"tracker"}  # 'a' fully flagged
 
 
 def test_cookie_secure_only_relevant_on_https():
-    fs = _by_id(_run("http://h", _sig(set_cookies=["a=1"])))
-    assert "cookie.secure.a" not in fs        # no Secure expectation over http
-    assert "cookie.httponly.a" in fs          # but HttpOnly still applies
+    findings = _run("http://h", _sig(set_cookies=["a=1"]))
+    assert _cookie_names(findings, "cookie.secure") == set()   # no Secure over http
+    assert "a" in _cookie_names(findings, "cookie.httponly")   # HttpOnly still applies
 
 
 def test_infra_cookies_emit_no_findings():
@@ -138,12 +143,13 @@ def test_infra_cookies_emit_no_findings():
 
 
 def test_real_session_cookie_still_flagged_alongside_infra():
-    fs = _by_id(_run("https://h", _sig(set_cookies=[
+    findings = _run("https://h", _sig(set_cookies=[
         "TS0139ccaf=routing",          # infra → dropped
-        "JSESSIONID=abc"])))           # real session → still flagged
-    assert "cookie.httponly.JSESSIONID" in fs
-    assert fs["cookie.httponly.JSESSIONID"].severity == "medium"
-    assert not any(k.startswith("cookie.") and "TS0139ccaf" in k for k in fs)
+        "JSESSIONID=abc"]))            # real session → still flagged
+    httponly = [f for f in findings if f.check_id == "cookie.httponly"]
+    assert any(f.evidence["cookie"] == "JSESSIONID" and f.severity == "medium" for f in httponly)
+    assert not any(f.evidence.get("cookie") == "TS0139ccaf"
+                   for f in findings if str(f.check_id).startswith("cookie."))
 
 
 def test_infra_cookie_does_not_mark_page_sensitive():
@@ -270,6 +276,13 @@ def test_disabled_check_prefix():
 def test_check_ids_unique_per_host():
     findings = _run("https://h", _sig(headers={"content-type": "text/html"},
                                       set_cookies=["a=1", "b=2"]))
-    ids = [f.check_id for f in findings]
-    assert len(ids) == len(set(ids))
+    # Cookie flag classes are deliberately coarsened (one check_id per flag, cookie
+    # name in evidence) so same-class findings collapse; they repeat per cookie.
+    # Every OTHER check_id stays unique per host.
+    non_cookie = [f.check_id for f in findings if not f.check_id.startswith("cookie.")]
+    assert len(non_cookie) == len(set(non_cookie))
+    # cookies are unique per (flag-class, cookie-name)
+    cookie_keys = [(f.check_id, f.evidence.get("cookie"))
+                   for f in findings if f.check_id.startswith("cookie.")]
+    assert len(cookie_keys) == len(set(cookie_keys))
     assert all(f.check_id and f.evidence.get("check_id") == f.check_id for f in findings)

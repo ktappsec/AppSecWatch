@@ -32,6 +32,11 @@ import type {
   Suppression,
   SuppressionCreate,
   TrendPoint,
+  FindingStateRow,
+  FindingStatePatch,
+  AnalyticsResponse,
+  SearchResults,
+  Notification,
 } from "./types";
 
 const LS_BASE = "appsecwatch.apiBase";
@@ -70,7 +75,31 @@ export class ApiError extends Error {
   }
 }
 
+const inflightGets = new Map<string, Promise<unknown>>();
+
+/** Dedupe concurrent identical GETs: a page and a global poller (or two
+ * components mounting together) that hit the same endpoint share one in-flight
+ * response instead of each firing its own request. Mutating / header-bearing
+ * calls always go straight through. */
 async function request<T>(
+  path: string,
+  init: RequestInit = {},
+  extraHeaders: Record<string, string> = {}
+): Promise<T> {
+  const method = (init.method ?? "GET").toUpperCase();
+  if (method !== "GET" || Object.keys(extraHeaders).length > 0) {
+    return doFetch<T>(path, init, extraHeaders);
+  }
+  const cacheKey = `${getApiBase()}${path}`;
+  const existing = inflightGets.get(cacheKey) as Promise<T> | undefined;
+  if (existing) return existing;
+  const p = doFetch<T>(path, init, extraHeaders);
+  inflightGets.set(cacheKey, p);
+  p.finally(() => { if (inflightGets.get(cacheKey) === p) inflightGets.delete(cacheKey); });
+  return p;
+}
+
+async function doFetch<T>(
   path: string,
   init: RequestInit = {},
   extraHeaders: Record<string, string> = {}
@@ -205,9 +234,12 @@ export const api = {
     }),
 
   // --- assets inventory ---
-  listAssets: (opts: { group?: string; status?: string; source?: string; q?: string } = {}) => {
+  listAssets: (opts: { group?: string; status?: string; source?: string; q?: string;
+                       new_since_scan?: string; sort?: string; summary?: boolean } = {}) => {
+    const { summary, ...rest } = opts;
     const qs = new URLSearchParams();
-    for (const [k, v] of Object.entries(opts)) if (v) qs.set(k, v);
+    for (const [k, v] of Object.entries(rest)) if (v) qs.set(k, v as string);
+    if (summary) qs.set("summary", "1");   // slim projection: dashboard-needed columns only
     const q = qs.toString();
     return request<Asset[]>(`/assets${q ? `?${q}` : ""}`);
   },
@@ -277,6 +309,47 @@ export const api = {
 
   deleteSuppression: (fingerprint: string) =>
     request<{ deleted: string }>(`/suppressions/${encodeURIComponent(fingerprint)}`, { method: "DELETE" }),
+
+  // --- cross-scan finding state (lifecycle + tags) ---
+  findingState: (opts: { status?: string; group?: string; finding_class?: string;
+                         host?: string; sort?: string; limit?: number } = {}) => {
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(opts)) if (v != null && v !== "") qs.set(k, String(v));
+    const q = qs.toString();
+    return request<FindingStateRow[]>(`/finding-state${q ? `?${q}` : ""}`);
+  },
+  patchFindingState: (fingerprint: string, patch: FindingStatePatch) =>
+    request<FindingStateRow>(`/finding-state/${encodeURIComponent(fingerprint)}`,
+      { method: "PATCH", body: JSON.stringify(patch) }),
+
+  // --- analytics ---
+  analytics: (opts: { group?: string } = {}) => {
+    const qs = new URLSearchParams();
+    if (opts.group) qs.set("group", opts.group);
+    const q = qs.toString();
+    return request<AnalyticsResponse>(`/analytics${q ? `?${q}` : ""}`);
+  },
+
+  // --- all-in-one search ---
+  search: (q: string, opts: { kind?: string; limit?: number } = {}) => {
+    const qs = new URLSearchParams({ q });
+    if (opts.kind) qs.set("kind", opts.kind);
+    if (opts.limit) qs.set("limit", String(opts.limit));
+    return request<SearchResults>(`/search?${qs.toString()}`);
+  },
+
+  // --- notifications ---
+  notifications: (opts: { unread_only?: boolean; limit?: number } = {}) => {
+    const qs = new URLSearchParams();
+    if (opts.unread_only) qs.set("unread_only", "true");
+    if (opts.limit) qs.set("limit", String(opts.limit));
+    const q = qs.toString();
+    return request<Notification[]>(`/notifications${q ? `?${q}` : ""}`);
+  },
+  markNotificationsRead: (id?: string) => {
+    const q = id ? `?id=${encodeURIComponent(id)}` : "";
+    return request<{ marked: number }>(`/notifications/read${q}`, { method: "POST" });
+  },
 
   // --- nuclei catalog + custom templates ---
   nucleiTemplates: (opts: { q?: string; category?: string; tag?: string; severity?: string; source?: string; limit?: number } = {}) => {

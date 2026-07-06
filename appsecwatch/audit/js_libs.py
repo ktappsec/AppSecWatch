@@ -1,10 +1,19 @@
 """Vulnerable-JS-library detection (retire.js-style) over crawler scripts.
 
-Deterministic + offline: match each captured script URL against a bundled vuln DB
-(`data/js_libs.json`: library URI regexes with a version capture group + known-
-vuln version ranges + CVEs). No extra requests — uses the scripts the crawler
-already saw. Emits `source='js_lib'` Findings. Catches the version-in-URL case
-(the common CDN/static-asset pattern); content/hash detection is a later add.
+Deterministic + offline. Two detection modes feed one vuln-range check:
+
+  * URL match — a script's URL carries the version (the common CDN/static-asset
+    pattern), matched against each library's ``uri`` regexes.
+  * CONTENT match — the version is inside a bundled/minified body. The crawler
+    reads each script body IN MEMORY during the crawl, runs the ``filecontent``
+    signatures, and records only the detected ``{library, version}`` onto
+    ``CrawlerArtifact.detected_libs`` — NEVER the body (runs/<id>/ stays a
+    shareable artifact set). This catches libraries whose version isn't in the URL.
+
+Both feed the bundled vuln DB (`data/js_libs.json`, retire.js-shaped: per library
+`uri` + `filecontent` regexes with a version capture group + vuln ranges + CVEs).
+Emits `source='js_lib'` Findings; `library_inventory()` returns ALL detected libs
+(vulnerable or not) for the per-asset tech inventory.
 """
 from __future__ import annotations
 
@@ -48,44 +57,101 @@ def _affected(ver: str, vuln: dict[str, Any]) -> bool:
     return True
 
 
-def _extract_version(url: str, patterns: list[str]) -> str | None:
+def _match(patterns: list[str], text: str) -> str | None:
     for pat in patterns:
-        m = re.search(pat, url, re.IGNORECASE)
+        m = re.search(pat, text, re.IGNORECASE)
         if m and m.groups():
             return m.group(1)
     return None
 
 
+def detect_in_url(url: str, db: dict[str, Any] | None = None) -> list[tuple[str, str]]:
+    """(library, version) pairs detected from a script URL."""
+    db = db if db is not None else load_db()
+    out: list[tuple[str, str]] = []
+    for lib, spec in db.items():
+        ver = _match(spec.get("uri", []), url)
+        if ver:
+            out.append((lib, ver))
+    return out
+
+
+def detect_in_content(text: str, db: dict[str, Any] | None = None) -> list[tuple[str, str]]:
+    """(library, version) pairs detected from a script BODY (called in-memory by
+    the crawler; the body is never persisted)."""
+    db = db if db is not None else load_db()
+    out: list[tuple[str, str]] = []
+    for lib, spec in db.items():
+        ver = _match(spec.get("filecontent", []), text)
+        if ver:
+            out.append((lib, ver))
+    return out
+
+
+def _detected_pairs(art) -> list[tuple[str, str, str]]:
+    """All (library, version, url) detected for one artifact — URL matches over its
+    scripts plus the crawler's in-memory content matches (`detected_libs`)."""
+    db = load_db()
+    pairs: list[tuple[str, str, str]] = []
+    for s in getattr(art, "scripts", []) or []:
+        url = (s.get("url") if isinstance(s, dict) else None) or ""
+        if url:
+            for lib, ver in detect_in_url(url, db):
+                pairs.append((lib, ver, url))
+    for d in getattr(art, "detected_libs", []) or []:
+        lib = d.get("library") if isinstance(d, dict) else None
+        ver = d.get("version") if isinstance(d, dict) else None
+        if lib and ver:
+            pairs.append((lib, ver, d.get("url", "")))
+    return pairs
+
+
 def scan_scripts(artifacts, db: dict[str, Any] | None = None) -> list[Finding]:
-    """Return js_lib Findings for vulnerable libraries seen in the scripts."""
+    """Return js_lib Findings for vulnerable libraries seen (URL or content)."""
     db = db if db is not None else load_db()
     findings: list[Finding] = []
     seen: set[tuple] = set()
     for art in artifacts:
         host = getattr(art, "host", None)
-        for s in getattr(art, "scripts", []) or []:
-            url = (s.get("url") if isinstance(s, dict) else None) or ""
-            if not url:
+        for lib, ver, url in _detected_pairs(art):
+            spec = db.get(lib)
+            if not spec:
                 continue
-            for lib, spec in db.items():
-                ver = _extract_version(url, spec.get("uri", []))
-                if not ver:
+            for vuln in spec.get("vulnerabilities", []):
+                if not _affected(ver, vuln):
                     continue
-                for vuln in spec.get("vulnerabilities", []):
-                    if not _affected(ver, vuln):
-                        continue
-                    cves = vuln.get("cve") or []
-                    dedupe = (host, lib, ver, tuple(cves))
-                    if dedupe in seen:
-                        continue
-                    seen.add(dedupe)
-                    findings.append(Finding(
-                        source="js_lib", host=host,
-                        severity=vuln.get("severity", "medium"),
-                        title=f"Vulnerable JS library: {lib} {ver}",
-                        description=vuln.get("summary", ""),
-                        evidence={"library": lib, "version": ver,
-                                  "cve": ", ".join(cves), "url": url},
-                        check_id=f"js_lib.{lib}.{ver}",
-                    ))
+                cves = vuln.get("cve") or []
+                dedupe = (host, lib, ver, tuple(cves))
+                if dedupe in seen:
+                    continue
+                seen.add(dedupe)
+                findings.append(Finding(
+                    source="js_lib", host=host,
+                    severity=vuln.get("severity", "medium"),
+                    title=f"Vulnerable JS library: {lib} {ver}",
+                    description=vuln.get("summary", ""),
+                    evidence={"library": lib, "version": ver,
+                              "cve": ", ".join(cves), "url": url},
+                    check_id=f"js_lib.{lib}.{ver}",
+                ))
     return findings
+
+
+def library_inventory(artifacts, db: dict[str, Any] | None = None) -> dict[str, list[dict[str, str]]]:
+    """Per-host inventory of ALL detected JS libraries (vulnerable or not), for the
+    asset tech list. `{host: [{"name": "jquery", "version": "3.6.0"}, ...]}`."""
+    inv: dict[str, list[dict[str, str]]] = {}
+    for art in artifacts:
+        host = getattr(art, "host", None)
+        if not host:
+            continue
+        seen: set[tuple[str, str]] = set()
+        libs: list[dict[str, str]] = []
+        for lib, ver, _url in _detected_pairs(art):
+            if (lib, ver) in seen:
+                continue
+            seen.add((lib, ver))
+            libs.append({"name": lib, "version": ver})
+        if libs:
+            inv[host] = libs
+    return inv

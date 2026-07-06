@@ -1,15 +1,28 @@
-"""Vulnerable-JS-library detection over crawler scripts."""
+"""Vulnerable-JS-library detection: URL + in-memory content + inventory."""
 from __future__ import annotations
 
 import types
 
-from appsecwatch.audit.js_libs import _affected, _extract_version, scan_scripts
+from appsecwatch.audit.js_libs import (
+    _affected,
+    detect_in_content,
+    detect_in_url,
+    library_inventory,
+    scan_scripts,
+)
 
 
-def art(host, urls):
-    return types.SimpleNamespace(host=host, scripts=[{"url": u} for u in urls])
+def art(host, urls=None, detected_libs=None):
+    return types.SimpleNamespace(
+        host=host,
+        scripts=[{"url": u} for u in (urls or [])],
+        detected_libs=detected_libs or [],
+    )
 
 
+# --------------------------------------------------------------------------- #
+# URL-based detection (unchanged behavior)
+# --------------------------------------------------------------------------- #
 def test_detects_vulnerable_jquery():
     fs = scan_scripts([art("a.com", ["https://cdn.example.com/jquery-3.4.1.min.js"])])
     jq = [f for f in fs if f.evidence["library"] == "jquery"]
@@ -24,16 +37,46 @@ def test_safe_version_no_finding():
 
 
 def test_lodash_two_cves_and_dedupe():
-    # 4.17.10 is below both 4.17.12 and 4.17.21 → two distinct CVE findings;
-    # the duplicate script URL must not double-count.
     fs = scan_scripts([art("a.com", ["/lodash-4.17.10.min.js", "/lodash-4.17.10.min.js"])])
     libs = [f for f in fs if f.evidence["library"] == "lodash"]
     assert len(libs) == 2
 
 
-def test_extract_version_and_ranges():
-    assert _extract_version("x/bootstrap-3.3.7.min.js", ["bootstrap[.-]?(\\d+(?:\\.\\d+){1,2})"]) == "3.3.7"
+def test_detect_in_url_and_ranges():
+    assert detect_in_url("x/bootstrap-3.3.7.min.js") == [("bootstrap", "3.3.7")]
     assert _affected("3.4.0", {"below": "3.5.0"}) is True
     assert _affected("3.5.0", {"below": "3.5.0"}) is False
     assert _affected("3.2.0", {"atOrAbove": "3.0.0", "below": "3.4.1"}) is True
     assert _affected("4.0.0", {"atOrAbove": "3.0.0", "below": "3.4.1"}) is False
+
+
+# --------------------------------------------------------------------------- #
+# Content-based detection (bundled/minified — version not in the URL)
+# --------------------------------------------------------------------------- #
+def test_detect_in_content_from_banner():
+    body = "/*! jQuery v3.4.1 | (c) OpenJS Foundation */ !function(e,t){}(...)"
+    assert ("jquery", "3.4.1") in detect_in_content(body)
+
+
+def test_content_detected_lib_flagged_as_vulnerable():
+    # Simulates the crawler having content-scanned a bundled jquery whose URL had
+    # no version (e.g. /static/app.bundle.js) — only detected_libs carries it.
+    a = art("a.com", urls=["/static/app.bundle.js"],
+            detected_libs=[{"library": "jquery", "version": "3.4.1", "url": "/static/app.bundle.js"}])
+    fs = scan_scripts([a])
+    jq = [f for f in fs if f.evidence["library"] == "jquery"]
+    assert jq and jq[0].evidence["version"] == "3.4.1"
+
+
+# --------------------------------------------------------------------------- #
+# Inventory (all detected libs, vulnerable or not)
+# --------------------------------------------------------------------------- #
+def test_library_inventory_includes_non_vulnerable():
+    a = art("a.com", urls=["/jquery-3.7.1.min.js"],       # safe version → no finding
+            detected_libs=[{"library": "bootstrap", "version": "5.3.0", "url": "/b.js"}])
+    inv = library_inventory([a])
+    names = {(x["name"], x["version"]) for x in inv["a.com"]}
+    assert ("jquery", "3.7.1") in names        # inventoried despite being safe
+    assert ("bootstrap", "5.3.0") in names
+    # a safe jquery still emits no vuln finding
+    assert not [f for f in scan_scripts([a]) if f.evidence["library"] == "jquery"]

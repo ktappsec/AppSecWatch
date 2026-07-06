@@ -3,7 +3,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Rocket, Info } from "lucide-react";
+import { Rocket, Info, ChevronDown, CalendarClock } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,6 +14,9 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from "@/components/ui/dialog";
 import {
+  DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
+} from "@/components/ui/dropdown-menu";
+import {
   Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
 } from "@/components/ui/select";
 import { toast } from "@/components/ui/sonner";
@@ -21,7 +24,13 @@ import { api, ApiError } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { useMounted } from "@/lib/hooks";
 import { CAPABILITY_TOKENS, THROTTLE_PROFILES } from "@/lib/constants";
-import type { AssetGroup, Capabilities, ScanRequest, ScanTemplate } from "@/lib/types";
+import { ChipInput } from "@/components/chip-input";
+import {
+  CadenceFields, atTimeForPayload, type Cadence,
+} from "@/components/schedule/cadence-fields";
+import type {
+  AssetGroup, Capabilities, ScanRequest, ScanTemplate, ScheduleTarget, ScheduleUpsert,
+} from "@/lib/types";
 
 type TargetMode = "roots" | "group" | "assets" | "all";
 const split = (s: string) => s.split(/[,\s]+/).map((x) => x.trim()).filter(Boolean);
@@ -67,6 +76,18 @@ export default function NewScanPage() {
   const [templates, setTemplates] = React.useState<ScanTemplate[]>([]);
   const [submitting, setSubmitting] = React.useState(false);
 
+  // Scheduling: this same builder can create/update a schedule instead of running.
+  // `?schedule=<id>` loads a schedule into the form for editing (round-trip).
+  const [editingId, setEditingId] = React.useState<string | null>(null);
+  const [editingName, setEditingName] = React.useState("");
+  // The cadence dialog. `schedMode` null = closed; otherwise the write it performs.
+  const [schedMode, setSchedMode] = React.useState<"create" | "update" | "saveAsNew" | null>(null);
+  const [savingSched, setSavingSched] = React.useState(false);
+  const [schedName, setSchedName] = React.useState("");
+  const [schedCadence, setSchedCadence] = React.useState<Cadence>("daily");
+  const [schedAtTime, setSchedAtTime] = React.useState("02:00");
+  const [schedWeekday, setSchedWeekday] = React.useState(0);
+
   // Prefill the target from the Assets-page deep-link (?group= / ?assets= / ?roots=).
   React.useEffect(() => {
     if (!mounted) return;
@@ -74,7 +95,30 @@ export default function NewScanPage() {
     api.capabilities().then(setCaps).catch(() => {});
     api.listScanTemplates().then(setTemplates).catch(() => {});
     const q = new URLSearchParams(window.location.search);
-    if (q.get("group")) { setTarget("group"); setGroup(q.get("group")!); }
+    const sid = q.get("schedule");
+    if (sid) {
+      // Edit an existing schedule: load its full config into the form (round-trip).
+      api.listSchedules().then((list) => {
+        const s = list.find((x) => x.id === sid);
+        if (!s) { toast.error("Schedule not found"); return; }
+        setEditingId(s.id);
+        setEditingName(s.name || s.id);
+        const t = s.target || {};
+        if (t.all_assets) setTarget("all");
+        else if (t.group) { setTarget("group"); setGroup(t.group); }
+        else if (t.assets?.length) { setTarget("assets"); setAssetsText(t.assets.join("\n")); }
+        else if (t.roots?.length) { setTarget("roots"); setRoots(t.roots.join(", ")); }
+        if (s.only?.length) { setSelection("only"); setTokens(s.only); }
+        else if (s.skip?.length) { setSelection("skip"); setTokens(s.skip); }
+        else { setSelection("all"); setTokens([]); }
+        if (s.throttle) setThrottle(s.throttle);
+        setCompress(s.compress);
+        setSchedName(s.name || "");
+        setSchedCadence((s.cadence as Cadence) || "daily");
+        setSchedAtTime(s.at_time || "02:00");
+        setSchedWeekday(s.weekday ?? 0);
+      }).catch(() => {});
+    } else if (q.get("group")) { setTarget("group"); setGroup(q.get("group")!); }
     else if (q.get("assets")) { setTarget("assets"); setAssetsText(q.get("assets")!.split(",").join("\n")); }
     else if (q.get("roots")) { setTarget("roots"); setRoots(q.get("roots")!); }
   }, [mounted]);
@@ -167,6 +211,55 @@ export default function NewScanPage() {
     }
   };
 
+  // --- Scheduling: reuse this builder's config as a recurring schedule -------- #
+  const targetValid = () =>
+    target === "roots" ? split(roots).length > 0
+      : target === "group" ? !!group
+        : target === "assets" ? split(assetsText).length > 0
+          : true; // all
+
+  const buildTarget = (): ScheduleTarget =>
+    target === "roots" ? { roots: split(roots) }
+      : target === "group" ? { group }
+        : target === "assets" ? { assets: split(assetsText) }
+          : { all_assets: true };
+
+  const buildScheduleUpsert = (): ScheduleUpsert => ({
+    name: schedName.trim() || undefined,
+    target: buildTarget(),
+    only: selection === "only" && tokens.length ? tokens : null,
+    skip: selection === "skip" && tokens.length ? tokens : null,
+    throttle: (throttle || null) as ScheduleUpsert["throttle"],
+    compress,
+    cadence: schedCadence,
+    at_time: atTimeForPayload(schedCadence, schedAtTime),
+    weekday: schedCadence === "weekly" ? schedWeekday : null,
+    enabled: true,
+  });
+
+  const openSchedule = (mode: "create" | "update" | "saveAsNew") => {
+    if (!targetValid()) { toast.error("Pick a target first"); return; }
+    if (mode === "saveAsNew") setSchedName("");   // fresh name for a copy
+    setSchedMode(mode);
+  };
+
+  const saveSchedule = async () => {
+    setSavingSched(true);
+    try {
+      const body = buildScheduleUpsert();
+      if (schedMode === "update" && editingId) await api.updateSchedule(editingId, body);
+      else await api.createSchedule(body);
+      toast.success(schedMode === "update" ? "Schedule updated" : "Schedule created");
+      router.push("/schedules");
+    } catch (err) {
+      toast.error(err instanceof ApiError ? `${err.code}: ${err.message}` : "Save failed");
+      setSavingSched(false);
+    }
+  };
+
+  // Run the scan once immediately (reuses onSubmit's validation + submit path).
+  const runNow = () => onSubmit({ preventDefault() {} } as unknown as React.FormEvent);
+
   const details = caps?.throttle_details?.[throttle];
   // The opt-in `zap` capability is only offered when the server advertises it
   // (daemon enabled + configured) via /capabilities.
@@ -178,11 +271,25 @@ export default function NewScanPage() {
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight">New audit</h1>
+        <h1 className="text-2xl font-bold tracking-tight">
+          {editingId ? "Edit schedule" : "New audit"}
+        </h1>
         <p className="text-sm text-muted-foreground">
-          Launch a point-in-time external AppSec audit. Secrets live server-side.
+          {editingId
+            ? "Adjust the scan config, then update the schedule — or run it once now."
+            : "Launch a point-in-time external AppSec audit. Secrets live server-side."}
         </p>
       </div>
+
+      {editingId && (
+        <div className="flex items-center gap-2 rounded-lg border border-primary/40 bg-primary/10 px-3 py-2 text-sm">
+          <CalendarClock className="h-4 w-4 text-primary" />
+          <span>Editing schedule <span className="font-semibold">{editingName}</span></span>
+          <Link href="/schedules" className="ml-auto text-xs text-primary hover:underline">
+            Back to schedules
+          </Link>
+        </div>
+      )}
 
       <form onSubmit={onSubmit} className="space-y-6">
         {/* Target */}
@@ -214,9 +321,15 @@ export default function NewScanPage() {
             </Field>
           )}
           {target === "assets" && (
-            <Field label="Asset FQDNs" hint="one per line / comma separated">
-              <Textarea value={assetsText} onChange={(e) => setAssetsText(e.target.value)}
-                className="min-h-[80px] font-mono text-xs" placeholder="app.example.com" />
+            <Field label="Asset FQDNs" hint="type or paste — one per line / comma separated">
+              <ChipInput value={assetsText} onChange={setAssetsText} />
+              {split(assetsText).length > 8 && (
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Targeting {split(assetsText).length} assets individually —{" "}
+                  <button type="button" onClick={() => setTarget("group")}
+                    className="text-primary hover:underline">scan a whole group instead?</button>
+                </p>
+              )}
             </Field>
           )}
           {target === "all" && (
@@ -402,10 +515,52 @@ export default function NewScanPage() {
 
         <div className="flex justify-end gap-2">
           <Button type="button" variant="outline" onClick={() => router.back()}>Cancel</Button>
-          <Button type="submit" disabled={submitting} className="gap-1.5">
-            <Rocket className="h-4 w-4" />
-            {submitting ? "Submitting…" : "Launch scan"}
-          </Button>
+          {editingId ? (
+            // Edit-a-schedule mode: primary updates the schedule; menu offers run-once + copy.
+            <div className="flex">
+              <Button type="button" onClick={() => openSchedule("update")}
+                className="gap-1.5 rounded-r-none">
+                <CalendarClock className="h-4 w-4" /> Update schedule
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button type="button" aria-label="More actions"
+                    className="rounded-l-none border-l border-primary-foreground/25 px-2">
+                    <ChevronDown className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onClick={runNow} disabled={submitting}>
+                    <Rocket className="h-4 w-4" /> Run once now
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => openSchedule("saveAsNew")}>
+                    <CalendarClock className="h-4 w-4" /> Save as new schedule
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          ) : (
+            // New-scan mode: primary runs now; menu offers scheduling.
+            <div className="flex">
+              <Button type="submit" disabled={submitting} className="gap-1.5 rounded-r-none">
+                <Rocket className="h-4 w-4" />
+                {submitting ? "Submitting…" : "Launch scan"}
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button type="button" aria-label="More actions"
+                    className="rounded-l-none border-l border-primary-foreground/25 px-2">
+                    <ChevronDown className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onClick={() => openSchedule("create")}>
+                    <CalendarClock className="h-4 w-4" /> Schedule…
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          )}
         </div>
       </form>
 
@@ -427,6 +582,48 @@ export default function NewScanPage() {
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setTemplateOpen(false)}>Cancel</Button>
             <Button type="button" onClick={saveTemplate} disabled={!templateName.trim()}>Save</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Schedule dialog — captures cadence for the config assembled above. */}
+      <Dialog open={schedMode !== null} onOpenChange={(o) => !o && setSchedMode(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{schedMode === "update" ? "Update schedule" : "Schedule this audit"}</DialogTitle>
+            <DialogDescription>
+              Runs the config from this page on a recurring cadence. Times are UTC.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+            <span className="font-medium text-foreground">Scanning:</span>{" "}
+            {target === "roots" ? `${split(roots).length} root(s)`
+              : target === "group" ? `group “${group || "—"}”`
+                : target === "assets" ? `${split(assetsText).length} asset(s)`
+                  : "all assets"}{" "}·{" "}
+            {selection === "all" ? "Full audit"
+              : selection === "only" ? `only ${tokens.join(", ") || "—"}`
+                : `skip ${tokens.join(", ") || "—"}`}{" "}
+            {throttle && <>· {throttle}</>}
+          </div>
+          <div className="space-y-1.5">
+            <Label>Name</Label>
+            <Input value={schedName} onChange={(e) => setSchedName(e.target.value)}
+              placeholder="e.g. weekly bank" />
+          </div>
+          <div className="flex flex-wrap items-end gap-3">
+            <CadenceFields
+              cadence={schedCadence} onCadence={setSchedCadence}
+              atTime={schedAtTime} onAtTime={setSchedAtTime}
+              weekday={schedWeekday} onWeekday={setSchedWeekday}
+            />
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setSchedMode(null)}>Cancel</Button>
+            <Button type="button" onClick={saveSchedule} disabled={savingSched} className="gap-1.5">
+              <CalendarClock className="h-4 w-4" />
+              {savingSched ? "Saving…" : schedMode === "update" ? "Update schedule" : "Create schedule"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

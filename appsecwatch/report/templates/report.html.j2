@@ -50,6 +50,15 @@
         {% endfor %}
       </div>
 
+      {% if diff %}
+      <p class="more-note" style="margin-top:10px;color:var(--muted);">
+        Since the previous scan:
+        <strong style="color:var(--high);">{{ diff.new }}</strong> new ·
+        <strong style="color:var(--med);">{{ diff.recurring }}</strong> recurring ·
+        <strong style="color:var(--pass);">{{ diff.resolved }}</strong> resolved.
+      </p>
+      {% endif %}
+
       {% if summary %}
       <h3 style="margin-top:18px;">Run health</h3>
       <div class="grid">
@@ -257,7 +266,8 @@
         {% for ttl, items in findings.nuclei | groupby('group_key') %}
           <tr data-row data-severity="{{ items[0].severity }}">
             <td><span class="{{ items[0].severity | sev_class }}">{{ items[0].severity }}</span></td>
-            <td title="{{ items | map(attribute='host') | join(', ') }}">{{ items | length }} host{{ '' if items|length == 1 else 's' }}</td>
+            {% set hs = items | map(attribute='host') | unique | list %}
+            <td title="{{ hs | join(', ') }}">{{ hs | length }} host{{ '' if hs|length == 1 else 's' }}</td>
             <td>{{ items[0].title }}</td>
             <td class="evidence">{{ items[0].evidence_summary }}</td>
           </tr>
@@ -292,7 +302,8 @@
         {% for ttl, items in findings.zap | groupby('group_key') %}
           <tr data-row data-severity="{{ items[0].severity }}">
             <td><span class="{{ items[0].severity | sev_class }}">{{ items[0].severity }}</span></td>
-            <td title="{{ items | map(attribute='host') | join(', ') }}">{{ items | length }} host{{ '' if items|length == 1 else 's' }}</td>
+            {% set hs = items | map(attribute='host') | unique | list %}
+            <td title="{{ hs | join(', ') }}">{{ hs | length }} host{{ '' if hs|length == 1 else 's' }}</td>
             <td>{{ items[0].title }}</td>
             <td class="evidence">{{ items[0].evidence_summary }}</td>
           </tr>
@@ -318,7 +329,8 @@
         {% for ttl, items in findings.js_lib | groupby('group_key') %}
           <tr data-row data-severity="{{ items[0].severity }}">
             <td><span class="{{ items[0].severity | sev_class }}">{{ items[0].severity }}</span></td>
-            <td title="{{ items | map(attribute='host') | join(', ') }}">{{ items | length }} host{{ '' if items|length == 1 else 's' }}</td>
+            {% set hs = items | map(attribute='host') | unique | list %}
+            <td title="{{ hs | join(', ') }}">{{ hs | length }} host{{ '' if hs|length == 1 else 's' }}</td>
             <td>{{ items[0].evidence.library }}</td>
             <td>{{ items[0].evidence.version }}</td>
             <td class="evidence">{{ items[0].evidence.cve }}</td>
@@ -341,6 +353,9 @@
 
       <h3>Per-host header matrix</h3>
       {% if header_matrix %}
+      {# Collapse the full grid past a threshold so a 400-host scan stays readable. #}
+      {% set matrix_many = header_matrix | length > 25 %}
+      {% if matrix_many %}<details><summary style="cursor:pointer;color:var(--muted);margin-bottom:8px;">Per-host matrix for {{ header_matrix | length }} hosts — click to expand</summary>{% endif %}
       <table>
         <thead><tr><th>Host</th>
           {% for col in header_matrix[0].cells %}<th>{{ col.label }}</th>{% endfor %}
@@ -356,6 +371,7 @@
         {% endfor %}
         </tbody>
       </table>
+      {% if matrix_many %}</details>{% endif %}
       {% else %}<div class="empty">No hosts with captured headers.</div>{% endif %}
 
       <h3 style="margin-top:18px;">Header findings</h3>
@@ -379,7 +395,8 @@
           <tr data-row data-severity="{{ items[0].severity }}">
             <td><span class="{{ items[0].severity | sev_class }}">{{ items[0].severity }}</span></td>
             <td><span class="pill">{{ items[0].source }}</span></td>
-            <td title="{{ items | map(attribute='host') | join(', ') }}">{{ items | length }} host{{ '' if items|length == 1 else 's' }}</td>
+            {% set hs = items | map(attribute='host') | unique | list %}
+            <td title="{{ hs | join(', ') }}">{{ hs | length }} host{{ '' if hs|length == 1 else 's' }}</td>
             <td>{{ items[0].title }}</td>
             <td class="evidence">{{ items[0].evidence_summary }}</td>
           </tr>
@@ -469,7 +486,8 @@
         {% for ttl, items in findings.ai_headers | groupby('group_key') %}
           <tr>
             <td><span class="{{ items[0].severity | sev_class }}">{{ items[0].severity }}</span></td>
-            <td title="{{ items | map(attribute='host') | join(', ') }}">{{ items | length }} host{{ '' if items|length == 1 else 's' }}</td>
+            {% set hs = items | map(attribute='host') | unique | list %}
+            <td title="{{ hs | join(', ') }}">{{ hs | length }} host{{ '' if hs|length == 1 else 's' }}</td>
             <td>{{ items[0].title }}</td>
             <td class="evidence">{{ items[0].description }}</td>
           </tr>
@@ -496,7 +514,8 @@
         {% for ttl, items in findings.ai_supply_chain | groupby('group_key') %}
           <tr>
             <td><span class="{{ items[0].severity | sev_class }}">{{ items[0].severity }}</span></td>
-            <td title="{{ items | map(attribute='host') | join(', ') }}">{{ items | length }} host{{ '' if items|length == 1 else 's' }}</td>
+            {% set hs = items | map(attribute='host') | unique | list %}
+            <td title="{{ hs | join(', ') }}">{{ hs | length }} host{{ '' if hs|length == 1 else 's' }}</td>
             <td>{{ items[0].title }}</td>
             <td class="evidence">{{ items[0].description }}</td>
           </tr>

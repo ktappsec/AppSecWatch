@@ -344,11 +344,16 @@ class ReportConfig(BaseModel):
                      self-contained. Missing/unreadable → silently no logo.
     - executive_pdf: also auto-render executive.pdf via the bundled Chromium
                      (best-effort; degrades silently if the browser is unavailable).
+    - language:      report language. "en" (default) or "tr" — when "tr", the AI
+                     website-profile summary and the executive-summary narrative are
+                     written in Turkish and executive.html chrome is Turkish;
+                     vulnerability/finding NAMES and technical report.html stay English.
     """
     org_name: str | None = None
     classification: str = "Confidential"
     logo_path: str | None = None
     executive_pdf: bool = True
+    language: Literal["en", "tr"] = "en"
 
 
 class ZapConfig(BaseModel):

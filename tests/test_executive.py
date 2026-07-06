@@ -115,6 +115,31 @@ def _ctx(exec_summary=None):
     )
 
 
+def test_exec_context_charts_and_turkish():
+    visible = _sample()
+    totals = {"critical": 0, "high": 3, "medium": 3, "low": 1, "info": 0}
+    history = [{"risk_score": 40}, {"risk_score": 55}, {"risk_score": 62}]
+    ctx = build_executive_context(
+        run_meta=_RUN, histogram_totals=totals, visible=visible, recon=_RECON,
+        coverage_strip=[], report_cfg=None, exec_summary=None,
+        report_history=history, diff={"new": 2, "recurring": 4, "resolved": 1},
+        language="tr",
+    )
+    # Turkish chrome; English rating token preserved for the CSS class, TR label shown
+    assert ctx["strings"]["top_risks"] == "Öne çıkan riskler"
+    assert ctx["rating"] == "HIGH" and ctx["rating_label"] == "YÜKSEK"
+    # self-contained inline SVGs, no external refs
+    for k in ("donut", "trend", "delta"):
+        assert ctx["charts"][k].startswith("<svg") and "http" not in ctx["charts"][k]
+    assert ctx["has_history"] is True and ctx["diff"]["new"] == 2
+
+
+def test_exec_context_charts_degrade_without_history():
+    ctx = _ctx()  # no history/diff (CLI-style)
+    assert ctx["charts"]["donut"].startswith("<svg")   # donut always renders
+    assert ctx["has_history"] is False and ctx["diff"] is None
+
+
 def test_exec_context_deterministic_fallback_when_no_ai():
     ctx = _ctx(exec_summary=None)
     assert ctx["ai_used"] is False

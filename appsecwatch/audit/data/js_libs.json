@@ -1,6 +1,7 @@
 {
   "jquery": {
     "uri": ["jquery[.-]?(\\d+(?:\\.\\d+){1,2})(?:\\.min)?\\.js"],
+    "filecontent": ["jQuery(?: JavaScript Library)? v(\\d+\\.\\d+(?:\\.\\d+)?)"],
     "vulnerabilities": [
       {"below": "3.5.0", "severity": "medium", "cve": ["CVE-2020-11022", "CVE-2020-11023"],
        "summary": "jQuery before 3.5.0 — XSS via the htmlPrefilter / DOM manipulation methods."},
@@ -12,6 +13,7 @@
   },
   "bootstrap": {
     "uri": ["bootstrap[.-]?(\\d+(?:\\.\\d+){1,2})(?:\\.min)?\\.js"],
+    "filecontent": ["Bootstrap v(\\d+\\.\\d+\\.\\d+)"],
     "vulnerabilities": [
       {"atOrAbove": "3.0.0", "below": "3.4.1", "severity": "medium", "cve": ["CVE-2019-8331"],
        "summary": "Bootstrap before 3.4.1 — XSS in the tooltip/popover data-template attribute."},
@@ -21,6 +23,7 @@
   },
   "angular": {
     "uri": ["angular[.-]?(\\d+(?:\\.\\d+){1,2})(?:\\.min)?\\.js"],
+    "filecontent": ["AngularJS v(\\d+\\.\\d+\\.\\d+)"],
     "vulnerabilities": [
       {"below": "1.8.0", "severity": "medium", "cve": ["CVE-2020-7676"],
        "summary": "AngularJS before 1.8.0 — XSS via the SVG/usemap sanitizer bypass."},
@@ -39,6 +42,7 @@
   },
   "moment": {
     "uri": ["moment[.-]?(\\d+(?:\\.\\d+){1,2})(?:\\.min)?\\.js"],
+    "filecontent": ["//! version : (\\d+\\.\\d+\\.\\d+)"],
     "vulnerabilities": [
       {"below": "2.29.4", "severity": "high", "cve": ["CVE-2022-31129"],
        "summary": "Moment.js before 2.29.4 — ReDoS in string-to-date parsing."},
@@ -48,6 +52,7 @@
   },
   "handlebars": {
     "uri": ["handlebars[.-]?(\\d+(?:\\.\\d+){1,2})(?:\\.min)?\\.js"],
+    "filecontent": ["Handlebars(?:\\.js)? v(\\d+\\.\\d+\\.\\d+)"],
     "vulnerabilities": [
       {"below": "4.7.7", "severity": "high", "cve": ["CVE-2021-23369", "CVE-2021-23383"],
        "summary": "Handlebars before 4.7.7 — RCE via prototype pollution in the compiler."}
@@ -55,6 +60,7 @@
   },
   "dompurify": {
     "uri": ["(?:purify|dompurify)[.-]?(\\d+(?:\\.\\d+){1,2})(?:\\.min)?\\.js"],
+    "filecontent": ["DOMPurify (\\d+\\.\\d+\\.\\d+)"],
     "vulnerabilities": [
       {"below": "2.0.17", "severity": "medium", "cve": ["CVE-2020-26870"],
        "summary": "DOMPurify before 2.0.17 — sanitizer bypass (mXSS)."}

@@ -14,6 +14,7 @@ All routes require an API key except `GET /healthz`.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import tarfile
@@ -26,6 +27,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel, ValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.middleware.gzip import GZipMiddleware
 from starlette.staticfiles import StaticFiles
 
 from appsecwatch import __version__
@@ -33,7 +35,10 @@ from appsecwatch.api.assets import AssetManager
 from appsecwatch.api.auth import require_api_key
 from appsecwatch.api.config import ConfigError, ConfigManager, ServerConfig
 from appsecwatch.api.db import Database, default_db_path
+from appsecwatch.api.finding_state import FindingStateManager
 from appsecwatch.api.history import ScanHistory
+from appsecwatch.api.notify import Notifier
+from appsecwatch.api.search import FTSIndex
 from appsecwatch.api.jobs import JobManager, NotConfigured, QueueFull, ZapRejected
 from appsecwatch.api.nuclei_catalog import NucleiCatalog, default_templates_dir
 from appsecwatch.api.nuclei_custom import CustomTemplateManager
@@ -74,6 +79,10 @@ from appsecwatch.api.models import (
     Suppression,
     SuppressionCreate,
     TrendPoint,
+    FindingStateRow,
+    FindingStatePatch,
+    Notification,
+    SearchResults,
     error_response,
 )
 from appsecwatch.api.result import count_findings, load_scan_result
@@ -241,6 +250,12 @@ def _install(app: FastAPI, config: ServerConfig) -> None:
     def history_index(request: Request) -> ScanHistory:
         return request.app.state.history
 
+    def finding_state_mgr(request: Request) -> FindingStateManager:
+        return request.app.state.finding_state
+
+    def search_index(request: Request) -> FTSIndex:
+        return request.app.state.search
+
     @app.get("/healthz")
     async def healthz():
         return {"status": "ok", "version": __version__}
@@ -309,9 +324,13 @@ def _install(app: FastAPI, config: ServerConfig) -> None:
         status: str | None = Query(default=None),
         source: str | None = Query(default=None),
         q: str | None = Query(default=None),
+        new_since_scan: str | None = Query(default=None),
+        sort: str | None = Query(default=None),
+        summary: bool = Query(default=False),
     ) -> list[Asset]:
         rows = await asyncio.to_thread(
-            assets_mgr(request).list, group=group, status=status, source=source, q=q
+            assets_mgr(request).list, group=group, status=status, source=source, q=q,
+            new_since_scan=new_since_scan, sort=sort, summary=summary,
         )
         return [Asset(**r) for r in rows]
 
@@ -457,6 +476,70 @@ def _install(app: FastAPI, config: ServerConfig) -> None:
         if not await asyncio.to_thread(suppressions_mgr(request).delete, fingerprint):
             raise HTTPException(status.HTTP_404_NOT_FOUND, error_response("not_found", "no such suppression"))
         return {"deleted": fingerprint}
+
+    # ----- cross-scan finding state (lifecycle + tags) -------------------- #
+    @app.get("/finding-state", dependencies=[Depends(require_api_key)])
+    async def list_finding_state(
+        request: Request,
+        status_: str | None = Query(default=None, alias="status"),
+        group: str | None = Query(default=None),
+        finding_class: str | None = Query(default=None),
+        host: str | None = Query(default=None),
+        sort: str = Query(default="last_seen_scan"),
+        limit: int = Query(default=500, ge=1, le=2000),
+    ) -> list[FindingStateRow]:
+        rows = await asyncio.to_thread(
+            finding_state_mgr(request).list, status=status_, group=group,
+            finding_class=finding_class, host=host, sort=sort, limit=limit,
+        )
+        return [FindingStateRow(**r) for r in rows]
+
+    @app.patch("/finding-state/{fingerprint:path}", dependencies=[Depends(require_api_key)])
+    async def patch_finding_state(fingerprint: str, body: FindingStatePatch,
+                                  request: Request) -> FindingStateRow:
+        mgr = finding_state_mgr(request)
+        if body.tags is not None:
+            await asyncio.to_thread(mgr.set_tags, fingerprint, body.tags)
+        if body.status is not None:
+            await asyncio.to_thread(mgr.set_status, fingerprint, body.status)
+        row = await asyncio.to_thread(mgr.get, fingerprint)
+        if not row:
+            raise HTTPException(status.HTTP_404_NOT_FOUND,
+                                error_response("not_found", "no such finding"))
+        row["tags"] = json.loads(row.get("tags") or "[]")
+        return FindingStateRow(**row)
+
+    @app.get("/analytics", dependencies=[Depends(require_api_key)])
+    async def analytics(request: Request, group: str | None = Query(default=None)):
+        """Posture-over-time analytics: current-state breakdowns + widespread /
+        longest-open / per-priority. Combine with /trends + /history for charts."""
+        return await asyncio.to_thread(finding_state_mgr(request).analytics, group=group)
+
+    # ----- all-in-one search (FTS5) --------------------------------------- #
+    @app.get("/search", dependencies=[Depends(require_api_key)])
+    async def search(request: Request, q: str = Query(...),
+                     kind: str | None = Query(default=None),
+                     limit: int = Query(default=20, ge=1, le=100)) -> SearchResults:
+        kinds = tuple(kind.split(",")) if kind else ("assets", "findings")
+        res = await asyncio.to_thread(search_index(request).search, q, kinds=kinds, limit=limit)
+        return SearchResults(**res)
+
+    # ----- notifications (in-app channel of the pluggable notifier) ------- #
+    @app.get("/notifications", dependencies=[Depends(require_api_key)])
+    async def list_notifications(request: Request,
+                                 unread_only: bool = Query(default=False),
+                                 limit: int = Query(default=50, ge=1, le=200)) -> list[Notification]:
+        from appsecwatch.api.notify import list_notifications as _list
+        rows = await asyncio.to_thread(_list, request.app.state.db,
+                                       unread_only=unread_only, limit=limit)
+        return [Notification(**r) for r in rows]
+
+    @app.post("/notifications/read", dependencies=[Depends(require_api_key)])
+    async def mark_notifications_read(request: Request,
+                                      id: str | None = Query(default=None)):
+        from appsecwatch.api.notify import mark_read as _mark
+        n = await asyncio.to_thread(_mark, request.app.state.db, id)
+        return {"marked": n}
 
     # ----- nuclei template catalog ---------------------------------------- #
     @app.get("/nuclei/templates", dependencies=[Depends(require_api_key)])
@@ -782,6 +865,10 @@ def create_app(config: ServerConfig) -> FastAPI:
     assets = AssetManager(db)
     history = ScanHistory(db)
     suppressions = SuppressionManager(db)
+    finding_state = FindingStateManager(db)
+    search = FTSIndex(db)
+    assets.search = search   # keep assets_fts in sync on UI CRUD (not just scan-end)
+    notifier = Notifier.from_config(db, config.notifier)
     catalog = NucleiCatalog(db)
     custom_templates = CustomTemplateManager(db, catalog=catalog)
     scan_templates = ScanTemplateManager(db)
@@ -791,7 +878,8 @@ def create_app(config: ServerConfig) -> FastAPI:
         app.state.config = config
         app.state.manager = JobManager(
             config, asset_manager=assets, history=history, suppressions=suppressions,
-            nuclei_custom=custom_templates,
+            nuclei_custom=custom_templates, finding_state=finding_state,
+            search=search, notifier=notifier,
         )
         await app.state.manager.start()
         app.state.scheduler = ScheduleManager(db, assets, app.state.manager)
@@ -814,10 +902,17 @@ def create_app(config: ServerConfig) -> FastAPI:
     app.state.assets = assets
     app.state.history = history
     app.state.suppressions = suppressions
+    app.state.finding_state = finding_state
+    app.state.search = search
+    app.state.notifier = notifier
+    app.state.db = db
     app.state.catalog = catalog
     app.state.custom_templates = custom_templates
     app.state.scan_templates = scan_templates
     _install(app, config)
+    # Compress responses (esp. the large /assets JSON) on the wire. Standalone
+    # has routes at root, so one layer here covers the whole app.
+    app.add_middleware(GZipMiddleware, minimum_size=500)
     return app
 
 
@@ -827,11 +922,17 @@ class _SPAStaticFiles(StaticFiles):
 
     async def get_response(self, path, scope):
         try:
-            return await super().get_response(path, scope)
+            response = await super().get_response(path, scope)
         except StarletteHTTPException as exc:
             if exc.status_code == 404:
                 return await super().get_response("index.html", scope)
             raise
+        # Next.js content-hashes filenames under _next/static, so those assets are
+        # immutable by name → cache them for a year (repeat visits skip re-download).
+        # index.html / other paths keep the default (revalidated) caching.
+        if path.startswith("_next/static"):
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return response
 
 
 def create_combined_app(config: ServerConfig, ui_dir: str | Path) -> FastAPI:
@@ -841,6 +942,10 @@ def create_combined_app(config: ServerConfig, ui_dir: str | Path) -> FastAPI:
     assets = AssetManager(db)
     history = ScanHistory(db)
     suppressions = SuppressionManager(db)
+    finding_state = FindingStateManager(db)
+    search = FTSIndex(db)
+    assets.search = search   # keep assets_fts in sync on UI CRUD (not just scan-end)
+    notifier = Notifier.from_config(db, config.notifier)
     catalog = NucleiCatalog(db)
     custom_templates = CustomTemplateManager(db, catalog=catalog)
     scan_templates = ScanTemplateManager(db)
@@ -856,6 +961,10 @@ def create_combined_app(config: ServerConfig, ui_dir: str | Path) -> FastAPI:
     api_app.state.assets = assets
     api_app.state.history = history
     api_app.state.suppressions = suppressions
+    api_app.state.finding_state = finding_state
+    api_app.state.search = search
+    api_app.state.notifier = notifier
+    api_app.state.db = db
     api_app.state.catalog = catalog
     api_app.state.custom_templates = custom_templates
     api_app.state.scan_templates = scan_templates
@@ -867,7 +976,8 @@ def create_combined_app(config: ServerConfig, ui_dir: str | Path) -> FastAPI:
         # and attach it to the sub-app's state (where the route handlers read it).
         api_app.state.manager = JobManager(
             config, asset_manager=assets, history=history, suppressions=suppressions,
-            nuclei_custom=custom_templates,
+            nuclei_custom=custom_templates, finding_state=finding_state,
+            search=search, notifier=notifier,
         )
         await api_app.state.manager.start()
         api_app.state.scheduler = ScheduleManager(db, assets, api_app.state.manager)
@@ -880,6 +990,10 @@ def create_combined_app(config: ServerConfig, ui_dir: str | Path) -> FastAPI:
 
     parent = FastAPI(title="AppSecWatch", version=__version__, lifespan=lifespan,
                      docs_url=None, redoc_url=None, openapi_url=None)
+    # One gzip layer on the parent covers BOTH the static UI mount (the ~1.4 MB of
+    # JS/CSS) and the mounted /api sub-app JSON. Do NOT also add it to api_app or
+    # it would double-encode /api responses.
+    parent.add_middleware(GZipMiddleware, minimum_size=500)
     parent.mount("/api", api_app)
     parent.mount("/", _SPAStaticFiles(directory=str(ui_dir), html=True), name="ui")
     return parent

@@ -3,7 +3,7 @@
 import * as React from "react";
 import { Wifi, WifiOff, Loader2 } from "lucide-react";
 import { api, getApiBase } from "@/lib/api";
-import { useMounted } from "@/lib/hooks";
+import { useMounted, usePoll } from "@/lib/hooks";
 import { cn } from "@/lib/utils";
 import {
   Tooltip,
@@ -14,29 +14,11 @@ import {
 /** Pings /healthz periodically; shows a colored connectivity chip. */
 export function ApiStatus() {
   const mounted = useMounted();
-  const [status, setStatus] = React.useState<"loading" | "up" | "down">("loading");
-  const [version, setVersion] = React.useState<string | null>(null);
-
-  React.useEffect(() => {
-    let cancelled = false;
-    const check = async () => {
-      try {
-        const h = await api.health();
-        if (!cancelled) {
-          setStatus("up");
-          setVersion(h.version);
-        }
-      } catch {
-        if (!cancelled) setStatus("down");
-      }
-    };
-    check();
-    const t = setInterval(check, 15000);
-    return () => {
-      cancelled = true;
-      clearInterval(t);
-    };
-  }, []);
+  // usePoll gives us tab-visibility gating for free (no pings while backgrounded).
+  const { data, error } = usePoll<{ status: string; version: string }>(
+    () => api.health(), { intervalMs: 15000 });
+  const status: "loading" | "up" | "down" = error ? "down" : data ? "up" : "loading";
+  const version = data?.version ?? null;
 
   if (!mounted) return null;
 

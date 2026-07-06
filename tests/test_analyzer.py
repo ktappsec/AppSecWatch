@@ -313,35 +313,41 @@ def _ai_resp(*findings):
     return AIResponse(findings=[AIFinding(**f) for f in findings])
 
 
-def test_ai_finding_gets_stable_check_id():
+def test_ai_finding_gets_class_derived_check_id():
+    # Identity keys on the controlled-taxonomy CLASS (source.class), not the title.
     resp = _ai_resp({"type": "cookie-missing-httponly-flag", "severity": "medium",
+                     "class": "headers.cookie-security",
                      "title": "Session cookie missing HttpOnly", "evidence": {"cookie": "JSESSIONID"}})
     out = analyzer._ai_findings_to_findings("h", "ai_headers", resp)
     assert len(out) == 1
-    # The grouping id is derived from the TITLE (cross-host-stable), not the type.
-    assert out[0].check_id == "ai_headers.session-cookie-missing-httponly"
-    assert out[0].group_key == "ai_headers.session-cookie-missing-httponly"
+    assert out[0].check_id == "ai_headers.headers.cookie-security"
+    assert out[0].group_key == "ai_headers.headers.cookie-security"
+    assert out[0].finding_class == "headers.cookie-security"
 
 
-def test_ai_finding_same_title_collapses_despite_differing_type():
-    """Regression: the per-host LLM calls keep the human title identical but can
-    emit a different `type` slug. Grouping on the title (not the type) keeps the
-    two visibly-identical findings on one key so they collapse to one report row."""
-    title = "Third-party script loaded without Subresource Integrity (SRI)"
-    a = analyzer._ai_findings_to_findings(
-        "apex.com", "ai_supply_chain", _ai_resp({"type": "missing-sri", "severity": "medium", "title": title}))
-    b = analyzer._ai_findings_to_findings(
-        "www.apex.com", "ai_supply_chain", _ai_resp({"type": "sri-not-applied", "severity": "medium", "title": title}))
-    assert a[0].group_key == b[0].group_key      # same title → same key → one row
+def test_ai_finding_same_class_collapses_despite_differing_title():
+    """The per-scan/host LLM calls drift the title/type, but the fixed CLASS keeps
+    two visibly-identical findings on one key → one report row + cross-scan match."""
+    a = analyzer._ai_findings_to_findings("apex.com", "ai_supply_chain", _ai_resp(
+        {"type": "missing-sri", "class": "supply.sri-missing", "severity": "medium",
+         "title": "Third-party script loaded without SRI"}))
+    b = analyzer._ai_findings_to_findings("www.apex.com", "ai_supply_chain", _ai_resp(
+        {"type": "sri-not-applied", "class": "supply.sri-missing", "severity": "medium",
+         "title": "Script has no integrity attribute"}))
+    assert a[0].group_key == b[0].group_key == "ai_supply_chain.supply.sri-missing"
 
 
-def test_ai_check_id_slugifies_punctuation_and_case():
-    assert analyzer._ai_check_id("ai_headers", "Session cookies lack SameSite attribute") == \
-        "ai_headers.session-cookies-lack-samesite-attribute"
-    assert analyzer._ai_check_id("ai_headers", "  ") is None       # blank → None
-    # Very long titles are length-capped (still deterministic + collapsing).
-    long_id = analyzer._ai_check_id("ai_supply_chain", "x " * 80)
-    assert long_id is not None and len(long_id.split(".", 1)[1]) <= 80
+def test_ai_check_id_joins_source_and_class():
+    assert analyzer._ai_check_id("ai_headers", "csp.unsafe-inline") == "ai_headers.csp.unsafe-inline"
+
+
+def test_ai_invalid_class_coerced_to_valid_taxonomy_member():
+    from appsecwatch.audit.taxonomy import FINDING_CLASSES
+    # Model emits an out-of-vocab class + a title with a mappable keyword → coerced.
+    resp = _ai_resp({"type": "x", "class": "not-real", "severity": "high",
+                     "title": "Reflected XSS in search"})
+    out = analyzer._ai_findings_to_findings("h", "ai_headers", resp)
+    assert out[0].finding_class in FINDING_CLASSES
 
 
 def test_ai_nonfinding_types_dropped():

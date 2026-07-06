@@ -9,10 +9,11 @@ import { api } from "@/lib/api";
 import { useHotkey } from "@/lib/hooks";
 import { rootsLabel } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import type { Asset, JobStatus } from "@/lib/types";
+import type { JobStatus, SearchResults } from "@/lib/types";
 
 const ROUTES = [
   { label: "Attack surface", href: "/", kw: "dashboard home overview" },
+  { label: "Analytics", href: "/analytics", kw: "trends charts posture" },
   { label: "Inventory", href: "/assets", kw: "assets hosts" },
   { label: "Audits", href: "/scans", kw: "scans" },
   { label: "New audit", href: "/scans/new", kw: "scan run" },
@@ -30,7 +31,7 @@ export function CommandPalette() {
   const router = useRouter();
   const [open, setOpen] = React.useState(false);
   const [q, setQ] = React.useState("");
-  const [assets, setAssets] = React.useState<Asset[]>([]);
+  const [results, setResults] = React.useState<SearchResults>({ assets: [], findings: [] });
   const [scans, setScans] = React.useState<JobStatus[]>([]);
 
   useHotkey("k", () => setOpen((o) => !o));
@@ -38,9 +39,20 @@ export function CommandPalette() {
   React.useEffect(() => {
     if (!open) return;
     setQ("");
-    api.listAssets({}).then(setAssets).catch(() => {});
+    setResults({ assets: [], findings: [] });
     api.listScans({ limit: 20 }).then((r) => setScans(r.jobs)).catch(() => {});
   }, [open]);
+
+  // Server-side all-in-one search (FTS5): assets by fqdn/tech/endpoint/profile +
+  // findings by title/host/category. Debounced.
+  React.useEffect(() => {
+    const ql = q.trim();
+    if (!ql) { setResults({ assets: [], findings: [] }); return; }
+    const h = setTimeout(() => {
+      api.search(ql, { limit: 8 }).then(setResults).catch(() => {});
+    }, 160);
+    return () => clearTimeout(h);
+  }, [q]);
 
   const go = (href: string) => { setOpen(false); router.push(href); };
 
@@ -49,14 +61,18 @@ export function CommandPalette() {
     .filter((r) => !ql || r.label.toLowerCase().includes(ql) || r.kw.includes(ql))
     .map((r) => ({ key: `r:${r.href}`, label: r.label, href: r.href }));
 
-  const assetRows: Row[] = (ql
-    ? assets.filter((a) => a.fqdn.toLowerCase().includes(ql)).slice(0, 8)
-    : []
-  ).map((a) => ({
+  const assetRows: Row[] = results.assets.map((a) => ({
     key: `a:${a.fqdn}`,
     label: <span className="font-mono text-[13px]">{a.fqdn}</span>,
     href: `/assets?q=${encodeURIComponent(a.fqdn)}`,
     hint: a.group || undefined,
+  }));
+
+  const findingRows: Row[] = results.findings.map((f) => ({
+    key: `f:${f.fingerprint}`,
+    label: <span className="text-[13px]">{f.title}</span>,
+    href: `/assets?q=${encodeURIComponent(f.host)}`,
+    hint: <span className="font-mono text-[11px]">{f.host}</span>,
   }));
 
   const scanRows: Row[] = (ql
@@ -72,6 +88,7 @@ export function CommandPalette() {
   const groups: { title: string; rows: Row[] }[] = [
     { title: "Go to", rows: routeRows },
     { title: "Assets", rows: assetRows },
+    { title: "Findings", rows: findingRows },
     { title: ql ? "Matching audits" : "Recent audits", rows: scanRows },
   ].filter((g) => g.rows.length);
 

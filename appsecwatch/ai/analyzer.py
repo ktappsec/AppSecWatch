@@ -42,6 +42,7 @@ from appsecwatch.models import (
     PageSignals,
 )
 from appsecwatch.audit.cookies import is_infra_cookie
+from appsecwatch.audit.taxonomy import classify
 from appsecwatch.util.domains import etld_plus_one, host_to_filename
 
 _JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(\{.*\})\s*```", re.DOTALL)
@@ -211,14 +212,14 @@ def _ai_slug(text: str) -> str:
     return _AI_CHECK_SLUG_RE.sub("-", (text or "").strip().lower()).strip("-")
 
 
-def _ai_check_id(source: str, title: str) -> str | None:
-    """Stable per-issue id for an AI finding, derived from its TITLE (slugified,
-    length-capped). Two hosts reporting the same issue get the same title → the
-    same id → they collapse to one grouped row. (Deriving it from the model's
-    `type` tag instead splits them whenever the LLM varies the slug between the
-    independent per-host calls.) Blank title → None."""
-    slug = _ai_slug(title)[:80].strip("-")
-    return f"{source}.{slug}" if slug else None
+def _ai_check_id(source: str, finding_class: str) -> str:
+    """Stable per-issue id for an AI finding, derived from its controlled-taxonomy
+    CLASS (source.class). Two hosts — or two scans — reporting the same issue get
+    the same class → the same id → they collapse to one grouped row and correlate
+    across scans. (Deriving it from the model's free-text title/type instead splits
+    them whenever the LLM varies the wording between the independent per-host/scan
+    calls — the regression this replaced.)"""
+    return f"{source}.{finding_class}"
 
 
 def _ai_evidence_cookie(ev: dict[str, Any]) -> str | None:
@@ -243,15 +244,24 @@ def _ai_findings_to_findings(host: str, source: str, ai_resp: AIResponse) -> lis
         cookie = _ai_evidence_cookie(f.evidence)
         if cookie and is_infra_cookie(cookie):
             continue
-        out.append(Finding(
+        ev = f.evidence | {"type": f.type}
+        if f.finding_class:
+            ev = ev | {"class": f.finding_class}   # honored by classify() when valid
+        finding = Finding(
             source=source,  # type: ignore[arg-type]
             host=host,
             severity=f.severity,
             title=f.title,
             description=f.description,
-            evidence=f.evidence | {"type": f.type},
-            check_id=_ai_check_id(source, f.title),
-        ))
+            evidence=ev,
+        )
+        # Anchor identity on the controlled taxonomy class (coerces an out-of-vocab
+        # or missing class), not the drifting title.
+        cat, cls = classify(finding)
+        finding.finding_class = cls
+        finding.category = cat
+        finding.check_id = _ai_check_id(source, cls)
+        out.append(finding)
     return out
 
 
@@ -264,6 +274,7 @@ async def profile_all(
     prompt_overrides: Mapping[str, str] | None = None,
     surface_by_host: dict[str, dict] | None = None,
     rendered_by_host: dict[str, str] | None = None,
+    language: str = "en",
 ) -> dict[str, AppProfile]:
     """Infer an AppProfile per host from PageSignals. Writes 03_ai/profile/<host>.json.
 
@@ -285,6 +296,7 @@ async def profile_all(
                 signals, prompt_overrides,
                 rendered_text=(rendered_by_host or {}).get(host),
                 surface=(surface_by_host or {}).get(host),
+                language=language,
             )
             result = await _validated_call(
                 client, system, user, AppProfile, log, f"profile[{host}]"
@@ -313,6 +325,7 @@ async def summarize_run(
     cfg: LLMConfig,
     log: RunLogger,
     prompt_overrides: Mapping[str, str] | None = None,
+    language: str = "en",
 ) -> ExecutiveSummary:
     """ONE whole-run executive-narrative call (the `ai.summary` capability).
 
@@ -324,7 +337,8 @@ async def summarize_run(
     (else the base model)."""
     client = LLMClient(cfg)
     try:
-        system, user = build_summary_prompt(posture, counts, scale, risks, prompt_overrides)
+        system, user = build_summary_prompt(posture, counts, scale, risks, prompt_overrides,
+                                             language=language)
         return await _validated_call(client, system, user, ExecutiveSummary, log, "summary")
     finally:
         await client.close()

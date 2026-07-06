@@ -29,6 +29,25 @@ export const SOURCE_LABEL: Record<string, string> = {
   ai_supply_chain: "AI supply-chain",
 };
 
+// Display labels for the controlled-taxonomy categories (mirror audit/taxonomy.py
+// CATEGORY_LABELS). Used to group findings into collapsible category sections.
+export const CATEGORY_LABEL: Record<string, string> = {
+  transport: "Transport & TLS",
+  headers: "Security Headers",
+  csp: "Content Security Policy",
+  auth: "Authentication & Session",
+  injection: "Injection & Input Validation",
+  exposure: "Access Control & Exposure",
+  supply: "Supply Chain & Dependencies",
+  infra: "Infrastructure & Takeover",
+  disclosure: "Information Disclosure",
+  crypto: "Cryptography & Secrets",
+  other: "Other",
+};
+const CATEGORY_ORDER = Object.keys(CATEGORY_LABEL);
+// Past this many distinct issues, collapse categories by default for density.
+const COLLAPSE_THRESHOLD = 12;
+
 /** The stable suppression key for a finding — mirrors the engine's finding_key. */
 export function findingKey(f: Finding): string {
   if (f.check_id) return f.check_id;
@@ -59,6 +78,7 @@ export function FindingsTable({
 }) {
   const [sev, setSev] = React.useState<Severity | "all">("all");
   const [expanded, setExpanded] = React.useState<Set<string>>(new Set());
+  const [collapsedCats, setCollapsedCats] = React.useState<Set<string>>(new Set());
   // Optimistic local suppression: a manual-suppress call re-fetches nothing, so
   // we hide the row immediately. A global key hides every host; a host key hides
   // just that host. Cleared naturally when the parent hands us fresh findings.
@@ -134,6 +154,40 @@ export function FindingsTable({
     return [...m.values()];
   }, [filtered]);
 
+  // Category tier: bucket the (already host-collapsed) issue groups into their
+  // taxonomy category, so a big scan reads as a handful of collapsible sections.
+  const byCategory = React.useMemo(() => {
+    const ord = (s: string) => SEVERITY_ORDER.indexOf(s as Severity);
+    const m = new Map<string, { id: string; label: string; groups: typeof groups; count: number; worst: number }>();
+    for (const g of groups) {
+      const cat = (g.rep.category as string) || "other";
+      const e = m.get(cat) ?? { id: cat, label: CATEGORY_LABEL[cat] ?? cat, groups: [], count: 0, worst: 99 };
+      e.groups.push(g);
+      e.count += g.count;
+      e.worst = Math.min(e.worst, ord(g.rep.severity));
+      m.set(cat, e);
+    }
+    // order: by worst severity, then canonical category order
+    return [...m.values()].sort(
+      (a, b) => a.worst - b.worst || CATEGORY_ORDER.indexOf(a.id) - CATEGORY_ORDER.indexOf(b.id)
+    );
+  }, [groups]);
+
+  // Default: collapse every category once the table is large (density), expand
+  // when small. Re-evaluated whenever the finding set changes.
+  React.useEffect(() => {
+    if (groups.length > COLLAPSE_THRESHOLD) setCollapsedCats(new Set(byCategory.map((c) => c.id)));
+    else setCollapsedCats(new Set());
+  }, [findings, groups.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const toggleCat = (id: string) =>
+    setCollapsedCats((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
   if (visible.length === 0 && suppressed.length === 0) {
     return (
       <div className="flex flex-col items-center gap-2 py-12 text-center">
@@ -180,7 +234,32 @@ export function FindingsTable({
           </TableRow>
         </TableHeader>
         <TableBody>
-          {groups.map((g) => {
+          {byCategory.map((cat) => {
+            const catOpen = !collapsedCats.has(cat.id);
+            const colSpanAll = onSuppress ? 7 : 6;
+            return (
+              <React.Fragment key={`cat-${cat.id}`}>
+                <TableRow
+                  className="cursor-pointer bg-secondary/40 hover:bg-secondary/50"
+                  onClick={() => toggleCat(cat.id)}
+                >
+                  <TableCell colSpan={colSpanAll} className="py-2">
+                    <div className="flex items-center gap-2 text-xs font-semibold">
+                      {catOpen ? (
+                        <ChevronDown className="h-4 w-4" />
+                      ) : (
+                        <ChevronRight className="h-4 w-4" />
+                      )}
+                      <span>{cat.label}</span>
+                      <span className="font-normal text-muted-foreground">
+                        · {cat.groups.length} issue{cat.groups.length === 1 ? "" : "s"} · {cat.count}{" "}
+                        finding{cat.count === 1 ? "" : "s"}
+                      </span>
+                    </div>
+                  </TableCell>
+                </TableRow>
+                {catOpen &&
+                  cat.groups.map((g) => {
             const canExpand = g.hosts.length > 0;
             const isOpen = expanded.has(g.id);
             const cols = onSuppress ? 7 : 6;
@@ -283,6 +362,9 @@ export function FindingsTable({
                     </TableCell>
                   </TableRow>
                 )}
+              </React.Fragment>
+            );
+                  })}
               </React.Fragment>
             );
           })}

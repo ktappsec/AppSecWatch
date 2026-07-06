@@ -18,9 +18,14 @@ class ReportStage(Stage):
     """Renders report.html from the accumulated ScanState."""
     name = "report"
 
-    def __init__(self, run_meta: dict, versions: dict) -> None:
+    def __init__(self, run_meta: dict, versions: dict,
+                 prior_open: set[str] | None = None,
+                 report_history: list[dict] | None = None) -> None:
         self.run_meta = run_meta
         self.versions = versions
+        # Cross-scan data injected by the server (None on CLI → note/trend degrade).
+        self.prior_open = prior_open
+        self.report_history = report_history
 
     async def run(self, state, run_dir, cfg, ipinfo, log):
         # Update finished timestamp + duration at render time. (Previously the
@@ -60,6 +65,8 @@ class ReportStage(Stage):
             summary=summary,
             report_cfg=getattr(cfg, "report", None),
             exec_summary=state.exec_summary,
+            prior_open=self.prior_open,
+            report_history=self.report_history,
         )
         render_report(context, run_dir / "report.html")
         # The executive one-pager shares the context (deterministic core + optional

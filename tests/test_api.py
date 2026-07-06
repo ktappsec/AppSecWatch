@@ -1004,3 +1004,78 @@ def test_risk_score_monotonic_by_dominant_severity():
     # volume raises the score within a band but never past 100
     assert risk_score({"critical": 20, "high": 30}) <= 100
     assert risk_score({"high": 5}) >= high
+
+
+# --------------------------------------------------------------------------- #
+# Cross-scan finding state / search / notifications / analytics (Phase 4)
+# --------------------------------------------------------------------------- #
+def _seed_finding(client, host="app.example.com", scan="s1"):
+    f = Finding(source="headers", host=host, severity="high", title="Missing HSTS",
+                check_id="hsts.missing")
+    from appsecwatch.audit.taxonomy import classify_findings
+    classify_findings([f])
+    client.app.state.finding_state.sync(
+        [f], scanned_hosts={host}, coverage={"headers": {"ran": True}},
+        group=None, scan_id=scan,
+    )
+    return f
+
+
+def test_finding_state_list_and_patch(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        _seed_finding(client)
+        rows = client.get("/finding-state", headers=H).json()
+        assert len(rows) == 1
+        fp = rows[0]["fingerprint"]
+        assert rows[0]["finding_class"] == "headers.hsts-missing"
+        assert rows[0]["category"] == "headers"
+        # patch tags + status
+        r = client.patch(f"/finding-state/{fp}", json={"tags": ["sent-to-dev"],
+                                                       "status": "accepted"}, headers=H)
+        assert r.status_code == 200
+        body = r.json()
+        assert body["tags"] == ["sent-to-dev"] and body["status"] == "accepted"
+        # filter by status
+        acc = client.get("/finding-state?status=accepted", headers=H).json()
+        assert len(acc) == 1
+
+
+def test_analytics_shape(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        _seed_finding(client, host="a.example.com")
+        _seed_finding(client, host="b.example.com")
+        a = client.get("/analytics", headers=H).json()
+        assert a["open_total"] == 2
+        assert a["by_category"]["headers"] == 2
+        assert a["by_severity"]["high"] == 2
+        assert a["widespread"] and a["widespread"][0]["host_count"] == 2
+
+
+def test_search_finds_asset_and_finding(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        # seed an asset + index it, plus a finding
+        client.post("/assets", json={"fqdn": "portal.example.com", "group": "corp"}, headers=H)
+        row = client.app.state.assets.get("portal.example.com")
+        client.app.state.search.reindex_asset(row)
+        f = _seed_finding(client, host="portal.example.com")
+        client.app.state.search.index_findings("s1", [f], {"portal.example.com"})
+        res = client.get("/search?q=portal", headers=H).json()
+        assert any(a["fqdn"] == "portal.example.com" for a in res["assets"])
+        res2 = client.get("/search?q=hsts", headers=H).json()
+        assert res2["findings"] or res2["assets"]  # finding matched (or degraded)
+
+
+def test_notifications_list_and_mark_read(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        from appsecwatch.api.notify import Event
+        asyncio.run(
+            client.app.state.notifier.dispatch(Event(
+                type="asset.new", title="1 new domain(s) discovered",
+                body="new.example.com", payload={"fqdns": ["new.example.com"]}))
+        )
+        rows = client.get("/notifications", headers=H).json()
+        assert len(rows) == 1 and rows[0]["type"] == "asset.new"
+        assert rows[0]["payload"]["fqdns"] == ["new.example.com"]
+        n = client.post("/notifications/read", headers=H).json()
+        assert n["marked"] == 1
+        assert client.get("/notifications?unread_only=true", headers=H).json() == []

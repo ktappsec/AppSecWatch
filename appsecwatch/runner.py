@@ -130,6 +130,8 @@ async def _run(
     start_msg: str,
     state: ScanState | None = None,
     suppressions: set[str] | None = None,
+    prior_open: set[str] | None = None,
+    report_history: list[dict] | None = None,
 ) -> Path:
     """Shared run spine.
 
@@ -172,7 +174,8 @@ async def _run(
     try:
         if state is None:
             state = ScanState()
-        report_stage = ReportStage(run_meta, versions)
+        report_stage = ReportStage(run_meta, versions, prior_open=prior_open,
+                                   report_history=report_history)
         compress_stage = CompressStage() if compress else None
         exec_pdf_stage: Stage | None = None
         if cfg.report.executive_pdf:
@@ -229,6 +232,8 @@ async def run_scan(
     run_dir: Path | None = None,
     state: ScanState | None = None,
     suppressions: set[str] | None = None,
+    prior_open: set[str] | None = None,
+    report_history: list[dict] | None = None,
 ) -> Path:
     """Run the full pipeline.
 
@@ -250,4 +255,5 @@ async def run_scan(
         roots_for_meta=cfg.roots,
         start_msg=f"AppSecWatch v{__version__} run started → {run_dir}",
         state=state, suppressions=suppressions,
+        prior_open=prior_open, report_history=report_history,
     )

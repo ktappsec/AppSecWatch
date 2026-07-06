@@ -67,8 +67,10 @@ def test_sync_inherits_group_and_keeps_imported(tmp_path):
         _ta("special.kuveytturk.com.tr"),                          # imported → keep Special
         _ta("ext.zendesk.com"),                                    # off-root → no group
     ]
-    n = am.sync_discovered(triaged, ["kuveytturk.com.tr"], "S1", group=None)
+    n, new_fqdns = am.sync_discovered(triaged, ["kuveytturk.com.tr"], "S1", group=None)
     assert n == 4
+    # Only the two NOT already in the inventory (pre-imported) count as new domains.
+    assert set(new_fqdns) == {"app.kuveytturk.com.tr", "ext.zendesk.com"}
     root = am.get("kuveytturk.com.tr")
     assert root["source"] == "imported" and root["group"] == "Bank"
     assert root["status"] == "live" and root["last_scan_id"] == "S1"

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from appsecwatch.config import ThrottleProfile
 from appsecwatch.models import (
@@ -107,6 +107,8 @@ class JobRecord(BaseModel):
     completed_stages: list[str] = Field(default_factory=list)
     coverage: dict[str, dict] = Field(default_factory=dict)
     finding_count: int = 0
+    # Per-scan cross-scan diff {new, recurring, resolved, reopened} vs prior state.
+    diff: dict[str, int] | None = None
     error: str | None = None
     callback_url: str | None = None
     idempotency_key: str | None = None
@@ -212,6 +214,55 @@ class ScanResult(BaseModel):
     # null when the PDF wasn't rendered (toggle off / best-effort render skipped).
     executive_url: str | None = None
     executive_pdf_url: str | None = None
+    # Cross-scan diff vs the previous scan of this scope (None when no prior state).
+    diff: dict[str, int] | None = None
+
+
+# --------------------------------------------------------------------------- #
+# Cross-scan finding state / search / notifications / analytics
+# --------------------------------------------------------------------------- #
+class FindingStateRow(BaseModel):
+    """A row of the unified finding_state table (lifecycle + tags + suppression)."""
+    model_config = ConfigDict(extra="ignore")
+    fingerprint: str
+    source: str | None = None
+    host: str | None = None
+    group_key: str | None = None
+    finding_class: str | None = None
+    category: str | None = None
+    severity: str | None = None
+    title: str | None = None
+    status: str = "open"
+    tags: list[str] = Field(default_factory=list)
+    reason: str = ""
+    consecutive_absent: int = 0
+    first_seen_scan: str | None = None
+    last_seen_scan: str | None = None
+    group: str | None = None
+
+
+class FindingStatePatch(BaseModel):
+    """Partial update: set freeform tags and/or the lifecycle status."""
+    tags: list[str] | None = None
+    status: Literal["open", "resolved", "suppressed", "accepted"] | None = None
+
+
+class Notification(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str
+    type: str
+    title: str
+    body: str = ""
+    payload: dict[str, Any] = Field(default_factory=dict)
+    group: str | None = None
+    scan_id: str | None = None
+    read: int = 0
+    created_at: str | None = None
+
+
+class SearchResults(BaseModel):
+    assets: list[dict[str, Any]] = Field(default_factory=list)
+    findings: list[dict[str, Any]] = Field(default_factory=list)
 
 
 # --------------------------------------------------------------------------- #
