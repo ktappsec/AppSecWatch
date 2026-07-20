@@ -24,6 +24,7 @@ export const SOURCE_LABEL: Record<string, string> = {
   headers: "headers",
   csp: "csp",
   js_lib: "JS library",
+  secret: "secret",
   zap: "ZAP",
   ai_headers: "AI headers",
   ai_supply_chain: "AI supply-chain",

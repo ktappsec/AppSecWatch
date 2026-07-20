@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from appsecwatch.audit.liveness import classify_assessability
 from appsecwatch.config import HttpxConfig
 from appsecwatch.logging import RunLogger
 from appsecwatch.models import LiveWebServer, PageSignals
@@ -34,17 +35,20 @@ def parse_httpx_records(
         if not host:
             from urllib.parse import urlparse
             host = (urlparse(url).hostname or obj.get("host") or "").lower().rstrip(".")
-        live.append(
-            LiveWebServer(
-                url=url,
-                host=host,
-                status_code=obj.get("status_code") or obj.get("status-code"),
-                title=obj.get("title"),
-                tech=list(obj.get("tech") or obj.get("technologies") or []),
-            )
+        server = LiveWebServer(
+            url=url,
+            host=host,
+            status_code=obj.get("status_code") or obj.get("status-code"),
+            title=obj.get("title"),
+            tech=list(obj.get("tech") or obj.get("technologies") or []),
         )
         if host:
-            signals[host] = parse_page_signals(obj, host)
+            sig = parse_page_signals(obj, host)
+            signals[host] = sig
+            # Stamp assessability from the captured signals (5xx/no-response/WAF-block
+            # → not a real application surface; its findings are suppressed downstream).
+            server.assessed, server.not_assessed_reason = classify_assessability(sig)
+        live.append(server)
     return live, signals
 
 

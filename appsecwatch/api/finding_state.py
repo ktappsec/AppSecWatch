@@ -230,19 +230,23 @@ class FindingStateManager:
         where: list[str] = []
         params: list[Any] = []
         if status:
-            where.append("status=?"); params.append(status)
+            where.append("fs.status=?"); params.append(status)
         if group:
-            where.append('"group"=?'); params.append(group)
+            # Resolve group from the CURRENT asset inventory (host==fqdn),
+            # falling back to the group stamped at scan time. See analytics().
+            where.append('COALESCE(a."group", fs."group")=?'); params.append(group)
         if finding_class:
-            where.append("finding_class=?"); params.append(finding_class)
+            where.append("fs.finding_class=?"); params.append(finding_class)
         if host:
-            where.append("host=?"); params.append(host)
+            where.append("fs.host=?"); params.append(host)
         clause = (" WHERE " + " AND ".join(where)) if where else ""
         order = sort if sort in (
             "last_seen_scan", "first_seen_scan", "consecutive_absent", "severity"
         ) else "last_seen_scan"
         rows = self.db.query(
-            f"SELECT * FROM finding_state{clause} ORDER BY {order} DESC LIMIT ?",
+            "SELECT fs.* FROM finding_state fs "
+            "LEFT JOIN assets a ON a.fqdn = fs.host"
+            f"{clause} ORDER BY fs.{order} DESC LIMIT ?",
             tuple(params) + (limit,),
         )
         for r in rows:
@@ -252,13 +256,24 @@ class FindingStateManager:
     def analytics(self, *, group: str | None = None) -> dict[str, Any]:
         """Posture-over-time analytics core: status/category/severity breakdowns of
         the CURRENT finding state, the most widespread issues, the oldest still-open
-        findings, and per-asset-priority open counts. Trends come from ScanHistory."""
-        where, params = "", []
-        if group:
-            where, params = ' WHERE "group"=?', [group]
+        findings, and per-asset-priority open counts. Trends come from ScanHistory.
+
+        Group filtering resolves each finding's group from the CURRENT asset
+        inventory (LEFT JOIN assets on host==fqdn), NOT the group stamped on the
+        finding at scan time. That stamped column is only populated for
+        group-targeted scans — roots/all-assets scans leave it NULL — so relying
+        on it made the group filter return nothing for those scans. Joining the
+        live inventory also means re-grouping an asset (Assets bulk bar) re-buckets
+        its findings here immediately. `COALESCE` falls back to the stamped group
+        for the rare host with no asset row."""
+        join = "FROM finding_state fs LEFT JOIN assets a ON a.fqdn = fs.host"
+        gcond = 'COALESCE(a."group", fs."group")=?'
+        params: list[Any] = [group] if group else []
         rows = self.db.query(
-            "SELECT status, category, severity, host, group_key, finding_class, title, "
-            f"first_seen_scan FROM finding_state{where}", tuple(params)
+            "SELECT fs.status, fs.category, fs.severity, fs.host, fs.group_key, "
+            f"fs.finding_class, fs.title, fs.first_seen_scan {join}"
+            + (f" WHERE {gcond}" if group else ""),
+            tuple(params),
         )
         by_status: dict[str, int] = {}
         by_category: dict[str, int] = {}
@@ -283,12 +298,11 @@ class FindingStateManager:
         longest = sorted((r for r in open_rows if r["first_seen_scan"]),
                          key=lambda r: r["first_seen_scan"])[:10]
         widespread_list = sorted(widespread.values(), key=lambda w: -len(w["hosts"]))[:10]
-        # Per-asset-priority open-finding counts (join assets on host).
+        # Per-asset-priority open-finding counts (same live-inventory join).
         prio = self.db.query(
-            "SELECT COALESCE(a.priority, 0) AS priority, COUNT(*) AS n "
-            "FROM finding_state fs LEFT JOIN assets a ON a.fqdn = fs.host "
-            f"WHERE fs.status='open'{(' AND fs.' + where[7:]) if where else ''} "
-            "GROUP BY COALESCE(a.priority, 0) ORDER BY priority DESC",
+            f"SELECT COALESCE(a.priority, 0) AS priority, COUNT(*) AS n {join} "
+            "WHERE fs.status='open'" + (f" AND {gcond}" if group else "")
+            + " GROUP BY COALESCE(a.priority, 0) ORDER BY priority DESC",
             tuple(params),
         )
         return {

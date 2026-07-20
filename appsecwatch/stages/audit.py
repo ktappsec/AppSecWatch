@@ -141,6 +141,7 @@ class CrawlerStage(Stage):
                 "headers": cfg.identity.effective_headers(),
                 "locale": cfg.identity.effective_locale(),
             },
+            scan_secrets=cfg.secrets.enabled,
         )
         # Deterministic vulnerable-JS-library scan over the captured scripts
         # (retire.js-style; offline, no extra requests).
@@ -152,6 +153,17 @@ class CrawlerStage(Stage):
                 log.info(f"js-lib findings: {len(state.js_lib_findings)}")
         except Exception as e:  # noqa: BLE001 — never fail the crawl on this
             log.warn(f"js-lib scan failed: {e}")
+        # Client-side secret exposure scan over the same captured bodies
+        # (deterministic, offline, no extra requests; masked previews only).
+        if cfg.secrets.enabled:
+            try:
+                from appsecwatch.audit.secrets import scan_secrets
+
+                state.secret_findings = scan_secrets(state.crawler_artifacts)
+                if state.secret_findings:
+                    log.info(f"secret findings: {len(state.secret_findings)}")
+            except Exception as e:  # noqa: BLE001 — never fail the crawl on this
+                log.warn(f"secret scan failed: {e}")
         # Per-host crawl failures (nav timeouts/errors).
         return StageResult(
             [(art.host, msg) for art in state.crawler_artifacts for msg in art.errors]

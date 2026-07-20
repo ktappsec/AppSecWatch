@@ -27,6 +27,7 @@ type Dict = Record<string, unknown>;
 
 const DEFAULT_SUPP: SuppressionConfig = {
   enabled: true, min_confidence: "medium", max_severity: "medium", require_profile: false,
+  protect_expected_controls: true,
 };
 
 export default function AITuningPage() {
@@ -67,6 +68,7 @@ export default function AITuningPage() {
         min_confidence: s.min_confidence || "medium",
         max_severity: s.max_severity || "medium",
         require_profile: !!s.require_profile,
+        protect_expected_controls: s.protect_expected_controls !== false,
       });
       hydratePrompts(await api.listPrompts());
       setLoaded(true);
@@ -214,6 +216,15 @@ export default function AITuningPage() {
                 onCheckedChange={(c) => setSupp({ ...supp, require_profile: c })} />
               <Label htmlFor="require-profile" className="cursor-pointer text-sm font-normal">
                 Require a usable, non-low-confidence profile before suppressing (legacy gate)
+              </Label>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <Switch id="protect-expected" checked={supp.protect_expected_controls}
+                onCheckedChange={(c) => setSupp({ ...supp, protect_expected_controls: c })} />
+              <Label htmlFor="protect-expected" className="cursor-pointer text-sm font-normal">
+                Never let the AI hide an expected control (HSTS, CSP, cookie flags) on an
+                app that handles auth, personal data, or payments
               </Label>
             </div>
 

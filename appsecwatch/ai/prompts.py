@@ -55,13 +55,14 @@ SLOT_SUMMARY_SYSTEM = "summary_system"
 # ---------------------------------------------------------------------------
 
 _SUPPLY_RESPONSE_SHAPE_HINT = """\
-Return ONLY a JSON object of this exact shape, no prose, no markdown:
+Return ONLY a JSON object of this exact shape, no prose, no markdown. Output exactly
+ONE JSON object and nothing after the final closing brace:
 {
   "findings": [
     {
       "type": "string-tag",
 """ + _CLASS_FIELD_LINE + """
-      "severity": "info" | "low" | "medium" | "high" | "critical",
+      "severity": "info" | "low" | "medium" | "high",
       "title": "Short human-readable title",
       "description": "1-3 sentence explanation",
       "evidence": {"any": "structured fields supporting the finding"}
@@ -72,13 +73,14 @@ If nothing carries real risk, return {"findings": []}.
 """
 
 _TRIAGE_RESPONSE_SHAPE_HINT = """\
-Return ONLY a JSON object of this exact shape, no prose, no markdown:
+Return ONLY a JSON object of this exact shape, no prose, no markdown. Output exactly
+ONE JSON object and nothing after the final closing brace:
 {
   "findings": [
     {
       "type": "string-tag",
 """ + _CLASS_FIELD_LINE + """
-      "severity": "info" | "low" | "medium" | "high" | "critical",
+      "severity": "info" | "low" | "medium" | "high",
       "title": "Short human-readable title",
       "description": "1-3 sentence explanation",
       "evidence": {"any": "structured fields supporting the finding"}
@@ -97,7 +99,8 @@ add and nothing to suppress, return {"findings": [], "suppressions": []}.
 """
 
 _EXEC_SUMMARY_SHAPE_HINT = """\
-Return ONLY a JSON object of this exact shape, no prose, no markdown:
+Return ONLY a JSON object of this exact shape, no prose, no markdown. Output exactly
+ONE JSON object and nothing after the final closing brace:
 {
   "posture_narrative": "2-4 plain-language sentences for a non-technical executive on the overall security posture and what it means for the business",
   "risk_notes": [
@@ -110,7 +113,8 @@ nothing to say, return {"posture_narrative": "", "risk_notes": [], "recommendati
 """
 
 _PROFILE_SHAPE_HINT = """\
-Return ONLY a JSON object of this exact shape, no prose, no markdown:
+Return ONLY a JSON object of this exact shape, no prose, no markdown. Output exactly
+ONE JSON object and nothing after the final closing brace:
 {
   "app_type": "short free-text label, e.g. 'customer login portal'",
   "audience": "public" | "internal" | "partner" | "unknown",
@@ -192,6 +196,46 @@ _TRIAGE_HARM_TEST = (
     "accepted by-design choice. Judge by harm, not by severity label or list length.\n"
 )
 
+# Anti-hallucination guard rails, shared by both triage variants. Each line exists
+# because a cross-scan audit of real runs caught the model doing exactly this: rating
+# severity off the HOSTNAME instead of the response; inventing an HSTS preload
+# threshold ("120-day minimum") to suppress a real `hsts.weak`; calling a wildcard CORS
+# header critical though browsers reject wildcard-with-credentials; and re-emitting the
+# deterministic CSP scanner's findings as its own (~69 duplicate rows).
+_TRIAGE_EVIDENCE_RULES = (
+    "  JUDGE ONLY THE OBSERVED RESPONSE — the status, headers, and finding details you "
+    "were given. NEVER infer risk from the HOSTNAME: a name like 'boa', 'admin', 'test', "
+    "'payment', 'vpn' or 'internal' tells you NOTHING about what the response is. Do not "
+    "claim a host serves plain HTTP, is internal, is unauthenticated, or is high-value "
+    "unless the evidence in front of you shows it.\n"
+    "  DO NOT INVENT standards, thresholds or version numbers. In particular, HSTS: the "
+    "ONLY correct max-age threshold is 31536000 seconds (1 year) — the HSTS-preload "
+    "minimum. There is no 120-day, 6-month or any other minimum. A max-age below "
+    "31536000 IS a real weakness: never suppress it by citing a threshold you made up.\n"
+    "  'Access-Control-Allow-Origin: *' CANNOT be combined with credentials — browsers "
+    "reject that combination outright — so a wildcard CORS header is not, on its own, an "
+    "account-takeover bug. Rate CORS on what the observed response actually exposes.\n"
+    "  CSP IS ALREADY COVERED by a dedicated deterministic scanner (missing, report-only, "
+    "unsafe-inline, unsafe-eval, wildcard and insecure-scheme sources, object-src, "
+    "base-uri). Do NOT emit any CSP finding of your own — it would duplicate a row that "
+    "already exists.\n"
+    "  Some low-value header classes (X-Content-Type-Options, Referrer-Policy, "
+    "Permissions-Policy, X-Frame-Options, missing-CSP) are decided by a deterministic "
+    "policy, not by you. They are deliberately absent from your list — do NOT add them "
+    "back as new findings.\n"
+)
+
+# Profiled-only: the model repeatedly hid the very controls the app was profiled to
+# need (HSTS on ~79 banking hosts). Python enforces this too (ai/policy.py) — the rule
+# is here so the model doesn't waste a verdict that will be declined anyway.
+_TRIAGE_SENSITIVE_RULE = (
+    "  If this app handles AUTHENTICATION, PERSONAL DATA or PAYMENTS, NEVER suppress a "
+    "finding on a control the profile lists in `expected_controls` (HSTS, "
+    "Content-Security-Policy, cookie flags, ...). Those are the controls this app is "
+    "expected to have; a gap in one is a real finding by definition, not an accepted "
+    "design choice.\n"
+)
+
 _TRIAGE_RULES = (
     "  1. SUPPRESS findings that carry no real harm under any vector (a false-positive "
     "or accepted design choice for this host) — return the finding's `ref`, your "
@@ -230,8 +274,13 @@ _TRIAGE_RULES = (
     "\"version banner is low-value, not exploitable on its own\"}]}"
 )
 
-_DEFAULT_TRIAGE_SYSTEM_DEFAULT = _TRIAGE_INTRO_DEFAULT + _TRIAGE_HARM_TEST + _TRIAGE_RULES
-_DEFAULT_TRIAGE_SYSTEM_PROFILED = _TRIAGE_INTRO_PROFILED + _TRIAGE_HARM_TEST + _TRIAGE_RULES
+_DEFAULT_TRIAGE_SYSTEM_DEFAULT = (
+    _TRIAGE_INTRO_DEFAULT + _TRIAGE_HARM_TEST + _TRIAGE_EVIDENCE_RULES + _TRIAGE_RULES
+)
+_DEFAULT_TRIAGE_SYSTEM_PROFILED = (
+    _TRIAGE_INTRO_PROFILED + _TRIAGE_HARM_TEST + _TRIAGE_EVIDENCE_RULES
+    + _TRIAGE_SENSITIVE_RULE + _TRIAGE_RULES
+)
 
 _DEFAULT_LOW_CONFIDENCE_NUDGE = (
     "\n\nNOTE: the application profile confidence is LOW — the signals were sparse. "

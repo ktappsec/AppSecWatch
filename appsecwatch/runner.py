@@ -193,15 +193,25 @@ async def _run(
                 include_exec_pdf=exec_pdf_stage,
             )
         state.coverage = coverage
+        # Liveness gate (always): suppress findings on not-assessed (blocked/error)
+        # hosts and flag a degraded run (0 live servers). Runs before manual
+        # suppression + the report so posture/counts/errors.json reflect both.
+        from appsecwatch.stages.suppress_stage import (
+            LivenessGateStage,
+            SuppressionStage,
+        )
+
+        def _insert_before_report(stage: Stage) -> None:
+            try:
+                pipeline_stages.insert(pipeline_stages.index(report_stage), stage)
+            except ValueError:
+                pipeline_stages.append(stage)
+
+        _insert_before_report(LivenessGateStage())
         # Manual suppressions (server-injected): mark matching findings just before
         # the report so the histogram + report.html reflect them.
         if suppressions:
-            from appsecwatch.stages.suppress_stage import SuppressionStage
-            supp = SuppressionStage(suppressions)
-            try:
-                pipeline_stages.insert(pipeline_stages.index(report_stage), supp)
-            except ValueError:
-                pipeline_stages.append(supp)
+            _insert_before_report(SuppressionStage(suppressions))
         _write_manifest(run_dir, coverage, only, skip)
         await execute_stages(pipeline_stages, state, run_dir, cfg, ipinfo, log)  # type: ignore[arg-type]
 

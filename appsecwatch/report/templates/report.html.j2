@@ -473,18 +473,19 @@
       {% if findings.suppressed %}
       <div class="group" data-group style="margin-top:18px;">
         <div class="grouphead" onclick="toggleGroup(this)">
-          <div><span class="name">Suppressed</span><span class="grouping">(AI: likely false-positive — excluded from counts)</span></div>
+          <div><span class="name">Suppressed</span><span class="grouping">(excluded from counts — kept in findings.json)</span></div>
           <span class="count">{{ findings.suppressed|length }} ▾</span>
         </div>
         <div class="group-rows">
           <table>
-            <thead><tr><th>Severity</th><th>Host</th><th>Title</th><th>Why suppressed (AI)</th></tr></thead>
+            <thead><tr><th>Severity</th><th>Host</th><th>Title</th><th>Suppressed by</th><th>Why</th></tr></thead>
             <tbody>
             {% for f in findings.suppressed %}
               <tr>
                 <td><span class="{{ f.severity | sev_class }}">{{ f.severity }}</span></td>
                 <td>{{ f.host }}</td>
                 <td>{{ f.title }}</td>
+                <td>{% if f.ai_verdict %}<span class="pill">{{ f.ai_verdict.source | verdict_label }}</span>{% endif %}</td>
                 <td class="evidence">{% if f.ai_verdict %}<span class="pill">conf: {{ f.ai_verdict.confidence }}</span> {{ f.ai_verdict.reason }}{% endif %}</td>
               </tr>
             {% endfor %}

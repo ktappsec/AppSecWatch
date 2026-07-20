@@ -22,8 +22,20 @@ def _make_env() -> Environment:
     def passfail_class(passed: bool) -> str:
         return "pf-pass" if passed else "pf-fail"
 
+    def verdict_label(source: str | None) -> str:
+        """Who suppressed a finding — the AI, a deterministic engine rule, or an
+        operator. Reader-facing names for AIFindingVerdict.source."""
+        return {
+            "ai_triage": "AI triage",
+            "ai_headers": "AI triage",   # legacy source name
+            "policy": "Policy (N/A here)",
+            "coverage": "Not assessed",
+            "manual": "Manual",
+        }.get(source or "", "AI triage")
+
     env.filters["sev_class"] = severity_class
     env.filters["pf_class"] = passfail_class
+    env.filters["verdict_label"] = verdict_label
     return env
 
 

@@ -44,6 +44,8 @@ class ScanState(BaseModel):
     header_findings: list[Finding] = Field(default_factory=list)
     # Vulnerable JS libraries (retire.js-style) over crawler scripts.
     js_lib_findings: list[Finding] = Field(default_factory=list)
+    # Client-side secrets exposed in JS bundles (source='secret'; masked previews).
+    secret_findings: list[Finding] = Field(default_factory=list)
     # OWASP ZAP active-scan findings (the opt-in `zap` capability; source='zap').
     zap_findings: list[Finding] = Field(default_factory=list)
 
@@ -61,6 +63,11 @@ class ScanState(BaseModel):
     # Optional AI executive-narrative overlay (set by ExecSummaryStage / ai.summary).
     # None => exec report renders its deterministic core only.
     exec_summary: ExecutiveSummary | None = None
+    # Whole-scan degraded signal: set when recon resolved live assets but httpx
+    # returned zero live servers (edge blocked the probe), so the run completed with
+    # nothing audited. Surfaced in summary/result/report and trips --strict.
+    degraded: bool = False
+    degraded_reason: str | None = None
 
     def all_findings(self) -> list[Finding]:
         """Every Finding across all sources — the single canonical collection used
@@ -71,6 +78,7 @@ class ScanState(BaseModel):
             + list(self.tls_findings)
             + list(self.header_findings)
             + list(self.js_lib_findings)
+            + list(self.secret_findings)
             + list(self.zap_findings)
             + list(self.ai_headers_findings)
             + list(self.ai_supply_findings)

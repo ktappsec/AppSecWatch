@@ -216,6 +216,7 @@ def build_executive_context(
     report_history: list[dict] | None = None,
     diff: dict[str, int] | None = None,
     language: str = "en",
+    degraded: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the executive one-pager context: deterministic core (ALWAYS complete)
     plus an optional AI prose overlay merged by stable key. `visible` MUST be the
@@ -310,6 +311,7 @@ def build_executive_context(
         "charts": charts,
         "diff": diff,
         "has_history": bool(report_history and len(report_history) >= 2),
+        "degraded": degraded or {"flag": False, "reason": None},
     }
 
 # Headers shown in the per-host presence matrix (Security Headers section).
@@ -349,12 +351,9 @@ def build_run_summary(
     `severity_histogram` and the `ScanState` liveness helpers (live/dead); the
     per-asset failures harvested into `state.errors` give truthful error counts.
     """
-    all_findings = (
-        list(state.nuclei_findings) + list(state.takeover_findings)
-        + list(state.tls_findings) + list(state.header_findings)
-        + list(state.zap_findings)
-        + list(state.ai_headers_findings) + list(state.ai_supply_findings)
-    )
+    # The canonical collection (spans js_lib + secret too) — the summary histogram
+    # must match the report's, so use the single source of truth.
+    all_findings = state.all_findings()
     # Soft-suppressed findings are excluded from the severity rollup (but kept on
     # disk + in the report's collapsible 'Suppressed' section).
     visible = [f for f in all_findings if not f.suppressed]
@@ -397,6 +396,9 @@ def build_run_summary(
         tls={"hosts": len(state.tls_reports), "ok": len(state.tls_reports) - tls_errored,
              "errored": tls_errored},
         events=ev,
+        degraded=state.degraded,
+        degraded_reason=state.degraded_reason,
+        not_assessed=sum(1 for s in state.live_servers if not s.assessed),
     )
 
 
@@ -431,6 +433,7 @@ def build_report_context(
     versions: dict[str, Any],
     header_findings: list[Finding] | None = None,
     js_lib_findings: list[Finding] | None = None,
+    secret_findings: list[Finding] | None = None,
     zap_findings: list[Finding] | None = None,
     page_signals: dict | None = None,
     tls_certs: list | None = None,
@@ -447,6 +450,7 @@ def build_report_context(
 
     header_findings = list(header_findings or [])
     js_lib_findings = list(js_lib_findings or [])
+    secret_findings = list(secret_findings or [])
     zap_findings = list(zap_findings or [])
     all_findings: list[Finding] = (
         list(nuclei_findings)
@@ -454,6 +458,7 @@ def build_report_context(
         + list(tls_findings)
         + header_findings
         + js_lib_findings
+        + secret_findings
         + zap_findings
         + list(ai_headers_findings)
         + list(ai_supply_findings)
@@ -499,6 +504,10 @@ def build_report_context(
     # injected (None on the CLI → no note). Approximate for the report note; the
     # authoritative lifecycle is persisted server-side after the run.
     diff = diff_findings(visible, prior_open, coverage) if prior_open is not None else None
+    degraded = {
+        "flag": bool(summary.degraded) if summary else False,
+        "reason": (summary.degraded_reason if summary else None),
+    }
     # Executive one-pager context (deterministic core + optional AI overlay), built
     # from the SAME `visible` list so the technical and executive views never diverge.
     executive = build_executive_context(
@@ -512,7 +521,16 @@ def build_report_context(
         report_history=report_history,
         diff=diff,
         language=language,
+        degraded=degraded,
     )
+
+    # Not-assessed hosts (blocked/error responses): listed separately so a blocked
+    # host is never mistaken for a clean one. Their findings are already suppressed.
+    not_assessed = [
+        {"host": s.host, "url": s.url, "status_code": s.status_code,
+         "reason": s.not_assessed_reason or "not assessed"}
+        for s in live_servers if not s.assessed
+    ]
 
     return {
         "run": run_meta,
@@ -521,6 +539,8 @@ def build_report_context(
         "versions": versions,
         "errors": errors,
         "summary": summary,
+        "degraded": degraded,
+        "not_assessed": not_assessed,
         "coverage": coverage,
         "coverage_strip": coverage_strip,
         "ran": {
@@ -546,6 +566,7 @@ def build_report_context(
             "headers": [f for f in header_visible if f.source == "headers"],
             "csp": [f for f in header_visible if f.source == "csp"],
             "js_lib": [f for f in js_lib_findings if not f.suppressed],
+            "secret": [f for f in secret_findings if not f.suppressed],
             "zap": [f for f in zap_findings if not f.suppressed],
             "ai_headers": ai_headers_findings,
             "ai_supply_chain": ai_supply_findings,

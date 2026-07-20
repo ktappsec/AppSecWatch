@@ -22,3 +22,17 @@
     --pass:#06795a; --fail:#b3001b;
   }
 }
+
+/* Degraded-run banner + not-assessed host section (assessability surfacing). */
+.degraded-banner {
+  border:1px solid var(--crit); border-left:4px solid var(--crit);
+  background:color-mix(in srgb, var(--crit) 12%, var(--panel));
+  color:var(--text); border-radius:6px; padding:10px 14px; margin:0 0 14px;
+  font-size:14px;
+}
+.degraded-banner strong { color:var(--crit); }
+.not-assessed .tag {
+  display:inline-block; padding:1px 6px; border-radius:4px; font-size:11px;
+  border:1px solid var(--high); color:var(--high);
+  background:color-mix(in srgb, var(--high) 10%, transparent);
+}

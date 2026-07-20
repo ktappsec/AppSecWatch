@@ -174,6 +174,7 @@ def parse_page_signals(obj: dict[str, Any], host: str) -> PageSignals:
 
     return PageSignals(
         host=host,
+        status_code=obj.get("status_code") or obj.get("status-code"),
         headers=headers,
         set_cookies=set_cookies,
         title=title or None,

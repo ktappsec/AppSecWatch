@@ -337,6 +337,7 @@ ai:
     min_confidence: medium     # low | medium | high
     max_severity: medium       # info | low | medium | high | critical
     require_profile: false
+    protect_expected_controls: true   # never hide an expected control on an auth/PII/payments app
   prompts:              # optional system-prompt overrides (null = built-in default)
     profile_system: null
     triage_system_default: null
@@ -354,6 +355,9 @@ ai:
 | `suppression.min_confidence` | enum | `medium` | Minimum AI verdict confidence to actually hide a finding. |
 | `suppression.max_severity` | enum | `medium` | Highest severity the AI may auto-hide. Findings **above** this are never offered to the AI and always stay visible + counted. |
 | `suppression.require_profile` | bool | `false` | When `true`, only hosts with a usable, non-low-confidence `AppProfile` get suppression (legacy gate). Default `false`: the profile is calibration, not a precondition. An AI degrade hides nothing either way. |
+| `suppression.protect_expected_controls` | bool | `true` | On a host whose profile says it handles **auth / PII / payments**, the AI may **not** hide a finding on a control the app is expected to have (the profile's `expected_controls`, plus HSTS / `Secure` / `HttpOnly` cookies implied for any sensitive app). The verdict is still attached, **advisory** — the finding stays visible + counted. Guards against the model talking itself past a real gap (it suppressed `hsts.weak` on banking hosts by inventing a preload threshold). See DESIGN.md §2.3.3. |
+
+**Not configurable — the deterministic triage policy** (`ai/policy.py`, DESIGN.md §2.3.3): the low-value header classes the LLM flipped on run-to-run (`clickjacking.missing`, `referrer-policy.missing`/`weak`, `permissions-policy.missing`, `xcto.missing`, `csp.missing`) are **withheld from the triage prompt entirely** and decided in Python — visible by default, auto-suppressed (verdict `source='policy'`) only on a host profiled as a **non-browser API**, where they are genuinely N/A. AI findings that duplicate the deterministic `csp` scanner are dropped at emit time.
 | `prompts.*` | str \| null | `null` | Override a built-in AI **system** prompt (slot ids mirror `appsecwatch/ai/prompts.py` `PROMPT_SLOTS`). `null`/blank = built-in default. Shape-hints + user-message assembly stay in code, so an override can change judgment but never break JSON validation. Usually edited via the UI's **AI Tuning** page. |
 
 Profiling adds one LLM call per host. Hard failures degrade to the default prompts for that host; a profile that self-reports `confidence: low` is still used but does not drive aggressive severity escalation. The profiling stage runs at the **head of the `ai-analyze` phase** (after the audit fan-out) so it can consume the crawler's rendered capture under `render: auto`/`always`; with `render: always` the crawler (the `supply-chain` capability) is **force-included** even when supply-chain analysis isn't selected. It never gates the deterministic scanners — nuclei/sslscan/crawler always run at full coverage regardless of the profile.

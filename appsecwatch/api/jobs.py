@@ -582,6 +582,7 @@ class JobManager:
         rec.completed_stages = list(state.completed_stages)
         rec.coverage = state.coverage or rec.coverage
         rec.finding_count = count_findings(state)
+        rec.degraded = state.degraded
         try:
             # The executive HTML is always written by ReportStage; expose the PDF
             # URL only when the (best-effort) PDF actually landed.

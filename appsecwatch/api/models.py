@@ -107,6 +107,10 @@ class JobRecord(BaseModel):
     completed_stages: list[str] = Field(default_factory=list)
     coverage: dict[str, dict] = Field(default_factory=dict)
     finding_count: int = 0
+    # Whole-scan degraded: httpx probed 0 live servers despite live assets (edge
+    # blocked; nothing audited). Persisted so the scan list/status never reads a
+    # blocked run as a clean, finding-free success.
+    degraded: bool = False
     # Per-scan cross-scan diff {new, recurring, resolved, reopened} vs prior state.
     diff: dict[str, int] | None = None
     error: str | None = None
@@ -144,6 +148,7 @@ class JobStatus(BaseModel):
     source: str = "manual"
     schedule_id: str | None = None
     coverage: dict[str, dict] = Field(default_factory=dict)
+    degraded: bool = False
     error: str | None = None
     links: JobLinks
 
@@ -216,6 +221,13 @@ class ScanResult(BaseModel):
     executive_pdf_url: str | None = None
     # Cross-scan diff vs the previous scan of this scope (None when no prior state).
     diff: dict[str, int] | None = None
+    # Assessability: whole-scan degraded (httpx probed 0 live servers despite live
+    # assets — edge blocked, nothing audited) + count of hosts probed but not a real
+    # application surface (blocked/error responses, findings suppressed). Lets the UI
+    # avoid showing a blocked scan as a clean success.
+    degraded: bool = False
+    degraded_reason: str | None = None
+    not_assessed: int = 0
 
 
 # --------------------------------------------------------------------------- #

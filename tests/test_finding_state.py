@@ -117,6 +117,37 @@ def test_diff_counts_new_and_recurring(tmp_path):
     assert d2["new"] == 1 and d2["recurring"] == 1
 
 
+def test_analytics_group_resolves_from_asset_inventory(tmp_path):
+    """A roots/all-assets scan stamps no group on its findings, but the group
+    filter must still attribute them via the live asset inventory (host==fqdn).
+    Regression: analytics(group=...) filtered the stamped column only and so
+    returned an empty dataset for every group on non-group-targeted scans."""
+    db = Database(tmp_path / "t.db")
+    m = FindingStateManager(db)
+    cov = {"headers": {"ran": True}}
+    # Two findings on two hosts, both synced with group=None (roots scan).
+    a = F(host="h1.example.com", check_id="hsts.missing")
+    b = F(host="h2.other.com", check_id="hsts.missing")
+    _sync(m, [a], {"h1.example.com"}, cov, "s1", group=None)
+    _sync(m, [b], {"h2.other.com"}, cov, "s1", group=None)
+    # The inventory assigns each host to a group (e.g. after CSV import / discovery).
+    db.execute('INSERT INTO assets (fqdn, "group", priority) VALUES (?, ?, ?)',
+               ("h1.example.com", "teamA", 7))
+    db.execute('INSERT INTO assets (fqdn, "group") VALUES (?, ?)',
+               ("h2.other.com", "teamB"))
+
+    assert m.analytics()["open_total"] == 2                    # unfiltered: both
+    a_stats = m.analytics(group="teamA")
+    assert a_stats["open_total"] == 1                          # resolved via join
+    assert a_stats["by_priority"] == [{"priority": 7, "open": 1}]
+    assert m.analytics(group="teamB")["open_total"] == 1
+    assert m.analytics(group="nope")["open_total"] == 0        # unknown group → empty
+
+    # The finding-state listing filters by the same resolved group.
+    assert [r["host"] for r in m.list(group="teamA")] == ["h1.example.com"]
+    assert m.list(group="teamB")[0]["host"] == "h2.other.com"
+
+
 def test_tags_roundtrip(tmp_path):
     m = FindingStateManager(Database(tmp_path / "t.db"))
     finding = F(host="h1", check_id="hsts.missing")

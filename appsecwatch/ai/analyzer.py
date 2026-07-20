@@ -29,6 +29,12 @@ from appsecwatch.ai.prompts import (
     build_supply_chain_prompt,
     build_triage_prompt,
 )
+from appsecwatch.ai.policy import (
+    POLICY_CHECK_IDS,
+    looks_like_csp,
+    policy_verdict,
+    protected_control,
+)
 from appsecwatch.ai.schemas import AIResponse
 from appsecwatch.config import LLMConfig
 from appsecwatch.logging import RunLogger
@@ -46,6 +52,13 @@ from appsecwatch.audit.taxonomy import classify
 from appsecwatch.util.domains import etld_plus_one, host_to_filename
 
 _JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(\{.*\})\s*```", re.DOTALL)
+
+# Ceiling on AI-INVENTED finding severity, per source. The model routinely inflates
+# its own findings to critical (e.g. a missing header → "critical") — a mirror of the
+# suppression ceiling that already caps what the AI may HIDE. Deterministic sources
+# keep the full range; only ai_headers/ai_supply_chain are clamped, so the AI can
+# never unilaterally drive a CRITICAL posture. See DESIGN.md / AI-layer audit.
+_AI_SEV_CEILING = {"ai_headers": "high", "ai_supply_chain": "high"}
 _CONF_RANK = {"low": 0, "medium": 1, "high": 2}
 _SEV_RANK = {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
 
@@ -70,17 +83,24 @@ ValidatedModel = TypeVar("ValidatedModel", AppProfile, AIResponse, ExecutiveSumm
 
 
 def _extract_json(text: str) -> str:
-    """Be tolerant of LLMs that wrap JSON in markdown fences."""
+    """Extract the first top-level JSON object, tolerant of markdown fences AND of
+    trailing content after the object.
+
+    Some models emit a valid object then append a second object or commentary on a
+    following line (`{...}\\n{...}`); a strict ``json.loads`` over the whole blob then
+    raises 'Extra data' and the call degrades. ``raw_decode`` parses exactly one value
+    from the first ``{`` and ignores whatever follows, recovering those responses."""
     text = text.strip()
-    if text.startswith("{") and text.endswith("}"):
-        return text
     m = _JSON_FENCE_RE.search(text)
     if m:
-        return m.group(1)
+        text = m.group(1).strip()
     start = text.find("{")
-    end = text.rfind("}")
-    if start != -1 and end != -1 and end > start:
-        return text[start:end + 1]
+    if start != -1:
+        try:
+            obj, _end = json.JSONDecoder().raw_decode(text, start)
+            return json.dumps(obj)
+        except json.JSONDecodeError:
+            pass
     return text
 
 
@@ -147,14 +167,19 @@ def _suppressable_payload(
     """Findings eligible for AI suppression (severity <= ceiling), each tagged with
     an ephemeral integer `ref` the AI references. Returns (payload, ref->finding).
 
-    Findings above the ceiling are omitted entirely — never offered to the AI, so
-    they can never be hidden, and they don't inflate the prompt.
+    Two classes of finding are omitted entirely — never offered to the AI, so they
+    can never be hidden, and they don't inflate the prompt:
+      - severity above the ceiling (`max_sev_rank`);
+      - the `POLICY_CHECK_IDS` classes, which `ai.policy` decides deterministically
+        (the LLM flipped its verdict on them run-to-run — see policy.py).
     """
     payload: list[dict[str, Any]] = []
     ref_map: dict[int, Finding] = {}
     ref = 0
     for f in findings:
         if _SEV_RANK.get(f.severity, 99) > max_sev_rank:
+            continue
+        if (f.check_id or "").strip().lower() in POLICY_CHECK_IDS:
             continue
         ref_map[ref] = f
         payload.append({
@@ -177,33 +202,65 @@ def _apply_suppressions(
     enabled: bool,
     min_confidence: str,
     require_profile: bool,
-) -> int:
+    protect_expected_controls: bool = True,
+) -> tuple[int, int]:
     """Attach AI verdicts to deterministic findings (mutates in place).
 
     A verdict is honored (finding hidden) when suppression is enabled, the AI
-    marked it suppressed with sufficient confidence, and — only when
-    `require_profile` — the host has a usable, non-low-confidence profile.
+    marked it suppressed with sufficient confidence, the finding is not a
+    protected expected control on a sensitive host (see `ai.policy`), and — only
+    when `require_profile` — the host has a usable, non-low-confidence profile.
     Otherwise the AI's opinion is attached as advisory (suppressed=False) and the
-    finding stays visible. Returns the count hidden.
+    finding stays visible. Returns (hidden, declined_as_protected).
     """
     min_rank = _CONF_RANK.get(min_confidence, 1)
     profile_ok = (not require_profile) or (
         profile is not None and profile.usable and profile.confidence != "low"
     )
     hidden = 0
+    declined = 0
     for s in suppressions:
         f = ref_map.get(s.ref)
         if f is None:
             continue
+        # On an app handling auth/PII/payments, a control the app is EXPECTED to have
+        # is never hidden on the AI's say-so (the model talked itself past `hsts.weak`
+        # on banking hosts by inventing a preload threshold). Verdict still attached,
+        # advisory — the call stays auditable.
+        control = protected_control(f, profile) if protect_expected_controls else None
         gate_ok = (
-            enabled and s.suppressed and profile_ok
+            enabled and s.suppressed and profile_ok and control is None
             and _CONF_RANK.get(s.confidence, 0) >= min_rank
         )
+        reason = s.reason
+        if control is not None and s.suppressed:
+            declined += 1
+            reason = (
+                f"AI suppression declined — {control} is an expected control on this app "
+                f"(handles auth/PII/payments). AI's reason: {s.reason or '(none given)'}"
+            )
         f.ai_verdict = AIFindingVerdict(
-            suppressed=gate_ok, confidence=s.confidence, reason=s.reason,
+            suppressed=gate_ok, confidence=s.confidence, reason=reason,
             source="ai_triage",
         )
         if gate_ok:
+            hidden += 1
+    return hidden, declined
+
+
+def _apply_policy(findings: list[Finding], profile: AppProfile | None) -> int:
+    """Deterministic verdicts for the withheld classes (`ai.policy`). Returns hidden.
+
+    These findings never reach the LLM, so this is the ONLY thing that can hide them.
+    Never overwrites an existing verdict (the liveness/coverage gate and manual
+    suppression own their findings)."""
+    hidden = 0
+    for f in findings:
+        if f.ai_verdict is not None:
+            continue
+        verdict = policy_verdict(f, profile)
+        if verdict is not None:
+            f.ai_verdict = verdict
             hidden += 1
     return hidden
 
@@ -224,15 +281,22 @@ def _ai_check_id(source: str, finding_class: str) -> str:
 
 def _ai_evidence_cookie(ev: dict[str, Any]) -> str | None:
     """Best-effort cookie NAME from an AI finding's evidence, for infra-cookie
-    filtering. `cookie`/`cookie_name`/`name` may be a bare name or a full
-    Set-Cookie string — take the token before '='."""
-    raw = ev.get("cookie_name") or ev.get("cookie") or ev.get("name")
+    filtering. The model puts the cookie under any of several keys
+    (`cookie_name`/`cookie`/`name`/`set-cookie`/`set_cookie`/`value`) as either a bare
+    name or a full Set-Cookie string — take the token before '='. Missing the
+    `set-cookie`/`value` keys let ~50 F5 infra cookies slip the drop-guard."""
+    raw = (
+        ev.get("cookie_name") or ev.get("cookie") or ev.get("name")
+        or ev.get("set-cookie") or ev.get("set_cookie") or ev.get("value")
+    )
     if not isinstance(raw, str):
         return None
     return raw.split("=", 1)[0].strip()
 
 
-def _ai_findings_to_findings(host: str, source: str, ai_resp: AIResponse) -> list[Finding]:
+def _ai_findings_to_findings(
+    host: str, source: str, ai_resp: AIResponse, *, drop_csp: bool = False
+) -> list[Finding]:
     out: list[Finding] = []
     for f in ai_resp.findings:
         # Drop AI-fabricated non-findings (positive/absence observations, analyst
@@ -244,13 +308,24 @@ def _ai_findings_to_findings(host: str, source: str, ai_resp: AIResponse) -> lis
         cookie = _ai_evidence_cookie(f.evidence)
         if cookie and is_infra_cookie(cookie):
             continue
+        # When the deterministic `csp` scanner ran, it OWNS the CSP rows. The model
+        # re-emitted them as its own findings (~69 duplicate rows in the audited runs)
+        # despite the prompt rule — this is the code-level backstop.
+        if drop_csp and looks_like_csp(f.type, f.finding_class, f.title):
+            continue
         ev = f.evidence | {"type": f.type}
         if f.finding_class:
             ev = ev | {"class": f.finding_class}   # honored by classify() when valid
+        # Clamp AI-invented severity to the per-source ceiling (backstop against the
+        # model minting its own criticals; see _AI_SEV_CEILING).
+        ceiling = _AI_SEV_CEILING.get(source)
+        severity = f.severity
+        if ceiling and _SEV_RANK.get(severity, 0) > _SEV_RANK[ceiling]:
+            severity = ceiling  # type: ignore[assignment]
         finding = Finding(
             source=source,  # type: ignore[arg-type]
             host=host,
-            severity=f.severity,
+            severity=severity,
             title=f.title,
             description=f.description,
             evidence=ev,
@@ -385,6 +460,8 @@ async def analyze_all(
     suppress_min_confidence: str = "medium",
     suppress_max_severity: str = "medium",
     require_profile: bool = False,
+    protect_expected_controls: bool = True,
+    csp_covered: bool = False,
     prompt_overrides: Mapping[str, str] | None = None,
 ) -> tuple[list[Finding], list[Finding], list[tuple[str, str]]]:
     """Run triage + supply-chain analysis per host, fanned out via semaphore.
@@ -400,6 +477,12 @@ async def analyze_all(
     `do_triage` / `do_supply` gate each analysis independently (the
     `ai.triage` / `ai.supply-chain` sub-tokens). When a half is off its prompt is
     skipped entirely — no LLM calls, no findings.
+
+    The deterministic `ai.policy` layer rides along with triage: the flip-prone
+    low-value header classes are withheld from the prompt and decided in Python,
+    and an AI verdict that would hide an expected control on an auth/PII/payments
+    host is declined (`protect_expected_controls`). `csp_covered` (the deterministic
+    `csp` scanner ran) drops AI-emitted CSP duplicates.
 
     Returns:
         (triage_findings, supply_chain_findings, call_errors). call_errors is a
@@ -425,15 +508,25 @@ async def analyze_all(
     supply_findings: list[Finding] = []
     call_errors: list[tuple[str, str]] = []
     hidden_total = 0
+    policy_hidden_total = 0
+    declined_total = 0
 
     async def per_host(host: str, w: dict[str, Any]) -> None:
-        nonlocal hidden_total
+        nonlocal hidden_total, policy_hidden_total, declined_total
         profile = profiles.get(host)
         async with sem:
             # Prompt 1 — triage: cross-source FP suppression + new header findings.
             payload, ref_map = _suppressable_payload(
                 findings_map.get(host, []), max_sev_rank
             )
+            if do_triage:
+                # Deterministic pass first: the withheld low-value header classes are
+                # decided here, not by the model (they aren't in `payload` at all).
+                # No LLM involved, so it holds even when the call below degrades.
+                if suppress:
+                    policy_hidden_total += _apply_policy(
+                        findings_map.get(host, []), profile
+                    )
             if do_triage and (w["headers"] or payload):
                 sys_msg, user_msg = build_triage_prompt(
                     w["url"], w["headers"], payload, profile, prompt_overrides
@@ -444,14 +537,19 @@ async def analyze_all(
                 t_path = triage_dir / f"{host_to_filename(host)}.json"
                 t_path.write_text(result.model_dump_json(indent=2))
                 if result.usable:
-                    triage_findings.extend(_ai_findings_to_findings(host, "ai_headers", result))
+                    triage_findings.extend(_ai_findings_to_findings(
+                        host, "ai_headers", result, drop_csp=csp_covered,
+                    ))
                     # Soft-suppress deterministic findings the AI flagged as FP
                     # (gated). A degrade never reaches here, so nothing is hidden.
-                    hidden_total += _apply_suppressions(
+                    hidden, declined = _apply_suppressions(
                         ref_map, result.suppressions, profile,
                         enabled=suppress, min_confidence=suppress_min_confidence,
                         require_profile=require_profile,
+                        protect_expected_controls=protect_expected_controls,
                     )
+                    hidden_total += hidden
+                    declined_total += declined
                 else:
                     call_errors.append((host, f"triage analysis degraded: {result.error}"))
 
@@ -479,6 +577,10 @@ async def analyze_all(
     log.info(
         f"ai: triage={len(triage_findings)} findings, supply_chain={len(supply_findings)} findings"
         + (f", {hidden_total} deterministic finding(s) suppressed" if hidden_total else "")
+        + (f", {policy_hidden_total} suppressed by policy (N/A on this app type)"
+           if policy_hidden_total else "")
+        + (f", {declined_total} AI suppression(s) declined (expected control on a "
+           f"sensitive app)" if declined_total else "")
         + (f", {len(call_errors)} degraded call(s)" if call_errors else "")
     )
     return triage_findings, supply_findings, call_errors

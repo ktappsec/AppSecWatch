@@ -31,7 +31,7 @@ def test_every_class_has_a_known_category():
     (F(source="csp", check_id="csp.unsafe-inline.script-src"), "csp.unsafe-inline"),
     (F(source="csp", check_id="csp.missing"), "csp.missing"),
     (F(source="csp", check_id="csp.wildcard.script-src"), "csp.wildcard-source"),
-    (F(source="sslscan", title="TLS: TLS 1.0 disabled", evidence={"check": "TLS 1.0 disabled"}),
+    (F(source="sslscan", title="TLS: TLS 1.0 enabled", evidence={"check": "TLS 1.0 disabled"}),
      "tls.weak-protocol"),
     (F(source="sslscan", evidence={"check": "No weak ciphers (RC4/3DES/EXPORT/NULL/anon)"}),
      "tls.weak-cipher"),

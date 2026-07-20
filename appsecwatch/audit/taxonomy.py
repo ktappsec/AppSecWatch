@@ -125,6 +125,7 @@ _SOURCE_DEFAULT: dict[str, str] = {
     "headers": "headers.info-leak-header",
     "csp": "csp.weak-directive",
     "js_lib": "supply.vulnerable-js-lib",
+    "secret": "secrets.exposed-key",
     "zap": "misc.uncategorized",
     "ai_headers": "headers.info-leak-header",
     "ai_supply_chain": "supply.untrusted-3p-script",
@@ -243,6 +244,8 @@ def classify(f: "Finding") -> tuple[str, str]:
         cls = _classify_tls(f)
     elif src == "js_lib":
         cls = "supply.vulnerable-js-lib"
+    elif src == "secret":
+        cls = "secrets.exposed-key"
     elif src == "takeover":
         cls = "infra.subdomain-takeover"
     elif src in ("nuclei", "zap"):

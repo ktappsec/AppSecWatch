@@ -57,6 +57,7 @@ class ReportStage(Stage):
             versions=self.versions,
             header_findings=state.header_findings,
             js_lib_findings=state.js_lib_findings,
+            secret_findings=state.secret_findings,
             zap_findings=state.zap_findings,
             page_signals=state.page_signals,
             tls_certs=state.tls_certs,

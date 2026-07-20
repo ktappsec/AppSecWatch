@@ -70,7 +70,7 @@ export function TLSScorecard({ reports }: { reports: TLSHostReport[] }) {
                       <X className="mt-0.5 h-3.5 w-3.5 shrink-0 text-destructive" />
                     )}
                     <span className={cn(!c.passed && "text-foreground")}>
-                      {c.name}
+                      {c.passed ? c.name : c.fail_title || c.name}
                       {c.detail && <span className="text-muted-foreground"> — {c.detail}</span>}
                     </span>
                   </li>

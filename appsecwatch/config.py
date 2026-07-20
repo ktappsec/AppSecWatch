@@ -90,6 +90,11 @@ class SuppressionConfig(BaseModel):
     # profile (the legacy gate). Default False: the profile is a calibration input,
     # not a precondition.
     require_profile: bool = False
+    # When True (default), the AI may NOT hide a finding on a control the app's profile
+    # says it should have, on a host that handles auth/PII/payments — the model hid
+    # `hsts.weak` on ~79 banking hosts by inventing a preload threshold. The verdict is
+    # still attached, advisory. See `ai/policy.py::protected_control`.
+    protect_expected_controls: bool = True
 
 
 class AIProfileConfig(BaseModel):

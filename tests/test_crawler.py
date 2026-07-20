@@ -8,7 +8,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from appsecwatch.audit.crawler import _capture_state, _dedup_by_url
+from appsecwatch.audit.crawler import (
+    _capture_state,
+    _dedup_by_url,
+    _summarize_failed_requests,
+)
 from appsecwatch.config import PlaywrightConfig
 from appsecwatch.models import CrawlerArtifact
 
@@ -36,6 +40,48 @@ class _FakePage:
 def test_dedup_by_url_preserves_order():
     out = _dedup_by_url([{"url": "a"}, {"url": "b"}, {"url": "a"}, {"url": "c"}])
     assert [d["url"] for d in out] == ["a", "b", "c"]
+
+
+def _fail(url, type="script", failure="net::ERR_ABORTED"):
+    return {"url": url, "type": type, "method": "GET", "failure": failure}
+
+
+def test_bot_blocked_crawl_surfaces_a_degraded_note():
+    """The scan-observed case: document loaded (1 resource) but every subresource
+    was aborted. Must surface a note so it's not mistaken for a script-free page."""
+    art = CrawlerArtifact(host="bank.example", url="https://bank.example")
+    art.resources = [{"url": "https://bank.example/", "type": "document", "status": 200}]
+    art.failed_requests = [_fail(f"https://bank.example/a{i}.js") for i in range(8)]
+    _summarize_failed_requests(art)
+    assert len(art.errors) == 1
+    note = art.errors[0]
+    assert "8 request(s) failed" in note
+    assert "net::ERR_ABORTED×8" in note
+    assert "bot-blocked" in note
+
+
+def test_document_failure_is_always_material():
+    """Even a single failure is surfaced when it's the document itself."""
+    art = CrawlerArtifact(host="x", url="https://x")
+    art.failed_requests = [_fail("https://x/", type="document")]
+    _summarize_failed_requests(art)
+    assert len(art.errors) == 1 and "1 request(s) failed" in art.errors[0]
+
+
+def test_a_few_blocked_trackers_stay_quiet():
+    """A healthy page with a couple of blocked trackers must NOT spam errors.json."""
+    art = CrawlerArtifact(host="x", url="https://x")
+    art.resources = [{"url": f"https://x/r{i}", "type": "script"} for i in range(40)]
+    art.failed_requests = [_fail("https://tracker.example/px.gif", type="image")]
+    _summarize_failed_requests(art)
+    assert art.errors == []
+
+
+def test_no_failures_no_note():
+    art = CrawlerArtifact(host="x", url="https://x")
+    art.resources = [{"url": "https://x/", "type": "document"}]
+    _summarize_failed_requests(art)
+    assert art.errors == []
 
 
 

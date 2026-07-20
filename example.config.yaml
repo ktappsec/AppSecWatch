@@ -97,6 +97,11 @@ ai:
     # When true, only hosts with a usable, non-low-confidence profile get
     # suppression (the legacy gate). Default false: profile is a calibration hint.
     require_profile: false
+    # On an app the profile says handles auth / personal data / payments, never let the
+    # AI hide a control that app is expected to have (HSTS, CSP, cookie flags). The
+    # verdict is still recorded, advisory. See DESIGN.md §2.3.3 — the flip-prone
+    # low-value header classes are withheld from the LLM and decided deterministically.
+    protect_expected_controls: true
 
   # Optional overrides of the built-in AI *system* prompts. null/blank = built-in
   # default (improving the default in code is picked up). Usually edited via the

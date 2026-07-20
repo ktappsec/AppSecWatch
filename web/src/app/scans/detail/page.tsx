@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { StateBadge, SeverityDot, SeverityCounts } from "@/components/badges";
+import { StateBadge, SeverityDot, SeverityCounts, DegradedBadge } from "@/components/badges";
 import { RiskGauge, type Rating } from "@/components/risk-gauge";
 import { SeverityPie } from "@/components/charts";
 import { ApiErrorState } from "@/components/api-error-state";
@@ -101,6 +101,7 @@ function ScanDetail() {
               {rootsLabel(job.roots)} <span className="font-normal text-muted-foreground">— audit</span>
             </h1>
             <StateBadge state={job.state} />
+            {(job.degraded || result?.degraded) && <DegradedBadge />}
           </div>
           <button onClick={copyId} className="inline-flex items-center gap-1.5 font-mono text-xs text-muted-foreground hover:text-foreground">
             {id} <Copy className="h-3 w-3" />
@@ -150,6 +151,31 @@ function ScanDetail() {
             <p className="text-sm font-medium text-destructive">Audit {job.state}</p>
             <p className="text-xs text-muted-foreground">{job.error}</p>
           </div>
+        </Card>
+      )}
+
+      {(job.degraded || result?.degraded) && (
+        <Card className="flex-row items-start gap-3 border-warning/40 bg-warning/10 p-4">
+          <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-warning" />
+          <div>
+            <p className="text-sm font-medium text-warning">Scan degraded — results are inconclusive</p>
+            <p className="text-xs text-muted-foreground">
+              {result?.degraded_reason ??
+                "The target edge blocked the probe: 0 live web servers were reached despite resolvable assets. A low finding count here does NOT mean the estate is clean — re-run with a gentler throttle."}
+            </p>
+          </div>
+        </Card>
+      )}
+
+      {!result?.degraded && !!result?.not_assessed && (
+        <Card className="flex-row items-start gap-3 border-warning/30 bg-warning/5 p-3">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+          <p className="text-xs text-muted-foreground">
+            <span className="font-medium text-foreground">{result.not_assessed}</span> host
+            {result.not_assessed === 1 ? "" : "s"} returned a blocked/error response and could
+            not be assessed — their findings are suppressed and excluded from the counts (see
+            the report&apos;s &ldquo;Not assessed&rdquo; section). Not the same as clean.
+          </p>
         </Card>
       )}
 

@@ -81,7 +81,11 @@ def test_triage_default_when_no_profile():
     assert "Application profile" not in user
     assert "Findings recorded by deterministic scanners" in user
     assert "suppressions" in user                  # response shape carries it
-    assert '"critical"' in user                    # severity enum lifted to critical
+    # AI-invented severity is capped: the shape hint no longer offers "critical"
+    # (the code clamps ai_headers/ai_supply_chain to high), so the model can't mint
+    # its own criticals. It is still offered up to "high".
+    assert '"critical"' not in user
+    assert '"high"' in user
 
 
 def test_triage_profiled_uses_profile_and_calibration():
@@ -158,6 +162,29 @@ def test_triage_shape_hint_keeps_real_risk_not_prefer_few():
     assert "carries real risk" in user                # keep-every-real-risk instruction
     assert "<the integer ref" not in user             # invalid-JSON placeholder removed
     assert '"ref": 0' in user                         # realistic value instead
+
+
+def test_triage_evidence_rules_guard_the_audited_hallucinations():
+    """Pass-2 calibration: each rule maps to a defect a real cross-scan audit caught."""
+    sys_default, _ = build_triage_prompt("https://h", {"server": "nginx"})
+    sys_prof, _ = build_triage_prompt("https://h", {"server": "nginx"}, None, _profile())
+    for system in (sys_default, sys_prof):
+        low = system.lower()
+        # Severity was being read off the hostname instead of the response.
+        assert "never infer risk from the hostname" in low
+        assert "judge only the observed response" in low
+        # The model invented a "120-day" HSTS preload minimum to hide hsts.weak.
+        assert "31536000" in system and "do not invent" in low
+        # Wildcard CORS + credentials is spec-inert; it was being rated critical.
+        assert "access-control-allow-origin: *" in low
+        # AI CSP findings duplicated the deterministic csp scanner (~69 rows).
+        assert "csp is already covered" in low
+        # The withheld low-value classes must not be re-added as new findings.
+        assert "deterministic policy" in low
+
+    # The expected-controls rule is profile-dependent → profiled prompt only.
+    assert "expected_controls" in sys_prof
+    assert "expected_controls" not in sys_default
 
 
 def test_supply_flags_brand_damage_as_real_risk():

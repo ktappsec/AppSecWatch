@@ -24,12 +24,17 @@ export type FindingSource =
   | "ai_headers"
   | "ai_supply_chain";
 
-/** Verdict attached to a finding (AI soft-suppression or a manual suppression). */
+/**
+ * Verdict attached to a finding. `ai_triage` = the LLM's FP call; `manual` = a stored
+ * suppression; `coverage` = engine-suppressed because the host wasn't assessable;
+ * `policy` = engine-suppressed by the deterministic triage policy (ai/policy.py).
+ * (`ai_headers` is the legacy name of `ai_triage`, still read from older runs.)
+ */
 export interface AIFindingVerdict {
   suppressed: boolean;
   confidence: "low" | "medium" | "high";
   reason: string;
-  source?: "ai_headers" | "manual";
+  source?: "ai_headers" | "ai_triage" | "manual" | "coverage" | "policy";
 }
 
 export interface Suppression {
@@ -513,6 +518,8 @@ export interface SuppressionConfig {
   min_confidence: "low" | "medium" | "high";
   max_severity: "info" | "low" | "medium" | "high" | "critical";
   require_profile: boolean;
+  /** The AI may not hide a control the profile expects on an auth/PII/payments host. */
+  protect_expected_controls: boolean;
 }
 
 export interface ApiErrorBody {

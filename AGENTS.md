@@ -279,8 +279,9 @@ docker run --rm -p 8080:8080 -e APPSECWATCH_API_KEYS=key \
   `findings.json`). Gating lives in `cfg.ai.suppression`: `enabled`,
   `min_confidence` (default **medium**), `max_severity` ceiling (default
   **medium** — findings above it are never offered to the AI, so always stay
-  visible), and `require_profile` (default **false** — the profile is calibration,
-  not a precondition). An AI degrade suppresses nothing, so the no-gating
+  visible), `require_profile` (default **false** — the profile is calibration,
+  not a precondition), and `protect_expected_controls` (default **true** — see the
+  deterministic-policy bullet below). An AI degrade suppresses nothing, so the no-gating
   invariant holds. System prompts are overridable via `cfg.ai.prompts`
   (`appsecwatch/ai/prompts.py` `PROMPT_SLOTS` registry; UI: the AI Tuning page);
   shape-hints + user assembly stay in code so an override can't break JSON.
@@ -395,6 +396,31 @@ docker run --rm -p 8080:8080 -e APPSECWATCH_API_KEYS=key \
   object (recovers the "Extra data: trailing object" degradations); `_ai_evidence_cookie`
   also reads `set-cookie`/`set_cookie`/`value` keys so F5 infra cookies the model
   labels itself are dropped by the infra-cookie guard.
+- **The deterministic triage policy** (`ai/policy.py`, DESIGN.md §2.3.3) owns the
+  triage calls the LLM is structurally bad at. Pure + synchronous → it holds under an
+  AI degrade. Four rules, each from a defect a cross-scan audit of real banking scans
+  found: (a) **withheld classes** — `POLICY_CHECK_IDS` (`clickjacking.missing`,
+  `referrer-policy.missing|weak`, `permissions-policy.missing`, `xcto.missing`,
+  `csp.missing`) are SKIPPED by `_suppressable_payload`, so they never enter the prompt
+  and the model has no `ref` to hide them by (re-running the same scan flipped
+  keep/suppress on ~22% of them — temperature is already 0, so the lever is removing
+  the decision, not the sampling). `policy_verdict()` decides them instead: visible by
+  default, suppressed via `AIFindingVerdict(source="policy")` ONLY on a **non-browser
+  API** profile (`is_api`, non-low confidence) — `xcto.missing`/`csp.missing` are NEVER
+  auto-suppressed (JSON sniffed as HTML is an XSS vector; a missing CSP is a real gap).
+  (b) **`protect_expected_controls`** (`SuppressionConfig`, default true) — on a
+  `handles_auth|pii|payments` profile the AI may not hide a finding on a control the app
+  is expected to have (profile `expected_controls` + HSTS/Secure/HttpOnly implied); the
+  verdict is still attached, advisory, with the AI's reason kept. This is what let the
+  model hide `hsts.weak` on ~79 banking hosts by inventing a "120-day preload minimum"
+  (the real one is `max-age >= 31536000`). (c) **CSP belongs to the `csp` scanner** —
+  when it ran (`csp_covered`, via `lifecycle.source_ran`), AI CSP findings are dropped at
+  emit time (`looks_like_csp`); they were ~69 duplicate rows. (d) **evidence discipline**
+  in `_TRIAGE_EVIDENCE_RULES` (`prompts.py`): judge only the observed response, never
+  infer risk from the hostname, don't invent standards (the HSTS max-age fact is stated),
+  wildcard CORS can't carry credentials so it isn't an account-takeover bug on its own.
+  If you add a check to `POLICY_CHECK_IDS`, decide it in `policy_verdict` too — a
+  withheld class with no rule is simply always visible.
 - **Stealth identity** (`config.IdentityConfig`, `AppSecWatchConfig.identity`): a
   `preset` (off | chrome-win | chrome-mac | firefox) bundles a coherent browser
   UA + headers + locale; `user_agent`/`headers`/`locale` override/extend it. The

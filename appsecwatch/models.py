@@ -37,7 +37,10 @@ class AIFindingVerdict(BaseModel):
     # `coverage` = a deterministic (non-AI) suppression applied because the host was
     # not assessable (blocked/error response) — reuses this hide-but-never-delete
     # machinery so those findings stay in findings.json but drop from posture/counts.
-    source: Literal["ai_headers", "ai_triage", "manual", "coverage"] = "ai_triage"
+    # `policy` = the other deterministic (non-AI) suppression: `ai/policy.py` decides
+    # the flip-prone low-value header classes in Python instead of asking the LLM
+    # (e.g. clickjacking on a host profiled as a non-browser API).
+    source: Literal["ai_headers", "ai_triage", "manual", "coverage", "policy"] = "ai_triage"
 
 
 class TriagedAsset(BaseModel):

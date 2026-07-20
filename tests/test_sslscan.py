@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
+from datetime import datetime, timedelta, timezone
 
 from appsecwatch.audit.sslscan_runner import (
     _checks_to_findings,
@@ -82,21 +83,51 @@ def test_clean_server_passes_every_check():
 def test_failing_server_flags_the_right_checks():
     _checks, findings = _findings(BAD_XML)
     titles = {f.title for f in findings}
+    # Titles state the PROBLEM (fail_title), not the passing control name.
     assert titles == {
-        "TLS: TLS 1.0 disabled",
-        "TLS: No weak ciphers (RC4/3DES/EXPORT/NULL/anon)",
-        "TLS: Cert valid and >30 days remaining",
-        "TLS: Strong key (RSA≥2048 / EC≥256)",
-        "TLS: Strong signature algorithm",
-        "TLS: Secure renegotiation",
+        "TLS: TLS 1.0 enabled",
+        "TLS: Weak ciphers supported (RC4/3DES/EXPORT/NULL/anon)",
+        "TLS: Certificate expired",
+        "TLS: Weak public key (below RSA-2048 / EC-256)",
+        "TLS: Weak certificate signature algorithm (SHA-1/MD5)",
+        "TLS: Insecure client-initiated renegotiation supported",
     }
     # SSL 2.0 / 3.0 / TLS 1.1 were disabled → must NOT appear as failures
-    assert "TLS: SSL 2.0 disabled" not in titles
-    assert "TLS: TLS 1.1 disabled" not in titles
+    assert "TLS: SSL 2.0 enabled" not in titles
+    assert "TLS: TLS 1.1 enabled" not in titles
     assert all(f.source == "sslscan" for f in findings)
+
+
+def test_failing_titles_state_the_problem_not_the_secure_state():
+    """Regression: a failing check must not surface the pass-condition name.
+
+    A negotiated TLS 1.0 previously rendered as 'TLS: TLS 1.0 disabled' — a real
+    vuln that reads like a passing control. The finding title now states the
+    problem ('enabled'), while evidence['check'] keeps the control name so the
+    group_key / suppression fingerprint is unchanged.
+    """
+    _checks, findings = _findings(BAD_XML)
+    tls10 = next(f for f in findings if f.title == "TLS: TLS 1.0 enabled")
+    assert "disabled" not in tls10.title
+    assert tls10.evidence["check"] == "TLS 1.0 disabled"   # stable group_key anchor
+    assert tls10.group_key == "TLS 1.0 disabled"
+    assert tls10.evidence["detail"] == "protocol negotiated"
+
+
+def test_cert_expiring_soon_vs_expired_titles():
+    """A cert with <30 but >0 days reads 'expiring soon'; a negative-days cert
+    reads 'expired' — distinct fail_titles from the same check."""
+    soon_xml = BAD_XML.replace(
+        "Jan  1 00:00:00 2000 GMT",  # long-expired
+        (datetime.now(timezone.utc) + timedelta(days=10)).strftime("%b %d %H:%M:%S %Y") + " GMT",
+    )
+    _checks, findings = _findings(soon_xml)
+    titles = {f.title for f in findings}
+    assert "TLS: Certificate expiring soon (<30 days)" in titles
+    assert "TLS: Certificate expired" not in titles
 
 
 def test_weak_cipher_evidence_carries_offenders():
     _checks, findings = _findings(BAD_XML)
-    weak = next(f for f in findings if "weak ciphers" in f.title)
+    weak = next(f for f in findings if "weak ciphers" in f.title.lower())
     assert "RC4" in weak.evidence["detail"]

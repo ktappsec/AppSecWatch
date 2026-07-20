@@ -14,7 +14,7 @@ import {
   TableCell,
 } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
-import { StateBadge } from "@/components/badges";
+import { StateBadge, DegradedBadge } from "@/components/badges";
 import { ApiErrorState } from "@/components/api-error-state";
 import { api, ApiError } from "@/lib/api";
 import { usePoll } from "@/lib/hooks";
@@ -125,7 +125,10 @@ export default function ScansPage() {
               {jobs.map((j) => (
                 <TableRow key={j.id} className="group">
                   <TableCell>
-                    <StateBadge state={j.state} />
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <StateBadge state={j.state} />
+                      {j.degraded && <DegradedBadge />}
+                    </div>
                   </TableCell>
                   <TableCell className="max-w-[220px]">
                     <Link

@@ -69,7 +69,11 @@ export default function AnalyticsPage() {
           <div className="grid gap-6 lg:grid-cols-2">
             <ChartCard title="Risk & severity over time"
               description="Per-scan risk score and severity mix (this scope)">
-              {t.length >= 2 ? <SeverityTrend data={t} /> : <EmptyChart label="Not enough history yet — run more scans" />}
+              {t.length >= 2 ? <SeverityTrend data={t} /> : (
+                <EmptyChart label={g
+                  ? "No trend for this group yet — trends track scans launched for a specific group"
+                  : "Not enough history yet — run more scans"} />
+              )}
             </ChartCard>
             <ChartCard title="Open findings by severity">
               {a.open_total > 0 ? <SeverityBars totals={a.by_severity} /> : <EmptyChart label="No open findings" />}

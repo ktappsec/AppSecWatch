@@ -372,3 +372,41 @@ def test_ai_infra_cookie_findings_dropped():
     )
     out = analyzer._ai_findings_to_findings("h", "ai_headers", resp)
     assert [f.title for f in out] == ["Real session cookie missing HttpOnly"]
+
+
+def test_ai_infra_cookie_dropped_via_set_cookie_and_value_keys():
+    # The model puts the cookie under set-cookie / value (not cookie_name); the guard
+    # must still resolve the name so F5 infra cookies are dropped (was slipping ~50).
+    resp = _ai_resp(
+        {"type": "cookie-security", "severity": "medium", "title": "F5 LB cookie",
+         "evidence": {"set-cookie": "TS013b1641=abc; Path=/"}},
+        {"type": "cookie-security", "severity": "medium", "title": "F5 LB cookie 2",
+         "evidence": {"value": "TS01842ce2=xyz"}},
+        {"type": "cookie-security", "severity": "high", "title": "Real",
+         "evidence": {"set-cookie": "JSESSIONID=abc"}},
+    )
+    out = analyzer._ai_findings_to_findings("h", "ai_headers", resp)
+    assert [f.title for f in out] == ["Real"]
+
+
+def test_ai_severity_clamped_to_source_ceiling():
+    # ai_headers/ai_supply_chain may never mint a 'critical' — clamped to high so the
+    # AI can't unilaterally drive a CRITICAL posture.
+    resp = _ai_resp(
+        {"type": "plain-http", "severity": "critical", "title": "served over HTTP",
+         "evidence": {}},
+        {"type": "sri", "severity": "medium", "title": "sri missing", "evidence": {}},
+    )
+    out_h = analyzer._ai_findings_to_findings("h", "ai_headers", resp)
+    assert out_h[0].severity == "high"     # critical → high
+    assert out_h[1].severity == "medium"   # below ceiling, unchanged
+    out_s = analyzer._ai_findings_to_findings("h", "ai_supply_chain", resp)
+    assert out_s[0].severity == "high"
+
+
+def test_extract_json_recovers_trailing_object():
+    # The 'Extra data' degradation: a valid object followed by a second object/prose.
+    assert analyzer._extract_json('{"findings": []}\n{"junk": 1}') == '{"findings": []}'
+    assert analyzer._extract_json('{"a": 1}\nsome trailing commentary') == '{"a": 1}'
+    # markdown fence still handled
+    assert analyzer._extract_json('```json\n{"a": 1}\n```') == '{"a": 1}'

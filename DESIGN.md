@@ -7,7 +7,7 @@
 
 AppSecWatch is a **point-in-time, single-run** external AppSec audit orchestrator. It executes a modular pipeline of recon and audit tools, augments the result set with a pluggable local LLM, and renders everything into a single self-contained HTML report. The **engine** has no database — each scan writes a complete, standalone artifact set under `runs/<id>/` (the source of truth). The **Web API** adds a server-side **SQLite relational layer** (`<output_root>/appsecwatch.db`) for cross-run state — the asset inventory, scheduling, and the unified **cross-scan finding state** (`finding_state`: lifecycle + freeform tags + suppression, keyed on the `source|host|group_key` fingerprint) — but the engine and CLI stay DB-free, so `runs/` remains self-describing. The report note + executive risk-trend chart consume cross-run data only via server-**injected** `prior_open`/`report_history` (never a DB read from the engine). See `WEB_API_PLAN.md`.
 
-> **Update (this iteration).** Implemented on top of the locked design: a controlled ~53-class finding **taxonomy** (`audit/taxonomy.py`) stamped on every finding — AI findings now key their cross-scan identity on `(source, class)`, not the drifting title; the report/UI collapse findings by that **category**. Cross-scan **finding lifecycle** (resolve after 2 consecutive absences *of a source that ran*) + a per-scan **diff**. **Turkish** report language (`ReportConfig.language`: AI website/executive summaries + exec chrome; finding names stay English) with server-rendered inline-SVG executive **charts** (`report/svg.py`). **In-memory JS-library content scanning** (retire.js-style; never persists bodies). **FTS5** all-in-one search + a **pluggable notifier** (in-app/webhook, email stub) firing on new-domain discovery. Where these touch a locked decision the decision still holds (engine stateless; AI never gates deterministic scanners; crawler never stores values/bodies).
+> **Update (this iteration).** Implemented on top of the locked design: a controlled ~53-class finding **taxonomy** (`audit/taxonomy.py`) stamped on every finding — AI findings now key their cross-scan identity on `(source, class)`, not the drifting title; the report/UI collapse findings by that **category**. Cross-scan **finding lifecycle** (resolve after 2 consecutive absences *of a source that ran*) + a per-scan **diff**. **Turkish** report language (`ReportConfig.language`: AI website/executive summaries + exec chrome; finding names stay English) with server-rendered inline-SVG executive **charts** (`report/svg.py`). **In-memory JS-library content scanning** (retire.js-style; never persists bodies). **In-memory client-side secret scanning** (`audit/secrets.py`, `source='secret'`; curated precision-first ruleset + public-token allow-list over the same script bodies — masked previews only, raw values never persisted; deterministic so uncapped severity but `high`+ is above the AI-suppression ceiling). **FTS5** all-in-one search + a **pluggable notifier** (in-app/webhook, email stub) firing on new-domain discovery. Where these touch a locked decision the decision still holds (engine stateless; AI never gates deterministic scanners; crawler never stores values/bodies).
 
 ---
 
@@ -97,7 +97,7 @@ The `headers` capability (sub-tokens `headers.csp`, `headers.best-practice`; `he
 | Catalog | OWASP Secure Headers (HSTS, `nosniff`, clickjacking via XFO **or** CSP `frame-ancestors`, Referrer-/Permissions-Policy, per-cookie Secure/HttpOnly/SameSite, info-disclosure, deprecated `X-XSS-Protection`) + situational COOP/COEP/CORP, `X-Permitted-Cross-Domain-Policies`, cache-control, Clear-Site-Data. CSP = structured directive parse with high-confidence rules (unsafe-inline/eval, wildcard, insecure scheme, missing `object-src 'none'`/`base-uri`, report-only-only). **Cookie-flag checks skip infrastructure cookies** (`audit/cookies.py::is_infra_cookie` — F5 BIG-IP/LB/WAF/RUM cookies that carry no session state); their flag gaps are dropped, not reported. |
 | Output | First-class `Finding`s (sources `headers`/`csp`), each with a stable, host-unique **`check_id`**. They **always stand on their own** — running even with `--skip ai`. |
 | AI relationship | `ai.triage` is a per-host pass over **all** of the host's deterministic findings (nuclei/TLS/js_lib/headers/takeover), not just headers. It adds **only** nuance the rules miss (header combinations, CSP allowlist bypassability — these keep source `ai_headers`) and **soft-suppresses** false-positives across every source. |
-| Soft-suppression | Each finding offered to the AI carries an ephemeral integer `ref`; the AI returns the `ref`s it judges false-positive. A suppressed finding is **hidden from the report + dropped from severity counts but never deleted** (kept in `findings.json`, shown in a collapsible "Suppressed" section, verdict `source='ai_triage'`) — fully auditable. **Gated** via `ai.suppression`: `enabled`, `min_confidence` (default **medium**), a `max_severity` ceiling (default **medium** — findings above it are never even offered, so always stay visible + counted), and `require_profile` (default **false**: the `AppProfile` is calibration context, not a precondition). An AI degrade suppresses nothing — preserving the **"AI never gates deterministic scanners"** invariant: an LLM failure can never erase a deterministic finding. |
+| Soft-suppression | Each finding offered to the AI carries an ephemeral integer `ref`; the AI returns the `ref`s it judges false-positive. A suppressed finding is **hidden from the report + dropped from severity counts but never deleted** (kept in `findings.json`, shown in a collapsible "Suppressed" section, verdict `source='ai_triage'`) — fully auditable. **Gated** via `ai.suppression`: `enabled`, `min_confidence` (default **medium**), a `max_severity` ceiling (default **medium** — findings above it are never even offered, so always stay visible + counted), `require_profile` (default **false**: the `AppProfile` is calibration context, not a precondition), and `protect_expected_controls` (default **true**: on an auth/PII/payments app the AI may not hide a control the profile says it needs — §2.3.3). The flip-prone low-value header classes are **withheld from the prompt entirely** and decided deterministically (§2.3.3). An AI degrade suppresses nothing — preserving the **"AI never gates deterministic scanners"** invariant: an LLM failure can never erase a deterministic finding. |
 | Scope | Operates on the `PageSignals` captured by the httpx recon step, i.e. every live host discovered by the recon spine. |
 
 #### 2.2.2 Crawler capture (structure only, never values)
@@ -125,6 +125,39 @@ credential-leak vector. Captures are best-effort (a failed capture leaves the fi
 `"METHOD host/path"`, query strings dropped) — the **single source** reused by both the
 profiler's input summary (§2.3.1) and the per-asset EASM surface exposed by the Web API
 (§5 / `WEB_API_PLAN.md`).
+
+#### 2.2.3 Assessability & degraded runs
+
+A probed host is only audited as an application when its response IS one. This closes
+two ways the pipeline previously produced a **wrong top-line result**: (a) error/WAF
+pages (many WAFs answer **HTTP 200** with a rejection body) were rated as real apps —
+inflating findings and letting the AI mint fake criticals off a hostname; and (b) a
+fully-blocked httpx pass (0 live servers from hundreds of live assets) exited success
+with 0 findings and read as a clean scan.
+
+`audit/liveness.classify_assessability(PageSignals) → (assessed, reason)` is the single
+rule: **not assessed** for no response, `status ≥ 500`, or a WAF/block signature (a
+block-marker phrase in title/body at any status, or a 401/403/429 with an empty/tiny
+body); a form/password input or real 2xx content is always assessed. `PageSignals`
+carries the httpx `status_code`; `web_probe` stamps `LiveWebServer.assessed` /
+`not_assessed_reason`. The always-on pre-report `LivenessGateStage` then:
+
+* **Coverage-suppresses** every finding on a not-assessed host (all sources) via an
+  `AIFindingVerdict(source="coverage")` — hidden, uncounted, off the posture, but kept
+  in `findings.json`; the report lists those hosts in a distinct "Not assessed /
+  blocked" section (explicitly **not** "clean"). A blocked/error response is thus
+  neither a finding nor a clean bill of health — a third, honest state.
+* **Flags a degraded run** when httpx returned 0 live servers despite ≥1 live asset:
+  `state.degraded`/`degraded_reason`, a `StageError` (so `--strict` exits 3), a
+  report + executive **banner**, and `ScanResult.degraded` / `JobStatus.degraded`
+  (Web UI "Blocked" badge) so the dashboard never shows a blocked scan as a clean
+  success. Both are engine-computed (DB-free), surfaced by the server.
+
+Related AI-layer hardening (§2.3): AI-invented severity is clamped to **high** for
+`ai_headers`/`ai_supply_chain` at emit time (deterministic sources keep the full
+range), so the AI can never unilaterally drive a CRITICAL posture — the mirror of the
+suppression `max_severity` ceiling. The **deterministic triage policy** (§2.3.3) takes
+the flip-prone / hallucination-prone calls away from the model entirely.
 
 ### 2.3 AI layer
 
@@ -190,6 +223,24 @@ needs the crawler's scripts.
   profile** (a 3rd-party tracker on a `handles_payments` login portal is graver than the
   same script on a marketing page). The LLM never re-classifies party-ness; it reasons
   about risk only.
+
+#### 2.3.3 The deterministic triage policy (`ai/policy.py`)
+
+Auditing repeat scans of the same estate showed the LLM was being asked to make calls it
+is structurally bad at. **Anything whose answer is a function of the app profile rather
+than of prose judgment is decided in Python, not by the model.** Pure + synchronous, so
+it holds under an AI degrade (the no-gating invariant). Four rules:
+
+| Rule | Why |
+|---|---|
+| **Withheld classes** (`POLICY_CHECK_IDS`: `clickjacking.missing`, `referrer-policy.missing/weak`, `permissions-policy.missing`, `xcto.missing`, `csp.missing`) never enter the triage prompt — `_suppressable_payload` skips them, so the model has **no `ref` to suppress them by**. `policy_verdict()` decides them: **visible by default**, suppressed (`AIFindingVerdict(source="policy")`) **only** for the one genuine N/A case — a control a **non-browser JSON API** (`is_api`, non-low confidence) structurally cannot benefit from. `xcto.missing` + `csp.missing` are **never** auto-suppressed (a JSON body sniffed as HTML is an XSS vector; a missing CSP is a real gap on anything rendered). | Re-running the SAME scan flipped keep/suppress on **~22%** of these findings — a finding in one report, gone from the next. There is no per-host nuance here worth an LLM call, and temperature is already 0, so sampling isn't the lever: the fix is to take the decision away from the model. |
+| **Expected-control protection** (`ai.suppression.protect_expected_controls`, default **true**): on a host whose profile says it handles **auth / PII / payments**, the AI may not hide a finding on a control the app is expected to have — the profile's `expected_controls`, plus HSTS/`Secure`/`HttpOnly` cookies **implied** for any sensitive app. The verdict is still attached, **advisory** (`suppressed=False`), with the AI's own reason retained. | The model suppressed `hsts.weak` on **~79 banking hosts** by inventing a preload threshold ("120-day minimum"). The real HSTS-preload minimum is `max-age >= 31536000`. A gap in a control the app was profiled to *need* is a finding by definition. |
+| **CSP is the `csp` scanner's** — when the deterministic scanner ran (`csp_covered`, from `coverage`), AI findings about CSP are **dropped at emit time** (`looks_like_csp`). | The model re-emitted the deterministic scanner's CSP findings as its own (**~69 duplicate rows**). |
+| **Evidence discipline** (prompt): judge only the observed status/headers/details — **never infer risk from the hostname**; do not invent standards (the HSTS max-age fact is stated); wildcard CORS cannot be combined with credentials, so it is not on its own an account-takeover bug. | The model rated severity off names (`boa` ⇒ "plain HTTP" while it was HTTPS 200) and called spec-inert CORS critical. |
+
+The engine now has **two deterministic suppression sources** that reuse the
+hide-but-never-delete `AIFindingVerdict` machinery: `coverage` (§2.2.3, host not
+assessable) and `policy` (here). Both are DB-free and survive an LLM failure.
 
 ### 2.4 Orchestration
 
@@ -461,6 +512,15 @@ ai:
                           #         never spun up solely to profile).
                           # always= force the crawler (CrawlerStage only, no extra LLM calls).
                           # never = httpx pre-JS signals only.
+  suppression:
+    enabled: true         # let the AI soft-suppress false-positives (all sources)
+    min_confidence: medium
+    max_severity: medium  # above this the AI verdict is advisory only
+    require_profile: false
+    protect_expected_controls: true   # on an auth/PII/payments app the AI may NOT hide a
+                          # control the profile expects (HSTS, CSP, cookie flags) — §2.3.3.
+                          # The flip-prone low-value header classes are withheld from the
+                          # prompt entirely and decided deterministically (ai/policy.py).
 
 tools:
   subfinder:
@@ -558,6 +618,9 @@ class AIFindingVerdict(BaseModel):        # attached to a deterministic Finding
     suppressed: bool = False              # True → hidden + uncounted, never deleted
     confidence: Literal["low", "medium", "high"] = "low"
     reason: str = ""
+    # who decided. Two of the five are deterministic (no LLM): `coverage` = host not
+    # assessable (§2.2.3); `policy` = the deterministic triage policy (§2.3.3).
+    source: Literal["ai_headers", "ai_triage", "manual", "coverage", "policy"] = "ai_triage"
 ```
 
 ### Page signals (parsed from `httpx -include-response`)
@@ -710,6 +773,7 @@ appsecwatch/
 │   ├── client.py          # OpenAI-compat httpx client
 │   ├── schemas.py         # AIFinding + AISuppression + AIResponse (AppProfile lives in models.py)
 │   ├── prompts.py         # build_profile_prompt + profile-aware header/supply prompts
+│   ├── policy.py          # deterministic triage policy (§2.3.3) — the calls the LLM must not make
 │   └── analyzer.py        # per-host fan-out; profile-aware, confidence-tiered
 ├── stages/                # the Stage plugin layer (orchestration unit)
 │   ├── state.py           # ScanState (app_profiles, page_signals, header_findings, coverage, …)

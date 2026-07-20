@@ -48,6 +48,14 @@
 {% block content %}
 <main>
 
+  {% if executive.degraded.flag %}
+  <div class="degraded-banner">
+    <strong>⚠ Scan degraded — this rating is not reliable.</strong>
+    {{ executive.degraded.reason }}. The posture below reflects almost no audited
+    surface; re-run before drawing conclusions.
+  </div>
+  {% endif %}
+
   <section id="exec-overview">
     <div class="head"><h2>{{ executive.strings.risk_posture }}</h2></div>
     <div class="body">

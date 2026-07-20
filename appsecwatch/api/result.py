@@ -64,6 +64,9 @@ def build_scan_result(
         "report_url": report_url,
         "executive_url": executive_url,
         "executive_pdf_url": executive_pdf_url,
+        "degraded": state.degraded,
+        "degraded_reason": state.degraded_reason,
+        "not_assessed": sum(1 for s in state.live_servers if not s.assessed),
     }
 
 
