@@ -11,6 +11,7 @@ FindingSource = Literal[
     "nuclei", "takeover", "sslscan",
     "headers", "csp",                       # deterministic security-header checks
     "js_lib",                               # vulnerable JS library (retire.js-style)
+    "secret",                               # client-side secret exposed in a JS bundle
     "zap",                                  # OWASP ZAP active scan (opt-in)
     "ai_headers", "ai_supply_chain",
 ]
@@ -33,7 +34,10 @@ class AIFindingVerdict(BaseModel):
     suppressed: bool = False
     confidence: Confidence = "low"
     reason: str = ""
-    source: Literal["ai_headers", "ai_triage", "manual"] = "ai_triage"
+    # `coverage` = a deterministic (non-AI) suppression applied because the host was
+    # not assessable (blocked/error response) — reuses this hide-but-never-delete
+    # machinery so those findings stay in findings.json but drop from posture/counts.
+    source: Literal["ai_headers", "ai_triage", "manual", "coverage"] = "ai_triage"
 
 
 class TriagedAsset(BaseModel):
@@ -52,6 +56,12 @@ class LiveWebServer(BaseModel):
     status_code: int | None = None
     title: str | None = None
     tech: list[str] = Field(default_factory=list)
+    # Assessability: did this response present a real application surface? False for
+    # 5xx/no-response/WAF-block pages (see audit/liveness.classify_assessability).
+    # A not-assessed host has its findings suppressed (coverage verdict) and is listed
+    # separately instead of counting toward posture. Defaults keep old artifacts valid.
+    assessed: bool = True
+    not_assessed_reason: str | None = None
 
 
 class Finding(BaseModel):
@@ -115,6 +125,15 @@ class Finding(BaseModel):
             rows = [("template", ev.get("template_id")), ("matched", ev.get("matched_at"))]
         elif self.source == "sslscan":
             rows = [("check", ev.get("check")), ("detail", ev.get("detail"))]
+        elif self.source == "secret":
+            # `preview` is masked (boundary chars only) — safe to render; the raw
+            # value is never stored. `url`+`line` locate it for the code owner.
+            rows = [
+                ("rule", ev.get("rule")),
+                ("preview", ev.get("preview")),
+                ("script", ev.get("url")),
+                ("line", ev.get("line")),
+            ]
         elif self.source == "zap":
             rows = [
                 ("plugin", ev.get("plugin_id")),
@@ -139,6 +158,14 @@ class TLSCheck(BaseModel):
     name: str
     passed: bool
     detail: str = ""
+    # Problem-phrased title used when the check FAILS. `name` states the SECURE
+    # condition we test FOR ("TLS 1.0 disabled"); emitting that verbatim as a
+    # finding title reads backwards (a real vuln looks like a passing control),
+    # so a failing check surfaces `fail_title` ("TLS 1.0 enabled") instead.
+    # Falls back to `name` when unset. Does NOT affect `group_key`/suppression
+    # fingerprints — those key on evidence["check"] (== name), so retitling here
+    # never churns cross-scan identity.
+    fail_title: str = ""
     # Severity carried as data, so the Finding projection reads it directly
     # instead of re-deriving severity by string-matching the check name.
     severity: Severity = "medium"
@@ -174,6 +201,13 @@ class CertInfo(BaseModel):
     expired: bool = False
     self_signed: bool = False
     wildcard: bool = False
+    # DNS attribution (filled by annotate_certs_dns after the re-feed loop; no extra
+    # lookups). The dossier is IP-keyed — a cert on IP X names whatever host it was
+    # issued for via subject_cn/SANs, NOT necessarily a host whose DNS points at X.
+    # These make that gap explicit so an expired cert on a stale IP isn't misread as
+    # the live host's posture.
+    resolving_names: list[str] = Field(default_factory=list)  # scanned FQDNs whose DNS resolves to this IP
+    subject_cn_ips: list[str] = Field(default_factory=list)   # IPs subject_cn actually resolves to (empty = unknown/wildcard)
 
 
 class CrawlerArtifact(BaseModel):
@@ -186,12 +220,23 @@ class CrawlerArtifact(BaseModel):
     # body; runs/<id>/ is a shareable, emailable artifact set). Every capture is
     # best-effort: a failure is recorded in `errors`, never raised.
     resources: list[dict[str, Any]] = Field(default_factory=list)   # {url, type, status, method}
+    # Requests that FAILED at the network layer (blocked/reset/aborted/DNS/timeout).
+    # These fire Playwright's `requestfailed`, NOT `response`, so without capturing
+    # them a bot-blocked crawl (only the document loads, 0 subresources) is
+    # byte-identical to a genuinely script-free page. Names/urls/reason only —
+    # structure-only invariant holds (no bodies).
+    failed_requests: list[dict[str, Any]] = Field(default_factory=list)  # {url, type, method, failure}
     cookies: list[dict[str, Any]] = Field(default_factory=list)     # name + flags, NO value
     local_storage_keys: list[str] = Field(default_factory=list)     # key names only
     session_storage_keys: list[str] = Field(default_factory=list)   # key names only
     # JS libraries detected by scanning script BODIES in memory (version not in the
     # URL). Only {library, version, url} is kept — never the body. See audit/js_libs.
     detected_libs: list[dict[str, Any]] = Field(default_factory=list)
+    # Secrets detected by scanning script BODIES in memory (curated precision-first
+    # ruleset). Only {rule, url, line, preview} is kept — `preview` is MASKED
+    # (boundary chars only), never the raw value; the body is never persisted.
+    # See audit/secrets.py. Shareable-artifact invariant holds.
+    detected_secrets: list[dict[str, Any]] = Field(default_factory=list)
     rendered_text: str = ""                                         # body.innerText, normalized + <=2KB
     screenshot: str | None = None                                   # per-host PNG filename (dashboard only)
     errors: list[str] = Field(default_factory=list)
@@ -204,6 +249,7 @@ class PageSignals(BaseModel):
     extra crawler work is needed.
     """
     host: str
+    status_code: int | None = None                          # httpx HTTP status (None = no response)
     headers: dict[str, str] = Field(default_factory=dict)   # response headers, lower-cased keys
     # Raw Set-Cookie header values, one per cookie (the `headers` dict collapses
     # duplicates, so cookie-flag analysis reads this list instead).
@@ -319,3 +365,8 @@ class RunSummary(BaseModel):
     ai: dict[str, int] = Field(default_factory=dict)            # profiled / degraded
     tls: dict[str, int] = Field(default_factory=dict)           # hosts / ok / errored
     events: dict[str, int] = Field(default_factory=dict)        # warn/error + key tool events
+    # Whole-scan degraded (httpx returned 0 live servers despite live assets) +
+    # count of hosts probed but not assessable (blocked/error responses).
+    degraded: bool = False
+    degraded_reason: str | None = None
+    not_assessed: int = 0

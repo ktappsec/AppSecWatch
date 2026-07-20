@@ -176,4 +176,36 @@ async def tlsx_refeed_loop(
 
     final_live = [a for a in accumulated.values() if a.status == "live"]
     certs = sorted(certs_by_ip.values(), key=lambda c: c.ip)
+    annotate_certs_dns(certs, final_live)
     return final_live, sorted(wildcards), certs
+
+
+def annotate_certs_dns(certs: list[CertInfo], live_assets: list[TriagedAsset]) -> None:
+    """Stamp each cert with the DNS relationship between its IP and the scanned hosts.
+
+    The dossier is IP-keyed: tlsx connects to an IP and reads whatever cert is served,
+    then that cert names hosts via subject_cn/SANs — which may point their DNS at a
+    DIFFERENT IP (shared hosting, a stale/decommissioned endpoint). This fills, per
+    cert, from data already in hand (no lookups):
+
+      * `resolving_names` — scanned FQDNs whose DNS actually resolves to this cert's IP.
+        Every cert IP came from a live asset's a_records, so this is normally non-empty.
+      * `subject_cn_ips` — where the cert's own subject_cn resolves (empty when the CN
+        is a wildcard or not among scanned assets → "unknown", never a false "elsewhere").
+
+    A mismatch (`subject_cn` not among `resolving_names`, `subject_cn_ips` pointing
+    elsewhere) is the "cert on a stale IP" case — surfaced, not hidden.
+    """
+    ip_to_fqdns: dict[str, list[str]] = {}
+    fqdn_to_ips: dict[str, list[str]] = {}
+    for a in live_assets:
+        fqdn_to_ips.setdefault(a.fqdn, [])
+        for ip in a.a_records:
+            ip_to_fqdns.setdefault(ip, []).append(a.fqdn)
+            fqdn_to_ips[a.fqdn].append(ip)
+    for c in certs:
+        c.resolving_names = sorted(ip_to_fqdns.get(c.ip, []))
+        cn = (c.subject_cn or "").strip().lower().rstrip(".")
+        # Wildcard CNs aren't resolvable names; leave subject_cn_ips empty ("unknown").
+        if cn and not is_wildcard(cn) and cn in fqdn_to_ips:
+            c.subject_cn_ips = sorted(fqdn_to_ips[cn])

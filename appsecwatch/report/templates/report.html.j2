@@ -9,6 +9,14 @@
 {% block content %}
 <main>
 
+  {% if degraded.flag %}
+  <div class="degraded-banner">
+    <strong>⚠ Scan degraded — results are NOT a clean bill of health.</strong>
+    {{ degraded.reason }}. Treat this run as inconclusive and re-scan (e.g. a gentler
+    throttle) rather than reading zero findings as "secure."
+  </div>
+  {% endif %}
+
   {% if coverage_strip %}
   <div class="cov-strip">
     <span class="cov-label">Coverage</span>
@@ -119,6 +127,23 @@
       </table>
       {% else %}<div class="empty">No live web servers discovered.</div>{% endif %}
 
+      {% if not_assessed %}
+      <h3 style="margin-top:18px;" class="not-assessed">Not assessed / blocked
+        <span class="tag">{{ not_assessed|length }}</span></h3>
+      <p class="empty" style="font-style:normal;">These hosts responded but not with a
+        real application surface (server error, or a WAF/block page). Their header/CSP
+        findings are suppressed and excluded from severity counts — <strong>this is not
+        the same as "clean"</strong>; the application behind them was not evaluated.</p>
+      <table class="not-assessed">
+        <thead><tr><th>Host</th><th>Status</th><th>Reason</th></tr></thead>
+        <tbody>
+        {% for s in not_assessed %}
+          <tr><td>{{ s.host }}</td><td>{{ s.status_code or "" }}</td><td>{{ s.reason }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+
       <h3 style="margin-top:18px;">Dead / dangling records (takeover watch)</h3>
       {% if recon.dead %}
       <table>
@@ -140,14 +165,23 @@
       </div>
       <table data-table="certs">
         <thead><tr>
-          <th class="sortable">IP</th><th class="sortable">Subject CN</th><th class="sortable">Issuer</th>
+          <th class="sortable">IP</th><th class="sortable">Subject CN</th>
+          <th class="sortable">Serving (resolves here)</th><th class="sortable">Issuer</th>
           <th class="sortable">Expires (days)</th><th>Flags</th><th>SANs</th>
         </tr></thead>
         <tbody>
         {% for c in tls_certs %}
+          {% set _cn = (c.subject_cn or "")|lower %}
+          {% set _serving = c.resolving_names or [] %}
+          {% set _elsewhere = (c.subject_cn_ips or [])|reject("equalto", c.ip)|list %}
+          {% set _mismatch = _cn and not c.wildcard and _cn not in _serving and _elsewhere %}
           <tr data-row>
             <td>{{ c.ip }}</td>
             <td>{{ c.subject_cn or "" }}</td>
+            <td class="evidence">
+              {% if _serving %}{{ _serving[0] }}{% if _serving|length > 1 %} +{{ _serving|length - 1 }}{% endif %}
+              {% else %}—{% endif %}
+            </td>
             <td class="evidence">{{ c.issuer or "" }}</td>
             <td>
               {% if c.days_remaining is not none %}
@@ -158,6 +192,7 @@
               {% if c.expired %}<span class="pf-badge pf-fail">expired</span>{% endif %}
               {% if c.self_signed %}<span class="pf-badge pf-fail">self-signed</span>{% endif %}
               {% if c.wildcard %}<span class="pill">wildcard</span>{% endif %}
+              {% if _mismatch %}<span class="pf-badge pf-warn">CN resolves elsewhere → {{ _elsewhere|join(", ") }}</span>{% endif %}
             </td>
             <td class="evidence">{{ c.sans|length }}</td>
           </tr>
@@ -227,7 +262,7 @@
               {% if r.error %}<span class="evidence">{{ r.error }}</span>
               {% else %}
                 {% for c in r.checks if not c.passed %}
-                  <div><span class="pf-badge pf-fail">fail</span> {{ c.name }} <span class="evidence">{{ c.detail }}</span></div>
+                  <div><span class="pf-badge pf-fail">fail</span> {{ c.fail_title or c.name }} <span class="evidence">{{ c.detail }}</span></div>
                 {% endfor %}
                 {% if r.pass_count == r.total %}<span class="pf-badge pf-pass">all checks passed</span>{% endif %}
               {% endif %}
@@ -334,6 +369,36 @@
             <td>{{ items[0].evidence.library }}</td>
             <td>{{ items[0].evidence.version }}</td>
             <td class="evidence">{{ items[0].evidence.cve }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {% endif %}
+
+  <!-- Client-side secret exposure (over crawler script bodies; masked previews) -->
+  {% if findings.secret %}
+  <section id="secrets">
+    <div class="head" onclick="toggleSection(this)"><h2>Exposed Secrets</h2><span class="toggle">▾</span></div>
+    <div class="body">
+      <p class="hint">Credential-shaped values found in JavaScript served to browsers.
+        Only a <strong>masked preview</strong> is shown — the raw value is never stored.
+        Confirm at the given script location, then rotate and move server-side.</p>
+      <table data-table="secrets">
+        <thead><tr>
+          <th class="sortable">Severity</th><th class="sortable">Hosts</th>
+          <th class="sortable">Rule</th><th>Preview</th><th>Location</th>
+        </tr></thead>
+        <tbody>
+        {% for ttl, items in findings.secret | groupby('group_key') %}
+          <tr data-row data-severity="{{ items[0].severity }}">
+            <td><span class="{{ items[0].severity | sev_class }}">{{ items[0].severity }}</span></td>
+            {% set hs = items | map(attribute='host') | unique | list %}
+            <td title="{{ hs | join(', ') }}">{{ hs | length }} host{{ '' if hs|length == 1 else 's' }}</td>
+            <td>{{ items[0].evidence.rule }}</td>
+            <td class="evidence">{{ items[0].evidence.preview }}</td>
+            <td class="evidence">{{ items[0].evidence.url }}{% if items[0].evidence.line %}:{{ items[0].evidence.line }}{% endif %}</td>
           </tr>
         {% endfor %}
         </tbody>

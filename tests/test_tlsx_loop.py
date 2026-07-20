@@ -14,7 +14,13 @@ import pytest
 
 from appsecwatch.logging import RunLogger
 from appsecwatch.models import TriagedAsset
-from appsecwatch.recon.tls_san import MAX_ITERATIONS, _parse_cert, tlsx_refeed_loop
+from appsecwatch.models import CertInfo
+from appsecwatch.recon.tls_san import (
+    MAX_ITERATIONS,
+    _parse_cert,
+    annotate_certs_dns,
+    tlsx_refeed_loop,
+)
 
 
 @pytest.fixture
@@ -217,6 +223,57 @@ async def test_loop_captures_cert_inventory(log, tmp_path):
     assert c.ip == "10.0.0.1" and c.subject_cn == "a.example.com"
     assert c.issuer == "Let's Encrypt" and c.sha256 == "abc"
     assert c.self_signed is False and c.expired is False
+
+
+# --------------------------------------------------------------------------- #
+# DNS attribution (annotate_certs_dns) — the owa.saglampay real-world case:
+# owa resolves to .10 (valid cert); an EXPIRED cert whose CN is also owa is served
+# on .173, which only autodiscover resolves to. The dossier must attribute each.
+# --------------------------------------------------------------------------- #
+def test_annotate_certs_dns_flags_cn_resolves_elsewhere():
+    live = [
+        _asset("owa.saglampay.com.tr", ["212.174.65.10"]),
+        _asset("autodiscover.saglampay.com.tr", ["88.255.233.173"]),
+    ]
+    valid = CertInfo(ip="212.174.65.10", subject_cn="owa.saglampay.com.tr")
+    stale = CertInfo(ip="88.255.233.173", subject_cn="owa.saglampay.com.tr", expired=True)
+    annotate_certs_dns([valid, stale], live)
+
+    # The valid cert's IP is where owa actually resolves → clean, CN among serving names.
+    assert valid.resolving_names == ["owa.saglampay.com.tr"]
+    assert valid.subject_cn_ips == ["212.174.65.10"]
+
+    # The expired cert is served on .173, reached via autodiscover — NOT owa.
+    assert stale.resolving_names == ["autodiscover.saglampay.com.tr"]
+    # subject_cn (owa) resolves ELSEWHERE (.10), proving the mismatch without a dig.
+    assert stale.subject_cn_ips == ["212.174.65.10"]
+    assert "owa.saglampay.com.tr" not in stale.resolving_names
+
+
+def test_annotate_certs_dns_multi_homed_and_wildcard():
+    live = [
+        _asset("a.example.com", ["10.0.0.1", "10.0.0.2"]),
+        _asset("b.example.com", ["10.0.0.1"]),
+    ]
+    shared = CertInfo(ip="10.0.0.1", subject_cn="a.example.com")
+    wild = CertInfo(ip="10.0.0.2", subject_cn="*.example.com", wildcard=True)
+    annotate_certs_dns([shared, wild], live)
+
+    # Both names resolve to the shared IP → both listed (sorted).
+    assert shared.resolving_names == ["a.example.com", "b.example.com"]
+    assert shared.subject_cn_ips == ["10.0.0.1", "10.0.0.2"]  # a is multi-homed
+    # Wildcard CN is not a resolvable name → subject_cn_ips stays empty ("unknown").
+    assert wild.subject_cn_ips == []
+    assert wild.resolving_names == ["a.example.com"]
+
+
+def test_annotate_certs_dns_unknown_cn_stays_empty():
+    # subject_cn not among scanned assets → we can't assert where it resolves.
+    live = [_asset("known.example.com", ["10.0.0.9"])]
+    c = CertInfo(ip="10.0.0.9", subject_cn="stranger.other.com")
+    annotate_certs_dns([c], live)
+    assert c.resolving_names == ["known.example.com"]
+    assert c.subject_cn_ips == []      # unknown, never a false "elsewhere"
 
 
 def test_parse_cert_derivations():

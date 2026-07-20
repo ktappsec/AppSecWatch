@@ -159,7 +159,8 @@ def _to_status(manager: JobManager, rec: JobRecord) -> JobStatus:
         completed_stages=completed,
         elapsed_s=_elapsed_for(rec), finding_count=finding_count,
         source=rec.source, schedule_id=rec.schedule_id,
-        coverage=rec.coverage, error=rec.error, links=_links(rec.id),
+        coverage=rec.coverage, degraded=rec.degraded, error=rec.error,
+        links=_links(rec.id),
     )
 
 
@@ -402,6 +403,27 @@ def _install(app: FastAPI, config: ServerConfig) -> None:
             if (f.get("host") or "").lower() == host
             and not ((f.get("ai_verdict") or {}).get("suppressed"))
         ]
+
+    @app.get("/assets/{fqdn}/certs", dependencies=[Depends(require_api_key)])
+    async def asset_certs(fqdn: str, request: Request):
+        """TLS certs actually served to this asset, from its last scan.
+
+        The recon dossier is IP-keyed, so a cert is matched to this host by **IP
+        intersection** (`cert.ip ∈ asset.a_records`), NOT by the cert's self-declared
+        subject/SAN. That way a hostname shows the cert on the IP it truly resolves to
+        (e.g. owa → its valid cert), while an expired cert on a stale IP surfaces only
+        on the host that actually resolves there — not on every host the cert names."""
+        a = await asyncio.to_thread(assets_mgr(request).get, fqdn)
+        if not a or not a.get("last_scan_id"):
+            return []
+        ips = set(a.get("a_records") or [])
+        if not ips:
+            return []
+        run_dir = Path(config.output_root) / a["last_scan_id"]
+        res = await asyncio.to_thread(load_scan_result, run_dir)
+        if not res:
+            return []
+        return [c for c in res.get("tls_certs", []) if c.get("ip") in ips]
 
     @app.get("/assets/{fqdn}/screenshot", dependencies=[Depends(require_api_key)])
     async def asset_screenshot(fqdn: str, request: Request):
@@ -856,6 +878,22 @@ def _warn_if_open(config: ServerConfig) -> None:
         )
 
 
+async def _reconcile_analytics(config: ServerConfig, db: Database) -> None:
+    """Boot-time reconcile: replay any completed run under `output_root` not yet
+    reflected in finding_state (pre-feature scans, or a rebuilt DB over a surviving
+    runs/ volume) so Analytics reflects every scan, not just the last. Best-effort,
+    off-loop, and cheap when nothing is missing."""
+    try:
+        from appsecwatch.api.backfill import reconcile_finding_state
+        stats = await asyncio.to_thread(
+            reconcile_finding_state, Path(config.output_root), db
+        )
+        if stats.get("replayed"):
+            log.info("analytics reconcile at boot: %s", stats)
+    except Exception as e:  # noqa: BLE001 — reconcile must never block startup
+        log.warning("analytics reconcile skipped: %r", e)
+
+
 def create_app(config: ServerConfig) -> FastAPI:
     """Standalone API (routes at root) with its own JobManager lifecycle."""
     # Apply the persisted runtime store onto `config` in place BEFORE the
@@ -876,6 +914,7 @@ def create_app(config: ServerConfig) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         app.state.config = config
+        await _reconcile_analytics(config, db)
         app.state.manager = JobManager(
             config, asset_manager=assets, history=history, suppressions=suppressions,
             nuclei_custom=custom_templates, finding_state=finding_state,
@@ -974,6 +1013,7 @@ def create_combined_app(config: ServerConfig, ui_dir: str | Path) -> FastAPI:
     async def lifespan(parent: FastAPI):
         # The mounted sub-app's lifespan does not run, so own the JobManager here
         # and attach it to the sub-app's state (where the route handlers read it).
+        await _reconcile_analytics(config, db)
         api_app.state.manager = JobManager(
             config, asset_manager=assets, history=history, suppressions=suppressions,
             nuclei_custom=custom_templates, finding_state=finding_state,

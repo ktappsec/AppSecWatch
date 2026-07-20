@@ -122,6 +122,20 @@ docker run --rm -p 8080:8080 -e APPSECWATCH_API_KEYS=key \
   AND a passive **cert dossier** → `CertInfo` (expiry, issuer, serial, sha256,
   self-signed/wildcard, derived in Python) into `state.tls_certs`. Inventory only
   (no findings); surfaced in report.html + `ScanResult.tls_certs` + the UI Certs tab.
+  **The dossier is IP-keyed** — it connects to an IP and reads whatever cert is
+  served; that cert names hosts via `subject_cn`/SANs which may point their DNS at a
+  DIFFERENT IP (shared hosting, a stale/decommissioned endpoint). So a cert here is
+  "observed on IP X", NOT "hostname N's posture" (the authoritative per-host check is
+  `sslscan`, which connects by hostname+SNI). `tls_san.annotate_certs_dns` stamps each
+  cert (post-loop, zero new lookups from the `final_live` set) with `resolving_names`
+  (scanned FQDNs whose DNS resolves to this cert's IP) and `subject_cn_ips` (where the
+  cert's own CN resolves; empty = wildcard/unscanned = "unknown"). The Certs table +
+  report show a "Serving" column and a **"CN resolves elsewhere →"** pill when
+  `subject_cn ∉ resolving_names` and it resolves elsewhere (the real owa.saglampay
+  case: an expired cert on a stale IP reached via a sibling name, not the live host).
+  Per-asset, `GET /assets/{fqdn}/certs` matches by **IP intersection**
+  (`cert.ip ∈ asset.a_records`), never by SAN, so a host shows the cert on the IP it
+  actually resolves to (surfaced in the Assets drawer's Certificates section).
 - The recon spine always runs as a prerequisite. Capability tokens
   (`recon, takeovers, tls, nuclei, headers, supply-chain, zap, ai`) are the stable
   user-facing names; the token→stage mapping + dependency resolution live **only**

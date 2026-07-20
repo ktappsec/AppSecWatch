@@ -11,6 +11,7 @@ import type {
   AssetGroup,
   AssetImportResult,
   Capabilities,
+  CertInfo,
   CustomTemplate,
   CustomTemplateUpsert,
   Finding,
@@ -264,6 +265,11 @@ export const api = {
 
   assetFindings: (fqdn: string) =>
     request<Finding[]>(`/assets/${encodeURIComponent(fqdn)}/findings`),
+
+  // TLS certs served to this asset from its last scan, matched by IP intersection
+  // (cert.ip ∈ asset.a_records) — so a host shows the cert on the IP it resolves to.
+  assetCerts: (fqdn: string) =>
+    request<CertInfo[]>(`/assets/${encodeURIComponent(fqdn)}/certs`),
 
   // Per-host crawler screenshot. Binary + auth'd, so it can't be a plain <img src>
   // (that can't send the Bearer header) — fetch as a blob → object URL. Returns

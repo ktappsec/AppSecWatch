@@ -397,6 +397,48 @@ def test_scan_templates_crud(tmp_path, monkeypatch):
         assert client.get("/scan-templates", headers=H).json() == []
 
 
+def test_asset_certs_matched_by_ip_intersection(tmp_path, monkeypatch):
+    """The per-asset cert view matches certs to the host by IP (cert.ip ∈ a_records),
+    NOT by SAN — so owa (→ .10) shows its VALID cert, and the expired cert on .173
+    surfaces only on autodiscover (which actually resolves there)."""
+    import json as _json
+    from pathlib import Path
+
+    result = {
+        "tls_certs": [
+            {"ip": "212.174.65.10", "subject_cn": "owa.saglampay.com.tr",
+             "expired": False, "days_remaining": 159,
+             "resolving_names": ["owa.saglampay.com.tr"], "subject_cn_ips": ["212.174.65.10"]},
+            {"ip": "88.255.233.173", "subject_cn": "owa.saglampay.com.tr",
+             "expired": True, "days_remaining": -33,
+             "resolving_names": ["autodiscover.saglampay.com.tr"], "subject_cn_ips": ["212.174.65.10"]},
+        ]
+    }
+    with _client(tmp_path, monkeypatch) as client:
+        client.post("/assets", json={"fqdn": "owa.saglampay.com.tr"}, headers=H)
+        client.post("/assets", json={"fqdn": "autodiscover.saglampay.com.tr"}, headers=H)
+        scan_id = "2026-07-20T00-00-00Z-sag"
+        db = client.app.state.assets.db
+        db.execute("UPDATE assets SET last_scan_id=?, a_records=? WHERE fqdn=?",
+                   (scan_id, _json.dumps(["212.174.65.10"]), "owa.saglampay.com.tr"))
+        db.execute("UPDATE assets SET last_scan_id=?, a_records=? WHERE fqdn=?",
+                   (scan_id, _json.dumps(["88.255.233.173"]), "autodiscover.saglampay.com.tr"))
+        run_dir = Path(client.app.state.config.output_root) / scan_id
+        run_dir.mkdir(parents=True, exist_ok=True)
+        (run_dir / "result.json").write_text(_json.dumps(result))
+
+        owa = client.get("/assets/owa.saglampay.com.tr/certs", headers=H).json()
+        assert len(owa) == 1 and owa[0]["ip"] == "212.174.65.10" and owa[0]["expired"] is False
+
+        auto = client.get("/assets/autodiscover.saglampay.com.tr/certs", headers=H).json()
+        assert len(auto) == 1 and auto[0]["ip"] == "88.255.233.173" and auto[0]["expired"] is True
+
+
+def test_asset_certs_endpoint_no_scan(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        assert client.get("/assets/x.com/certs", headers=H).json() == []
+
+
 def test_asset_findings_endpoint_no_scan(tmp_path, monkeypatch):
     with _client(tmp_path, monkeypatch) as client:
         client.post("/assets", json={"fqdn": "x.com"}, headers=H)  # imported, no last scan

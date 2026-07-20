@@ -19,6 +19,7 @@ export type FindingSource =
   | "headers"
   | "csp"
   | "js_lib"
+  | "secret"
   | "zap"
   | "ai_headers"
   | "ai_supply_chain";
@@ -213,6 +214,7 @@ export interface JobStatus {
   elapsed_s: number;
   finding_count: number;
   coverage: Record<string, CoverageEntry>;
+  degraded: boolean;   // httpx probed 0 live servers despite live assets — not a clean scan
   error?: string | null;
   links: JobLinks;
 }
@@ -245,6 +247,10 @@ export interface ScanDiff {
 
 export interface TLSCheck {
   name: string;
+  // Problem-phrased label shown when the check FAILS ("TLS 1.0 enabled").
+  // `name` states the secure condition tested for ("TLS 1.0 disabled") and is
+  // shown for a passing row; surfacing it on a failure reads backwards.
+  fail_title?: string;
   passed: boolean;
   detail?: string;
   severity?: Severity;
@@ -287,6 +293,8 @@ export interface LiveWebServer {
   status_code?: number | null;
   title?: string | null;
   tech: string[];
+  assessed?: boolean;              // false = blocked/error response, not a real app surface
+  not_assessed_reason?: string | null;
 }
 
 export interface CertInfo {
@@ -302,6 +310,11 @@ export interface CertInfo {
   expired: boolean;
   self_signed: boolean;
   wildcard: boolean;
+  // DNS attribution (filled server-side; the dossier is IP-keyed). resolving_names =
+  // scanned FQDNs whose DNS points at this cert's IP; subject_cn_ips = where the
+  // cert's own CN actually resolves (empty = unknown/wildcard).
+  resolving_names: string[];
+  subject_cn_ips: string[];
 }
 
 export type Posture = "CRITICAL" | "HIGH" | "MODERATE" | "LOW";
@@ -326,6 +339,9 @@ export interface ScanResult {
   executive_url?: string | null;
   executive_pdf_url?: string | null;
   diff?: ScanDiff | null;          // cross-scan new/recurring/resolved vs previous scan
+  degraded?: boolean;              // 0 live servers despite live assets — inconclusive scan
+  degraded_reason?: string | null;
+  not_assessed?: number;           // hosts probed but blocked/error (findings suppressed)
 }
 
 /** A row of the unified finding_state table (GET /finding-state). */

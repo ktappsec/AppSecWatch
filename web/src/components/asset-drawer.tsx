@@ -20,7 +20,7 @@ import { api } from "@/lib/api";
 import { relativeTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { SEVERITY_ORDER, STATUS_STYLE } from "@/lib/constants";
-import type { Asset, Finding, FindingStateRow, Severity } from "@/lib/types";
+import type { Asset, CertInfo, Finding, FindingStateRow, Severity } from "@/lib/types";
 
 const STATUS_TONE: Record<string, string> = {
   open: "text-sev-high",
@@ -39,15 +39,17 @@ export function AssetDrawer({
 }) {
   const [findings, setFindings] = React.useState<Finding[] | null>(null);
   const [states, setStates] = React.useState<Record<string, FindingStateRow>>({});
+  const [certs, setCerts] = React.useState<CertInfo[] | null>(null);
   const [shot, setShot] = React.useState<string | null | undefined>(undefined);
   const shotUrl = React.useRef<string | null>(null);
   const fqdn = asset?.fqdn ?? null;
 
   React.useEffect(() => {
     if (!fqdn) return;
-    setFindings(null); setStates({}); setShot(undefined);
+    setFindings(null); setStates({}); setCerts(null); setShot(undefined);
     let live = true;
     api.assetFindings(fqdn).then((f) => live && setFindings(f)).catch(() => live && setFindings([]));
+    api.assetCerts(fqdn).then((c) => live && setCerts(c)).catch(() => live && setCerts([]));
     api.findingState({ host: fqdn, limit: 500 })
       .then((rows) => { if (live) setStates(Object.fromEntries(rows.map((r) => [r.fingerprint, r]))); })
       .catch(() => {});
@@ -168,6 +170,21 @@ export function AssetDrawer({
                 )}
               </Section>
 
+              {/* Certificates — matched to this host by IP (cert.ip ∈ a_records), so it
+                  shows the cert on the IP this host actually resolves to, not every cert
+                  that merely names it in a SAN. */}
+              <Section title="Certificates">
+                {certs === null ? (
+                  <Skeleton className="h-12 w-full" />
+                ) : certs.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">No certs captured for this host&apos;s IP (tlsx skipped or not HTTPS).</p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {certs.map((c, i) => <CertRow key={i} c={c} host={asset.fqdn} />)}
+                  </div>
+                )}
+              </Section>
+
               {/* Connections — contacted domains only (no cookie/storage keys or endpoint paths) */}
               <Section title="Connections">
                 {domains.length ? (
@@ -185,6 +202,48 @@ export function AssetDrawer({
         )}
       </SheetContent>
     </Sheet>
+  );
+}
+
+/** One cert served on an IP this host resolves to. `host` is the asset we're viewing;
+ * when the cert's Subject CN is a different host that resolves elsewhere, we say so —
+ * the cert on this IP was issued primarily for another name. */
+function CertRow({ c, host }: { c: CertInfo; host: string }) {
+  const soon = c.days_remaining != null && (c.expired || c.days_remaining < 30);
+  const cnName = (c.subject_cn ?? "").trim().toLowerCase().replace(/\.$/, "");
+  const elsewhere = (c.subject_cn_ips ?? []).filter((ip) => ip !== c.ip);
+  const primaryElsewhere =
+    !!cnName && !c.wildcard && cnName !== host.toLowerCase().replace(/\.$/, "") && elsewhere.length > 0;
+  return (
+    <div className="rounded-md border border-border bg-secondary/20 px-2.5 py-1.5 text-xs">
+      <div className="flex items-center gap-2">
+        <span className="font-mono text-muted-foreground">{c.ip}</span>
+        <span className="min-w-0 flex-1 truncate">{c.subject_cn ?? "—"}</span>
+        {c.days_remaining != null && (
+          <span className={cn("font-medium", soon ? "text-destructive" : "text-success")}>
+            {c.days_remaining}d
+          </span>
+        )}
+      </div>
+      <div className="mt-1 flex flex-wrap gap-1">
+        {c.expired && <CertFlag className="text-destructive border-destructive/40">expired</CertFlag>}
+        {c.self_signed && <CertFlag className="text-destructive border-destructive/40">self-signed</CertFlag>}
+        {c.wildcard && <CertFlag className="text-muted-foreground border-border">wildcard</CertFlag>}
+        {primaryElsewhere && (
+          <CertFlag className="text-warning border-warning/40">
+            issued for {c.subject_cn} → {elsewhere.join(", ")}
+          </CertFlag>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function CertFlag({ children, className }: { children: React.ReactNode; className?: string }) {
+  return (
+    <span className={cn("inline-block rounded border px-1.5 py-0.5 text-[10px]", className)}>
+      {children}
+    </span>
   );
 }
 
