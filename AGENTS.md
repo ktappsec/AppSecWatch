@@ -33,6 +33,7 @@ appsecwatch/              Python package (the engine)
 ├── stages/            Stage protocol, pipeline assembly, capability registry, ScanState
 ├── recon/ audit/ ai/  tool wrappers (subfinder/dnsx/tlsx/httpx, sslscan/nuclei/crawler, LLM).
 │                      audit/ also: header_checks, js_libs (retire.js-style),
+│                      secrets (client-side secret exposure over JS bodies),
 │                      suppress (manual fingerprints), tech (httpx+AI merge),
 │                      zap_runner (OWASP ZAP active scan over REST — opt-in)
 ├── report/            aggregator + Jinja renderer; two self-contained docs from a
@@ -100,9 +101,18 @@ docker run --rm -p 8080:8080 -e APPSECWATCH_API_KEYS=key \
   Scorecard: insecure protocols disabled, no weak ciphers (RC4/3DES/DES/EXPORT/
   NULL/MD5/anon or `<112`-bit), cert valid + `>30d`, key strength (RSA≥2048/
   EC≥256), sig-algo not SHA1/MD5, secure renegotiation. HSTS lives under `headers`,
-  not here. sslscan is **passive** (no ROBOT/CCS/attack probes) → doesn't trip the
-  WAFs that blocked sslyze. Config `tools.sslscan` (`timeout`+`extra_flags`),
-  concurrency `concurrency.tls`. There is **no sslyze** anymore.
+  not here. sslscan is **passive** (no ROBOT/CCS probes) → doesn't trip the
+  WAFs that blocked sslyze. **Aggressiveness is tuned down in `build_sslscan_cmd`**:
+  it drops the probe categories the scorecard never reads —
+  `--no-heartbleed` (an ACTIVE malformed-heartbeat exploit probe, the loudest
+  "attack scanner" tell), `--no-compression`, `--no-fallback`, `--no-groups` —
+  for fewer handshakes + a quieter signature (protocol/cipher/cert/renegotiation
+  stay on). Within a host, `SslscanConfig.sleep_ms` (throttle-controlled → the
+  `--sleep=<ms>` flag) paces between the many per-cipher handshakes so a full
+  enumeration doesn't burst a hardened edge; it's **0 on normal/aggressive/insane**
+  and **150/400 on gentle/paranoid** (`_PROFILES["tls_sleep_ms"]`, surfaced in
+  `throttle_details`). Cross-host pacing is still `concurrency.tls`. Config
+  `tools.sslscan` (`timeout`+`sleep_ms`+`extra_flags`). There is **no sslyze** anymore.
 - Every subprocess goes through `util/subproc.run_tool` (timing/timeout/cancel events,
   process-group kill via `start_new_session=True`). Don't spawn tools directly.
   NB tool flags must match the **pinned** binary versions (Dockerfile) — e.g. tlsx
@@ -193,7 +203,16 @@ docker run --rm -p 8080:8080 -e APPSECWATCH_API_KEYS=key \
   **screenshot** (`tools.playwright.screenshot`, default true). **Never values or
   bodies** — `runs/<id>/` + `report.html` are shareable/emailable; capturing
   secrets would make a scan a credential-leak vector. `_capture_state` is
-  best-effort (each step wrapped). `audit/surface.py::curated_surface()` projects an
+  best-effort (each step wrapped). **Requests that FAIL at the network layer**
+  (WAF reset/abort, DNS, timeout) fire Playwright's `requestfailed`, NOT
+  `response` — so they're captured separately into `failed_requests`
+  ({url,type,method,failure}, names/reason only). Without this a bot-blocked crawl
+  (only the document loads, 0 subresources) is byte-identical to a script-free
+  page; `_summarize_failed_requests` appends a "crawl degraded / likely
+  bot-blocked" note to `artifact.errors` (→ surfaced in `errors.json` by
+  `CrawlerStage`) when failures are **material** (document itself failed, ≥3
+  failures, or only the document(s) returned) so a few blocked trackers stay
+  quiet. `audit/surface.py::curated_surface()` projects an
   artifact into the names-only `{third_party_domains, script_domains, endpoints,
   cookie_keys, storage_keys}` dict (query strings dropped) — the ONE source reused
   by both the profiler summary and the EASM per-asset surface. Playwright is
@@ -302,13 +321,66 @@ docker run --rm -p 8080:8080 -e APPSECWATCH_API_KEYS=key \
   targets → dns stays in the floor.
 - **5 nmap-like throttle tiers**: paranoid/gentle/normal/aggressive/insane (`_PROFILES`),
   default normal. `/capabilities` returns `throttle_details` (per-profile knob summary)
-  so the UI shows what each tier does. paranoid=httpx threads 1; insane=200.
-- **httpx concurrency = the main block trigger** vs WAF'd targets. `HttpxConfig.threads`
-  → httpx `-threads`, throttle-controlled (paranoid=1, gentle=2, normal=10, aggressive=50, insane=200);
-  previously unset (httpx default 50) and only `-rl` was throttled. A 50-thread burst
-  at a bank's few IPs trips temporary source-blocking → httpx returns 0 live while
-  tlsx (TLS-only) still works. **Use `gentle` for hardened targets** (live A/B:
-  threads 3 → 84 live, threads 50 → 0). This — not the stealth headers — was the fix.
+  so the UI shows what each tier does. paranoid=edge_conc 1; insane=200.
+- **Edge concurrency is ONE shared budget, not a per-tool preference.** Each tier
+  declares `edge_conc` = how many TCP+TLS connections it will hold open against the
+  TARGET at once; every target-facing knob derives from it and **none may exceed
+  it** — httpx `-threads`, tlsx `-c`, `conc_tls` (parallel sslscan hosts),
+  `conc_playwright`. `config._assert_profiles_coherent()` enforces this at import
+  (+ tests); `dnsx_rl` is deliberately OFF this axis (it queries resolvers, not the
+  web edge, and is measured not to contribute). **A tier is only as quiet as its
+  loudest tool.** Two independent triggers are proven:
+  - **httpx `-threads`** — a 50-thread burst at a bank's few IPs trips temporary
+    source-blocking (live A/B: threads 3 → 84 live, threads 50 → 0).
+  - **tlsx `-c`** — 2026-07-17 (kuveytturk.com.tr): `-c 20` blackholed our source
+    IP **~30s into the cert-grab, BEFORE httpx sent a packet**. The table had let
+    tlsx run ~10x the tier's edge concurrency at EVERY tier, so `gentle` paced
+    httpx to 2 threads then opened 20 simultaneous handshakes. tlsx has no `-rl` —
+    `-c` is its only control, so `tlsx_conc == edge_conc`.
+  **Diagnostic tell — read it the right way round**: "httpx returns 0 live while
+  tlsx (TLS-only) still works" is NOT evidence that httpx is too loud. It is the
+  signature of a **prior** stage having already blocked the source IP: tlsx is
+  unaffected by the L7 block it caused and reports full success, while httpx then
+  probes a dead network, hangs every host to its timeout, hits the `recon.py`
+  `budget` deadline, and loses **all** results (`run_tool` buffers to EOF). That
+  misreading is what produced runs showing "0 live servers / 0 findings" with an
+  empty `errors.json`.
+- **The block is a silent packet drop, not an HTTP 403** (`curl` → `code=000
+  rc=28`). Nothing in a response can reveal it, and the tool that causes it
+  reports success — so it only ever surfaces in a LATER stage. To attribute a
+  block to a stage, run an **independent control probe** (one request every 15s to
+  a known-good URL from the same egress IP) alongside the scan and correlate its
+  first failure against `stage_start`. **Use `gentle` for hardened targets.**
+- **Assessability** (`audit/liveness.py`): a probed host is only audited as a real
+  application when its response IS one. `classify_assessability(PageSignals)` →
+  `(assessed, reason)` is the single source of truth: NOT assessed for no-response,
+  `status>=500`, or a WAF/block signature (a block-marker phrase in title/body at any
+  status — e.g. F5 "Request Rejected", the Turkish "Aradığınız sayfaya ulaşılamıyor" —
+  or a 401/403/429 with an empty/tiny body). A form/password input or real 2xx content
+  is always assessed. `PageSignals.status_code` (new, carried from httpx) feeds it;
+  `web_probe` stamps `LiveWebServer.assessed`/`not_assessed_reason`. The pre-report
+  `LivenessGateStage` (`stages/suppress_stage.py`, always on, runs before manual
+  suppression + report) then (a) **coverage-suppresses** every finding on a
+  not-assessed host across ALL sources via an `AIFindingVerdict(source="coverage")`
+  (hidden + uncounted + off the posture, kept in findings.json; never overwrites an
+  existing verdict) so an error/WAF page can't emit fake findings — the report lists
+  those hosts in a distinct "Not assessed / blocked" section (NOT "clean"); and (b)
+  flags a **degraded run** when httpx returned 0 live servers despite ≥1 live asset
+  (edge blocked the probe — nothing audited): `state.degraded`/`degraded_reason` +
+  `summary.not_assessed`, a `StageError` (so `--strict` exits 3), a report/executive
+  banner, and `ScanResult.degraded`/`JobStatus.degraded` (UI "Blocked" badge) so a
+  blocked scan is never shown as a clean, finding-free success. `AIFindingVerdict.source`
+  gained `"coverage"`; both are DB-free (engine-computed, surfaced by the server).
+- **AI-invented severity is clamped** (`ai/analyzer._AI_SEV_CEILING`): `ai_headers`
+  and `ai_supply_chain` findings are capped at **high** at emit time in
+  `_ai_findings_to_findings` (deterministic sources keep the full range), so the AI
+  can never mint its own `critical` and unilaterally drive a CRITICAL posture — the
+  mirror of the suppression `max_severity` ceiling (which caps what it may HIDE). The
+  shape-hint enums (`prompts.py`) no longer offer `critical` as a backstop.
+  `_extract_json` uses `json.JSONDecoder().raw_decode` to take the first top-level
+  object (recovers the "Extra data: trailing object" degradations); `_ai_evidence_cookie`
+  also reads `set-cookie`/`set_cookie`/`value` keys so F5 infra cookies the model
+  labels itself are dropped by the infra-cookie guard.
 - **Stealth identity** (`config.IdentityConfig`, `AppSecWatchConfig.identity`): a
   `preset` (off | chrome-win | chrome-mac | firefox) bundles a coherent browser
   UA + headers + locale; `user_agent`/`headers`/`locale` override/extend it. The
@@ -430,6 +502,31 @@ docker run --rm -p 8080:8080 -e APPSECWATCH_API_KEYS=key \
   (new/recurring/resolved/reopened), persisted onto `JobRecord.diff` + `result.json`.
   The report note + exec risk-trend chart are fed by **injecting** `prior_open` +
   `report_history` into `run_scan` (engine stays DB-free; CLI passes None → degrade).
+  **Group filtering of `analytics()` + `list()` resolves the group from the LIVE
+  asset inventory** (`LEFT JOIN assets a ON a.fqdn = fs.host`,
+  `COALESCE(a."group", fs."group")`), NOT the `finding_state."group"` stamped at
+  scan time. That stamped column is only set for **group-targeted** scans —
+  roots/all-assets scans leave it NULL — so filtering it alone made
+  `GET /analytics?group=` (and the Analytics page's group dropdown, populated from
+  asset groups) return an empty dataset for every group. The join also means
+  re-grouping an asset (Assets bulk bar) re-buckets its findings immediately. NB
+  **`/trends` is unavoidably per-scan** (`scans."group"`): a scan's risk_score/
+  severity snapshot can't be decomposed per-group after the fact, so per-group
+  trends exist ONLY for group-targeted scans (the Analytics trend card shows a
+  group-scoped empty state otherwise).
+- **Boot-time analytics reconcile** (`api/backfill.py::reconcile_finding_state`,
+  called from both server lifespans via `server._reconcile_analytics`): `runs/` is
+  authoritative and `finding_state`/the `scans` severity index are DERIVED, so on
+  startup the server replays any **completed** run under `output_root` NOT yet
+  reflected in `finding_state` (reconstructing `Finding`s from
+  `runs/<id>/result.json`, re-`classify_findings`-ing them since pre-taxonomy rows
+  carry no class/category, and calling `finding_state.sync` + repairing the scans
+  `sev_*`/`risk_score` from `histogram_totals`). Fixes two cases that otherwise
+  make Analytics show only the last audit: scans that completed BEFORE
+  finding_state sync existed, and a rebuilt DB over a surviving runs/ volume. The
+  gate is cheap (a first/last-seen membership query + a dir scan; result.json is
+  read only for unreflected runs) and replay is idempotent (sync upsert), so it is
+  safe on every boot. Best-effort — one malformed run never blocks startup.
 - **Pluggable notifier** (`api/notify.py`): `Channel` protocol + `Notifier.dispatch`
   (best-effort). Ships `InAppChannel` (writes `notifications`) + `WebhookChannel`
   (Slack/Teams/generic, from `ServerConfig.notifier`); `EmailChannel` is a stub
@@ -441,6 +538,31 @@ docker run --rm -p 8080:8080 -e APPSECWATCH_API_KEYS=key \
   `{library,version,url}` onto `CrawlerArtifact.detected_libs` — **never the body**
   (shareable-artifact invariant). `library_inventory()` feeds detected libs into
   asset tech at `_sync_assets`.
+- **Client-side secret scan** (`audit/secrets.py` + the SAME
+  `crawler._scan_script_bodies` loop, `source='secret'`): a deterministic,
+  fully-passive scan for exposed credentials in **external JS bundles** — it reads
+  the bodies the js-lib scan already has in hand (**zero new requests**), runs a
+  curated **precision-first** ruleset (`audit/data/secrets.json`), and records only
+  `{rule,url,line,preview}` onto `CrawlerArtifact.detected_secrets`. `preview` is a
+  **MASKED** boundary-only string (cred-URLs mask just the password; `mask:false`
+  marker rules like `-----BEGIN … PRIVATE KEY-----` show the non-secret literal);
+  the raw value is used only to mask + allow-list check, then discarded — **never
+  persisted** (shareable-artifact invariant holds). An **allow-list matched FIRST**
+  hard-drops known-public tokens (Firebase/Maps `AIza…`, Stripe *publishable*
+  `pk_…`, Sentry DSN, reCAPTCHA, GA/GTM, Algolia search) so a bank report isn't
+  flooded with public-by-design keys; no generic high-entropy catch-all in v1.
+  Per-rule severity: `critical` (private keys, cloud secret keys, DB conn strings)
+  / `high` (vendor secret tokens) / `medium`. It's a **deterministic** source so
+  `_AI_SEV_CEILING` does NOT clamp it (a real leak can be `critical`); it flows
+  through `ai.triage` normally, but `high`+ sits above the suppression
+  `max_severity` ceiling → **structurally immune to AI hiding**. `check_id =
+  secret.<rule>.<masked-fingerprint>` gives cross-scan/-host identity from the
+  preview (no hash) → same key collapses to one report row + drives finding_state
+  (rotate → old resolves, new opens). Rides `CrawlerStage` like js-libs (**no new
+  capability token**; gated by `supply-chain`), kill-switch `cfg.secrets.enabled`
+  (default on). Taxonomy `secrets.exposed-key` (category `crypto`). **v1 limit:
+  external `<script>` bodies only** — inline `<script>` blocks + XHR/JSON response
+  bodies + generic-entropy matching + user-editable rules are out of scope.
 - **Report language** (`ReportConfig.language` en|tr): when `tr`, the AI profile
   summary + executive-summary narrative are written in Turkish and executive.html
   chrome is Turkish (`_EXEC_STRINGS`); vuln/finding NAMES + technical report stay

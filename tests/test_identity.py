@@ -95,4 +95,6 @@ async def test_httpx_cmd_includes_identity(tmp_path, monkeypatch):
     assert "Accept-Language: tr-TR" in hs and "X-Forwarded-For: 9.9.9.9" in hs
     # concurrency knob is passed (the real anti-block lever)
     cmd = captured["cmd"]
-    assert "-threads" in cmd and cmd[cmd.index("-threads") + 1] == "25"
+    # Bare HttpxConfig() → the field default, which equals the `normal` tier's
+    # httpx_threads (the profile table's "normal row == every field's own default").
+    assert "-threads" in cmd and cmd[cmd.index("-threads") + 1] == "10"

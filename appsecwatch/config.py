@@ -136,6 +136,19 @@ class HeadersConfig(BaseModel):
     disabled_checks: list[str] = Field(default_factory=list)
 
 
+class SecretsConfig(BaseModel):
+    """Client-side secret exposure scanning (source='secret').
+
+    A deterministic, fully-passive scan over the JS bodies the crawler already
+    reads in memory (no extra requests) — it rides `CrawlerStage` like the
+    vulnerable-JS-library scan, so it is gated by the `supply-chain` capability.
+    Only a masked preview of a match is ever persisted (never the raw value), so
+    runs/<id>/ stays a shareable artifact set. Kill-switch only in v1; the ruleset
+    is a bundled, curated, precision-first DB (audit/data/secrets.json).
+    """
+    enabled: bool = True
+
+
 class ToolBlock(BaseModel):
     extra_flags: list[str] = Field(default_factory=list)
 
@@ -145,24 +158,31 @@ class DnsxConfig(ToolBlock):
 
 
 class TlsxConfig(ToolBlock):
-    # tlsx parallel connection threads (-c). tlsx has no rate-limit flag; -c is
-    # its real pacing knob. Used for the recon cert-grab against target:443.
-    concurrency: int = 100
+    # tlsx parallel connection threads (-c). tlsx has NO rate-limit flag, so -c is
+    # its ONLY pacing knob — it must track the tier's edge concurrency (see
+    # `_PROFILES`). Used for the recon cert-grab against target:443.
+    concurrency: int = 10
 
 
 class SslscanConfig(ToolBlock):
     # sslscan is sequential per host; the cross-host pacing knob is
-    # `concurrency.tls` (throttle-controlled). No anti-WAF "slow" flag needed.
+    # `concurrency.tls` (throttle-controlled). WITHIN a host, `sleep_ms`
+    # (throttle-controlled → the `--sleep` flag) paces between the many per-cipher
+    # handshakes so a full enumeration doesn't burst a hardened target's edge.
+    # build_sslscan_cmd also drops the probe categories the scorecard never reads
+    # (heartbleed/compression/fallback/groups) — fewer handshakes, quieter signature.
     timeout: int = 300              # per-host outer timeout (seconds)
+    sleep_ms: int = 0               # `--sleep` between handshakes; 0 = disabled (fast tiers)
 
 
 class HttpxConfig(ToolBlock):
     rate_limit: int = 100
-    # httpx -threads (concurrent connections). THE dominant blocking trigger
-    # against hardened/WAF'd targets: 50 (httpx's own default) floods a bank's few
-    # IPs and trips temporary source-blocking; ~2-3 enumerates cleanly. Set by the
-    # throttle profile unless the operator pins it.
-    threads: int = 25
+    # httpx -threads (concurrent connections to the target edge). 50 (httpx's own
+    # default) floods a bank's few IPs and trips temporary source-blocking; ~2-3
+    # enumerates cleanly. Set by the throttle profile unless the operator pins it.
+    # NB httpx is NOT the only blocking trigger — every target-facing tool shares
+    # one edge-concurrency budget; see `_PROFILES`.
+    threads: int = 10
     timeout: int = 10
 
 
@@ -420,40 +440,97 @@ class ToolsConfig(BaseModel):
 # unset `throttle` (=> normal) reproduces prior behavior exactly. Each value is
 # applied ONLY to a field the user did not explicitly set (see _apply_throttle),
 # so any per-tool field in the YAML always overrides the profile.
+# Throttle profiles — an nmap-like timing ladder over two INDEPENDENT axes:
+#
+#   1. Edge concurrency (`edge_conc`) — how many TCP+TLS connections a tier is
+#      willing to have open against the TARGET's edge at once. Every target-facing
+#      knob derives from it and NONE may exceed it: httpx `-threads`, tlsx `-c`,
+#      parallel sslscan hosts (`conc_tls`), and browser contexts
+#      (`conc_playwright`). A tier is only as quiet as its LOUDEST tool, so this
+#      is one shared budget, not a per-tool preference.
+#   2. Request rate (`*_rl`) — per-tool requests/sec caps.
+#
+# `dnsx_rl` sits deliberately OFF the edge axis: it queries DNS resolvers, not the
+# target's web edge, and is measured not to contribute to source-blocking.
+#
+# WHY THIS IS A SHARED BUDGET (2026-07-17, kuveytturk.com.tr): tlsx at `-c 20`
+# blackholed our source IP ~30s into the cert-grab, BEFORE httpx sent a single
+# packet. The old table let tlsx run ~10x the tier's edge concurrency at EVERY
+# tier, so `gentle` paced httpx to 2 threads and then immediately opened 20
+# simultaneous handshakes. The block is a silent packet drop (no 403, no response)
+# and tlsx reports full success while causing it — so the damage surfaced only in
+# the NEXT stage, as httpx finding "0 live servers" against a dead network. tlsx
+# has no `-rl`, so `-c` is the entire control: keep `tlsx_conc == edge_conc`.
 _PROFILES: dict[str, dict[str, Any]] = {
-    # nmap-like timing ladder. httpx_threads is the dominant block trigger vs WAF'd
-    # targets (see stealth/blocking memory) — paranoid=1, insane=200.
     "paranoid": {  # T0 — max stealth: ~serial, tiny rates, long waits
+        "edge_conc": 1,
         "httpx_rl": 2, "httpx_threads": 1, "nuclei_rl": 2, "takeovers_rl": 2,
-        "dnsx_rl": 50, "tlsx_conc": 5,
-        "tls_timeout": 900,
+        "dnsx_rl": 50, "tlsx_conc": 1,
+        "tls_timeout": 900, "tls_sleep_ms": 400,
         "conc_default": 1, "conc_tls": 1, "conc_playwright": 1,
     },
-    "gentle": {
+    "gentle": {  # T1 — hardened/WAF'd targets (banks). Slow but it completes.
+        "edge_conc": 2,
         "httpx_rl": 10, "httpx_threads": 2, "nuclei_rl": 10, "takeovers_rl": 10,
-        "dnsx_rl": 100, "tlsx_conc": 20,
-        "tls_timeout": 600,
+        "dnsx_rl": 100, "tlsx_conc": 2,
+        "tls_timeout": 600, "tls_sleep_ms": 150,
         "conc_default": 3, "conc_tls": 2, "conc_playwright": 2,
     },
     "normal": {
+        "edge_conc": 10,
         "httpx_rl": 100, "httpx_threads": 10, "nuclei_rl": 100, "takeovers_rl": 50,
-        "dnsx_rl": 1000, "tlsx_conc": 100,
-        "tls_timeout": 300,
+        "dnsx_rl": 1000, "tlsx_conc": 10,
+        "tls_timeout": 300, "tls_sleep_ms": 0,
         "conc_default": 10, "conc_tls": 5, "conc_playwright": 5,
     },
     "aggressive": {
+        "edge_conc": 50,
         "httpx_rl": 500, "httpx_threads": 50, "nuclei_rl": 500, "takeovers_rl": 150,
-        "dnsx_rl": 5000, "tlsx_conc": 300,
-        "tls_timeout": 180,
+        "dnsx_rl": 5000, "tlsx_conc": 50,
+        "tls_timeout": 180, "tls_sleep_ms": 0,
         "conc_default": 20, "conc_tls": 10, "conc_playwright": 8,
     },
     "insane": {  # T5 — fastest, loud: will trip WAFs (httpx default 50 already did)
+        "edge_conc": 200,
         "httpx_rl": 1000, "httpx_threads": 200, "nuclei_rl": 1000, "takeovers_rl": 300,
-        "dnsx_rl": 10000, "tlsx_conc": 500,
-        "tls_timeout": 120,
+        "dnsx_rl": 10000, "tlsx_conc": 200,
+        "tls_timeout": 120, "tls_sleep_ms": 0,
         "conc_default": 40, "conc_tls": 20, "conc_playwright": 15,
     },
 }
+
+# Every knob that opens a connection to the TARGET edge. `conc_default` is absent
+# on purpose: it is not target-facing (and is currently read only for logging).
+_EDGE_FACING_KNOBS: tuple[str, ...] = (
+    "httpx_threads", "tlsx_conc", "conc_tls", "conc_playwright",
+)
+
+
+def _assert_profiles_coherent() -> None:
+    """Fail fast if a tier lets a target-facing tool outrun its edge budget.
+
+    Guards the class of bug that made `gentle` throttle httpx to 2 threads while
+    tlsx opened 20 — a tool that exceeds the tier silently poisons every stage
+    after it, because the block lands on the source IP, not on the loud tool.
+    """
+    for name, p in _PROFILES.items():
+        edge = p["edge_conc"]
+        for knob in _EDGE_FACING_KNOBS:
+            if p[knob] > edge:
+                raise ValueError(
+                    f"throttle profile {name!r} is incoherent: {knob}={p[knob]} "
+                    f"exceeds edge_conc={edge}"
+                )
+        # tlsx has no rate limit; -c is its only control, so it must SPEND the
+        # whole budget and no more — anything less needlessly slows the cert grab.
+        if p["tlsx_conc"] != edge:
+            raise ValueError(
+                f"throttle profile {name!r}: tlsx_conc={p['tlsx_conc']} must equal "
+                f"edge_conc={edge} (tlsx has no -rl; -c is its only pacing knob)"
+            )
+
+
+_assert_profiles_coherent()
 
 
 # Ordered profile names (paranoid → insane) + a summary for the UI/API.
@@ -482,6 +559,8 @@ class AppSecWatchConfig(BaseModel):
     llm: LLMConfig
     ai: AIConfig = Field(default_factory=AIConfig)
     headers: HeadersConfig = Field(default_factory=HeadersConfig)
+    # Client-side secret exposure scan (rides the crawler; passive). Kill-switch only.
+    secrets: SecretsConfig = Field(default_factory=SecretsConfig)
     # Stealth identity (UA + headers) applied to httpx/nuclei/crawler.
     identity: IdentityConfig = Field(default_factory=IdentityConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
@@ -507,6 +586,7 @@ class AppSecWatchConfig(BaseModel):
         fill(self.tools.dnsx, "rate_limit", prof["dnsx_rl"])
         fill(self.tools.tlsx, "concurrency", prof["tlsx_conc"])
         fill(self.tools.sslscan, "timeout", prof["tls_timeout"])
+        fill(self.tools.sslscan, "sleep_ms", prof["tls_sleep_ms"])
         fill(self.concurrency, "default", prof["conc_default"])
         fill(self.concurrency, "tls", prof["conc_tls"])
         fill(self.concurrency, "playwright", prof["conc_playwright"])

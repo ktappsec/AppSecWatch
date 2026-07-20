@@ -500,8 +500,9 @@ export default function NewScanPage() {
           </p>
           {details && (
             <p className="text-xs text-muted-foreground">
-              <span className="capitalize font-medium">{throttle}</span>: httpx {String(details.httpx_threads)} threads / {String(details.httpx_rl)} rps ·
-              nuclei {String(details.nuclei_rl)} rps · tlsx conc {String(details.tlsx_conc)} · dnsx {String(details.dnsx_rl)} rps
+              <span className="capitalize font-medium">{throttle}</span>: max {String(details.edge_conc)} concurrent connections to the target ·
+              httpx {String(details.httpx_threads)} threads / {String(details.httpx_rl)} rps ·
+              nuclei {String(details.nuclei_rl)} rps · tlsx -c {String(details.tlsx_conc)} · dnsx {String(details.dnsx_rl)} rps
             </p>
           )}
           <div className="flex items-center gap-3">
