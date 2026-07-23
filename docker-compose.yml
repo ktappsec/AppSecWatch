@@ -5,10 +5,14 @@
 # and appsecwatch.db. A named volume survives `docker compose up --build` and
 # `docker rm`, so config + assets are NOT wiped on rebuild (the common gotcha).
 #
-# Usage:
-#   echo "my-secret-key" > api.key   (or set APPSECWATCH_API_KEYS inline)
+# Usage (local):
+#   echo "APPSECWATCH_API_KEYS=$(openssl rand -hex 32)" > .env
 #   docker compose up --build
 #   → UI at http://localhost:8080/ , API at /api/...
+#
+# Usage (a server): don't drive compose by hand — see DEPLOYMENT.md.
+#   sudo bash scripts/provision.sh   # once: docker + source + .env
+#   sudo bash scripts/deploy.sh      # every update: pull + build + restart + health
 #
 # Bind-mount the MMDB (GeoLite2-ASN) read-only so triage/ASN lookups work.
 
@@ -18,7 +22,11 @@ services:
     image: appsecwatch
     command: ["serve", "--host", "0.0.0.0", "--port", "8080"]
     ports:
-      - "8080:8080"
+      # Published on 127.0.0.1 by default: reachable from the box only, which is
+      # what a Cloudflare Tunnel (or an SSH tunnel) in front of it wants. Auth is
+      # the only scope ceiling this server has, so it should not be on a public
+      # interface by accident. Set APPSECWATCH_BIND=0.0.0.0 to expose it directly.
+      - "${APPSECWATCH_BIND:-127.0.0.1}:8080:8080"
     environment:
       # REQUIRED before exposing the server — without it auth is OPEN (no scope ceiling).
       APPSECWATCH_API_KEYS: "${APPSECWATCH_API_KEYS:?set APPSECWATCH_API_KEYS}"
@@ -34,8 +42,11 @@ services:
   # drives it over REST at http://zap:8090. NOT published to the host (internal
   # only). To enable: set ZAP_API_KEY, then in the UI Settings set the zap config
   # (enabled: true, base_url: http://zap:8090, api_key: <ZAP_API_KEY>).
-  # Remove this service entirely if you don't use active scanning.
+  # It sits behind a compose PROFILE, so a plain `docker compose up -d` never
+  # starts it — matching the engine-side rule that `zap` runs only via an explicit
+  # `--only zap`. Start it with:  docker compose --profile zap up -d
   zap:
+    profiles: ["zap"]
     image: ghcr.io/zaproxy/zaproxy:stable
     command: >-
       zap.sh -daemon -host 0.0.0.0 -port 8090

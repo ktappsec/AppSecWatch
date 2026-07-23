@@ -7,6 +7,12 @@ runs/
 *.local.yaml
 .DS_Store
 
+# deployment secrets — scripts/provision.sh generates .env INSIDE the checkout
+# on the server (it holds APPSECWATCH_API_KEYS). Never let it be committed.
+.env
+.env.*
+!.env.example
+
 # build / state / caches
 node_modules/
 web/.next/

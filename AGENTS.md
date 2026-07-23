@@ -18,6 +18,7 @@ artifact set under `runs/<id>/`. Target deployment: Docker on Debian.
 | CLI + config + run layout + Python API | `API.md` | Reference |
 | Web API contract & design | `WEB_API_PLAN.md` | Reference (implemented in `appsecwatch/api/`) |
 | UI stack & design system | `UI-SPEC.md` | Reference (implemented in `web/`) |
+| Server deploy / day-2 ops | `DEPLOYMENT.md` | Reference (implemented in `scripts/`) |
 | Top-level overview | `DOCS.md` | Summary |
 
 If you change behavior, update the matching doc in the same change.
@@ -45,6 +46,12 @@ appsecwatch/              Python package (the engine)
                        suppressions, nuclei_catalog, nuclei_custom (+ generator)
 tests/                 pytest suite (asyncio_mode=auto). External tools are mocked.
 web/                   Next.js 16 UI (AppSecMan design system) over the Web API
+scripts/               server lifecycle (see DEPLOYMENT.md): provision.sh (once, a
+                       bare Debian VM → docker + source at /opt/appsecwatch + a
+                       generated .env), deploy.sh (every update: pull → build →
+                       up -d → /api/healthz), backup.sh (the data volume).
+                       Neither provision nor deploy ever touches .env or the
+                       `appsecwatch-data` volume.
 Dockerfile             multi-stage, layer-cached: deps installed in layers keyed
                        only on pyproject.toml / package-lock.json, source copied
                        LAST + BuildKit cache mounts — a code edit rebuilds in ~10s
