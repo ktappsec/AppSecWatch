@@ -14,11 +14,47 @@ Both are idempotent and run as root. Neither ever touches `.env` or the
 
 ## 1. Requirements
 
-A Debian/Ubuntu VM. Modest CPU/RAM is fine (2 vCPU / 4 GB runs it), but **the
-image build needs ~12 GB of free disk** — it carries Chromium, the nuclei
-template set, five ProjectDiscovery Go binaries and a Node build stage.
-`provision.sh` warns if the disk is smaller; a build that fills the disk leaves a
-half-written layer you have to clear with `docker system prune -af`.
+A Debian/Ubuntu VM. **The image build needs ~12 GB of free disk** — it carries
+Chromium, the nuclei template set, five ProjectDiscovery Go binaries and a Node
+build stage. `provision.sh` warns if the disk is smaller; a build that fills the
+disk leaves a half-written layer you have to clear with `docker system prune -af`.
+
+### Sizing
+
+2 vCPU / 4 GB runs the default `normal` throttle tier. The crawler launches **one**
+Chromium process and gates concurrent contexts with a semaphore
+(`conc_playwright`), so memory scales with the tier, not the host count:
+
+| tier | `conc_playwright` | rough crawler peak |
+|---|---|---|
+| paranoid | 1 | ~0.3 GB |
+| gentle | 2 | ~0.5 GB |
+| **normal** (default) | **5** | **~0.7–1.2 GB** |
+| aggressive | 8 | ~1.5 GB |
+| insane | 15 | ~2.5 GB+ |
+
+Add nuclei (~0.3–0.8 GB with the full template set) and the engine itself
+(~0.2–0.5 GB on a large estate). On 4 GB, `normal` fits with headroom;
+**`aggressive` and `insane` risk an OOM kill** — and they are the loud tiers
+anyway, so raising throttle costs you memory *and* stealth at once.
+
+CPU is the throughput limit, not a correctness one: rendering 5 pages on 2 cores
+with `wait_until: networkidle` makes the crawl the slowest stage of a scan.
+
+Two host-level notes:
+
+- **`shm_size: 1gb` is set in `docker-compose.yml` and is load-bearing.** Docker's
+  64 MB `/dev/shm` default crashes Chromium's renderer on heavy pages, and the
+  crawler catches that into `artifact.errors` — so the host silently reports no
+  scripts and no resources, indistinguishable from a script-free page. Don't
+  remove it.
+- **GCP images ship with no swap.** An OOM kills the container outright rather
+  than degrading. If you plan to run `aggressive`, add a swapfile first:
+  ```sh
+  sudo fallocate -l 4G /swapfile && sudo chmod 600 /swapfile
+  sudo mkswap /swapfile && sudo swapon /swapfile
+  echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+  ```
 
 ## 2. First deploy
 

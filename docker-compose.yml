@@ -35,6 +35,15 @@ services:
     volumes:
       - appsecwatch-data:/data/runs                       # persistent: runs + .config + appsecwatch.db
       - ./mmdb:/data/mmdb:ro                            # GeoLite2-ASN.mmdb (set mmdb_path in the UI)
+    # Chromium's renderer uses /dev/shm for shared memory and blows past Docker's
+    # 64MB default on any content-heavy page. Playwright reports that as a renderer
+    # crash, which `crawler.py` catches into artifact.errors — so the host silently
+    # yields NO scripts and NO resources and reads as a script-free page (and can
+    # even be mislabelled "likely bot-blocked"). Bad data, not a loud failure.
+    # NB Playwright's docs suggest `ipc: host` instead; we deliberately don't —
+    # this container renders hostile attacker-controlled pages, so sharing the
+    # host IPC namespace is the wrong trade. A bigger private /dev/shm is enough.
+    shm_size: 1gb
     restart: unless-stopped
 
   # OPTIONAL OWASP ZAP sidecar — only needed for the opt-in `zap` active-scan
