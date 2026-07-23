@@ -28,6 +28,9 @@ from appsecwatch.config import AppSecWatchConfig
 
 # Env var names (secrets). Kept here so auth/security import one source of truth.
 ENV_API_KEYS = "APPSECWATCH_API_KEYS"
+# `user:password` — the browser-facing front door (see auth.BasicAuthMiddleware).
+# The password may itself contain ':', so only the FIRST colon separates.
+ENV_BASIC_AUTH = "APPSECWATCH_BASIC_AUTH"
 ENV_WEBHOOK_SECRET = "APPSECWATCH_WEBHOOK_SECRET"
 ENV_LLM_API_KEY = "APPSECWATCH_LLM_API_KEY"
 # Path to the writable runtime config store (overrides the default under output_root).
@@ -100,10 +103,19 @@ class ServerConfig(BaseModel):
     base_config_raw: dict[str, Any] = Field(default_factory=dict, exclude=True)
     api_keys: list[str] = Field(default_factory=list, exclude=True)
     webhook_secret: str | None = Field(default=None, exclude=True)
+    # HTTP Basic front door. Unlike `api_keys` this also covers the STATIC UI, which
+    # is otherwise served anonymously (server.py mounts it with no dependency).
+    basic_auth_user: str | None = Field(default=None, exclude=True)
+    basic_auth_password: str | None = Field(default=None, exclude=True)
 
     @property
     def auth_enabled(self) -> bool:
         return bool(self.api_keys)
+
+    @property
+    def basic_auth_enabled(self) -> bool:
+        # A blank password would make the prompt a formality, so require both.
+        return bool(self.basic_auth_user and self.basic_auth_password)
 
 
 def _resolve_base_config(node: Any, server_yaml_path: Path | None) -> dict[str, Any]:
@@ -122,17 +134,36 @@ def _resolve_base_config(node: Any, server_yaml_path: Path | None) -> dict[str, 
     raise ValueError("`base_config` must be a path string or an inline mapping")
 
 
-def _overlay_secrets(raw: dict[str, Any]) -> tuple[list[str], str | None, dict[str, Any]]:
+def parse_basic_auth(value: str | None) -> tuple[str | None, str | None]:
+    """`user:password` → (user, password); (None, None) when unset/malformed.
+
+    Split on the FIRST colon only: RFC 7617 forbids a colon in the username but
+    explicitly allows one in the password, and a generated passphrase may contain
+    one. A value with no colon, or with an empty half, is treated as unset rather
+    than as a half-configured gate that would 401 every request.
+    """
+    if not value:
+        return None, None
+    user, sep, password = value.partition(":")
+    if not sep or not user.strip() or not password:
+        return None, None
+    return user.strip(), password
+
+
+def _overlay_secrets(
+    raw: dict[str, Any],
+) -> tuple[list[str], str | None, tuple[str | None, str | None], dict[str, Any]]:
     """Pull secrets from the environment (which override any file values)."""
     keys_env = os.environ.get(ENV_API_KEYS, "")
     api_keys = [k.strip() for k in keys_env.split(",") if k.strip()]
     webhook_secret = os.environ.get(ENV_WEBHOOK_SECRET) or None
+    basic = parse_basic_auth(os.environ.get(ENV_BASIC_AUTH))
 
     llm_key = os.environ.get(ENV_LLM_API_KEY)
     if llm_key:
         raw.setdefault("llm", {})
         raw["llm"]["api_key"] = llm_key
-    return api_keys, webhook_secret, raw
+    return api_keys, webhook_secret, basic, raw
 
 
 # --------------------------------------------------------------------------- #
@@ -300,11 +331,13 @@ def load_server_config(path: str | Path | None) -> ServerConfig:
         base_node = data.pop("base_config", None)
 
     base_raw = _resolve_base_config(base_node, p) if base_node is not None else {}
-    api_keys, webhook_secret, base_raw = _overlay_secrets(base_raw)
+    api_keys, webhook_secret, (basic_user, basic_password), base_raw = _overlay_secrets(base_raw)
 
     return ServerConfig(
         **data,
         base_config_raw=base_raw,
         api_keys=api_keys,
         webhook_secret=webhook_secret,
+        basic_auth_user=basic_user,
+        basic_auth_password=basic_password,
     )

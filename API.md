@@ -220,10 +220,20 @@ appsecwatch serve [-c <server.yaml>] [--host HOST] [--port PORT] [--ui-dir DIR]
 | `--ui-dir` | path | `$APPSECWATCH_UI_DIR` | Serve a built UI (Next.js static export) at `/` with the API mounted under `/api`. When unset the API serves at root. |
 
 The API's own auth secrets are read from the environment (see §9):
-`APPSECWATCH_API_KEYS` (a comma-separated allowlist — **if unset the API runs OPEN**)
-and optional `APPSECWATCH_WEBHOOK_SECRET`. There is **no scan-target allowlist** — the
-per-scan `roots` is the only scope, so with auth OPEN anyone who can reach the API
-can scan any host; keep `APPSECWATCH_API_KEYS` set before exposing it.
+`APPSECWATCH_API_KEYS` (a comma-separated allowlist — **if unset the API runs OPEN**),
+`APPSECWATCH_BASIC_AUTH`, and optional `APPSECWATCH_WEBHOOK_SECRET`. There is **no
+scan-target allowlist** — the per-scan `roots` is the only scope, so with auth OPEN
+anyone who can reach the API can scan any host; keep `APPSECWATCH_API_KEYS` set
+before exposing it.
+
+**The two credentials cover different surfaces.** `APPSECWATCH_API_KEYS` is enforced
+by a per-route dependency, so it guards `/api/*` only; with `--ui-dir` the built UI is
+mounted as static files with **no** dependency, leaving the SPA shell anonymous.
+`APPSECWATCH_BASIC_AUTH` (`user:password`, first colon splits) is an HTTP Basic
+middleware on the parent app and covers **everything**, so it is what to set when a
+browser can reach the server. Either is sufficient: a valid API key is never
+challenged (so `curl` and the `?api_key=` report links work un-prompted), and clearing
+the Basic prompt also satisfies the API. `GET /healthz` is never challenged.
 
 **Runtime config is UI-managed (store-primary).** `serve -c` is optional;
 `server.yaml` only seeds first boot. A writable JSON store (`APPSECWATCH_CONFIG_STORE`,
@@ -1191,7 +1201,8 @@ By default a completed scan exits 0 even if individual tools or hosts failed —
 | `APPSECWATCH_MMDB_PATH` | `/data/mmdb/GeoLite2-ASN.mmdb` | Set in the Docker image as a hint; AppSecWatch itself reads the **optional** `mmdb_path` from the YAML (display-only ASN/org enrichment — it does not gate a run). |
 | `PATH` | `/opt/tools/bin:…` | The Docker image installs all Go binaries here. |
 | `PYTHONUNBUFFERED` | `1` | Set in the image so logs flush in real time. |
-| `APPSECWATCH_API_KEYS` | *(unset)* | **`serve` only.** Comma-separated API keys for `Authorization: Bearer`. **If unset the API runs OPEN.** |
+| `APPSECWATCH_API_KEYS` | *(unset)* | **`serve` only.** Comma-separated API keys for `Authorization: Bearer` (also `X-API-Key`, `?api_key=`). Guards `/api/*` **only** — not the static UI. **If unset the API runs OPEN.** |
+| `APPSECWATCH_BASIC_AUTH` | *(unset)* | **`serve` only.** `user:password` HTTP Basic front door covering **every** path including the built UI (only the first colon splits, so the password may contain colons). Either this or an API key is sufficient; `/healthz` is never challenged. A malformed value disables the gate rather than locking everyone out. |
 | `APPSECWATCH_WEBHOOK_SECRET` | *(unset)* | **`serve` only.** HMAC-SHA256 signing secret for webhook callbacks (`X-AppSecWatch-Signature`). |
 | `APPSECWATCH_LLM_API_KEY` | *(unset)* | **`serve` only.** *Seeds* `base_config.llm.api_key` on first boot; thereafter the key is UI-managed and persists in the config store (masked on `GET /config`). |
 | `APPSECWATCH_CONFIG_STORE` | `<output_root>/.config/server-config.json` | **`serve` only.** Path to the writable runtime config store (the UI-managed source of truth that overlays `server.yaml`). Written `0600`. |

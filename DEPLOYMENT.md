@@ -77,18 +77,51 @@ in about ten seconds.
 
 The port is published on **`127.0.0.1:8080` by default**
 (`APPSECWATCH_BIND` in `.env`), so nothing is reachable from outside the box
-until you put a tunnel in front of it. That default is deliberate: **API auth is
-this server's only scope ceiling.** There is no target allowlist — a caller with
-a key can scan any root they name — so an unauthenticated or publicly-bound
-instance is a genuine hazard, not just untidy. `deploy.sh` refuses to start if
-`APPSECWATCH_API_KEYS` is empty.
+until you put a tunnel in front of it. That default is deliberate: **auth is
+this server's only scope ceiling.** There is no target allowlist — an
+authenticated caller can scan any root they name — so an unauthenticated or
+publicly-bound instance is a genuine hazard, not just untidy.
 
-Point a Cloudflare Tunnel at `http://localhost:8080`. Put Cloudflare Access in
-front of the hostname if you want a second gate; the API key still applies
-underneath.
+Point a Cloudflare Tunnel at `http://localhost:8080`. To expose the port
+directly instead, set `APPSECWATCH_BIND=0.0.0.0` in `.env`, re-run `deploy.sh`,
+and firewall it yourself.
 
-To expose the port directly instead, set `APPSECWATCH_BIND=0.0.0.0` in `.env`
-and re-run `deploy.sh` — and firewall it yourself.
+### The two credentials
+
+They cover **different surfaces**, which is why both exist:
+
+| | `APPSECWATCH_API_KEYS` | `APPSECWATCH_BASIC_AUTH` |
+|---|---|---|
+| form | `Bearer` / `X-API-Key` / `?api_key=` | HTTP Basic (`user:password`) |
+| covers | `/api/*` only | **everything, including the static UI** |
+| for | scripts, CI, report links | humans in a browser |
+
+The API key is a per-route dependency, and the built UI is mounted as plain
+static files with no dependency at all — so **the API key alone leaves the whole
+SPA shell readable** by anyone who can reach the port. `APPSECWATCH_BASIC_AUTH`
+is the front door that closes that, and it is what makes a public tunnel safe.
+`deploy.sh` hard-fails on an empty API key and warns on a missing Basic pair.
+
+Either credential is sufficient on its own:
+
+- a request with a valid API key is **never** challenged, so `curl`, CI, and the
+  `?api_key=` report/executive links keep working un-prompted;
+- clearing the Basic prompt **also** satisfies the API, so a browser user does
+  not additionally have to paste the 64-char key into Settings.
+
+Both authorise the same thing (driving scans), so neither grants more than the
+other. `provision.sh` generates both and prints them.
+
+`GET /healthz` is deliberately never challenged — `deploy.sh` and container
+probes poll it, and a health check that needs credentials reports the wrong thing
+exactly when credentials are what broke. It returns only status and version.
+
+Only the **first** colon in `APPSECWATCH_BASIC_AUTH` separates user from
+password, so the password may contain colons. A malformed value (no colon, empty
+half) disables the gate rather than creating one nobody can pass.
+
+To rotate either, edit `.env` and `docker compose restart appsecwatch` — no
+rebuild. Cloudflare Access in front of the tunnel stacks cleanly on top of both.
 
 ## 4. Configure before scanning
 

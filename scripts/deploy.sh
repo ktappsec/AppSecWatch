@@ -47,6 +47,14 @@ if ! grep -qE '^APPSECWATCH_API_KEYS=.+' "$INSTALL_DIR/.env"; then
   exit 1
 fi
 
+# Not fatal (the API is still key-protected), but the static UI is not: the API
+# key is a per-route dependency and the SPA mount carries none.
+if ! grep -qE '^APPSECWATCH_BASIC_AUTH=.+:.+' "$INSTALL_DIR/.env"; then
+  warn "APPSECWATCH_BASIC_AUTH is not set — the built UI at / will be served"
+  warn "anonymously. Set it to 'user:password' in .env if this host is reachable"
+  warn "from anywhere untrusted (a Cloudflare Tunnel counts)."
+fi
+
 cd "$INSTALL_DIR"
 
 # --- 1. pull ---

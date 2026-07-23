@@ -32,7 +32,7 @@ from starlette.staticfiles import StaticFiles
 
 from appsecwatch import __version__
 from appsecwatch.api.assets import AssetManager
-from appsecwatch.api.auth import require_api_key
+from appsecwatch.api.auth import BasicAuthMiddleware, require_api_key
 from appsecwatch.api.config import ConfigError, ConfigManager, ServerConfig
 from appsecwatch.api.db import Database, default_db_path
 from appsecwatch.api.finding_state import FindingStateManager
@@ -894,12 +894,20 @@ def _docs_urls(config: ServerConfig) -> dict:
 
 
 def _warn_if_open(config: ServerConfig) -> None:
-    if not config.auth_enabled:
+    # Either credential is a real gate, so only warn when BOTH are missing.
+    if not config.auth_enabled and not config.basic_auth_enabled:
         log.warning(
-            "AUTH DISABLED: no APPSECWATCH_API_KEYS configured — the API is OPEN. "
-            "There is no scan-target allowlist, so anyone who can reach this API "
-            "can point the scanner at ANY host. Set APPSECWATCH_API_KEYS before "
-            "exposing this server."
+            "AUTH DISABLED: neither APPSECWATCH_API_KEYS nor APPSECWATCH_BASIC_AUTH "
+            "is configured — the server is OPEN. There is no scan-target allowlist, "
+            "so anyone who can reach it can point the scanner at ANY host. Set one "
+            "before exposing this server."
+        )
+    elif not config.basic_auth_enabled:
+        # API keys guard /api/* only; the static UI mount carries no dependency.
+        log.warning(
+            "APPSECWATCH_BASIC_AUTH not set — the built UI at / is served "
+            "anonymously (the API itself is still key-protected). Set it if this "
+            "server is reachable from anywhere untrusted."
         )
 
 
@@ -995,6 +1003,9 @@ def create_app(config: ServerConfig) -> FastAPI:
     # Compress responses (esp. the large /assets JSON) on the wire. Standalone
     # has routes at root, so one layer here covers the whole app.
     app.add_middleware(GZipMiddleware, minimum_size=500)
+    # Added LAST → runs FIRST (Starlette wraps in reverse), so an unauthenticated
+    # request is rejected before anything spends work compressing a response.
+    app.add_middleware(BasicAuthMiddleware)
     return app
 
 
@@ -1074,10 +1085,16 @@ def create_combined_app(config: ServerConfig, ui_dir: str | Path) -> FastAPI:
 
     parent = FastAPI(title="AppSecWatch", version=__version__, lifespan=lifespan,
                      docs_url=None, redoc_url=None, openapi_url=None)
+    # The Basic-auth middleware reads the config off whichever app handles the
+    # request; for the static mount that is the PARENT, not api_app.
+    parent.state.config = config
     # One gzip layer on the parent covers BOTH the static UI mount (the ~1.4 MB of
     # JS/CSS) and the mounted /api sub-app JSON. Do NOT also add it to api_app or
     # it would double-encode /api responses.
     parent.add_middleware(GZipMiddleware, minimum_size=500)
+    # On the parent, so it covers the static UI too — that reach is the point.
+    # Added LAST → runs FIRST, ahead of gzip and of both mounts.
+    parent.add_middleware(BasicAuthMiddleware)
     parent.mount("/api", api_app)
     parent.mount("/", _SPAStaticFiles(directory=str(ui_dir), html=True), name="ui")
     return parent

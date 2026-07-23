@@ -500,6 +500,27 @@ docker run --rm -p 8080:8080 -e APPSECWATCH_API_KEYS=key \
   not on boot. NB this **removes** the earlier invariants ("secrets only from
   env", "`allowed_roots` 403 guardrail"). With auth OPEN there is now NO
   server-side scope ceiling — keep `APPSECWATCH_API_KEYS` set before exposing it.
+- **Two auth layers with deliberately different REACH** (`api/auth.py`).
+  `require_api_key` is a per-route **dependency** (`Bearer`/`X-API-Key`/
+  `?api_key=`), so it guards `/api/*` and nothing else — the built UI is mounted
+  as plain static files (`server.py` `parent.mount("/", _SPAStaticFiles(...))`)
+  with **no dependency**, so the API key alone leaves the whole SPA shell
+  anonymous. `BasicAuthMiddleware` (env `APPSECWATCH_BASIC_AUTH`, `user:password`,
+  only the FIRST colon splits) closes that: installed on the **parent** app in
+  BOTH factories so it runs ahead of the static mount *and* the `/api` sub-app.
+  **Either credential suffices** — a valid API key is never challenged (scripts +
+  the `?api_key=` iframe/link path keep working), and clearing Basic stamps
+  `scope["state"]["basic_authed"]`, which `require_api_key` honours (so a browser
+  user needs no second credential). Both authorise the same thing, so neither
+  grants more. `_UNPROTECTED_PATHS` (`/healthz`, `/api/healthz`) is never
+  challenged — `deploy.sh` polls it and a credential-gated health check misreports
+  exactly when credentials are what broke. It is **pure ASGI, NOT
+  `BaseHTTPMiddleware`**: the latter wraps every response in an anyio task group
+  and buffers it, which costs a scheduling hop on every request (including every
+  static asset), interferes with the file responses the report routes return, and
+  measurably perturbed `jobs.py` timing (it exposed the latent race where
+  `rec.state = "completed"` is set BEFORE `_sync_finding_state` writes the history
+  row). A malformed pair disables the gate rather than creating an unpassable one.
 - **SQLite** (`api/db.py`, `<output_root>/appsecwatch.db`, stdlib `sqlite3` off-loop
   via `asyncio.to_thread`) is the cross-run **relational layer** — phase 1 ships the
   `assets` inventory (`api/assets.py`). **Server-only**: the engine + CLI `scan`

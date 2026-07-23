@@ -8,7 +8,12 @@
 # scan-target allowlist; the per-scan roots is the only scope.)
 #
 # Env (the API's own auth secrets stay env-only):
-#   APPSECWATCH_API_KEYS        comma-separated API keys (Authorization: Bearer <key>)
+#   APPSECWATCH_API_KEYS        comma-separated API keys (Authorization: Bearer <key>).
+#                              Guards /api/* ONLY — not the static UI.
+#   APPSECWATCH_BASIC_AUTH      `user:password` HTTP Basic front door. Covers EVERYTHING,
+#                              including the built UI (which is mounted with no auth
+#                              dependency, so the API key alone leaves it anonymous).
+#                              Either credential is sufficient; only the first colon splits.
 #   APPSECWATCH_WEBHOOK_SECRET  HMAC-SHA256 signing secret for webhook callbacks
 #   APPSECWATCH_LLM_API_KEY     SEEDS base_config.llm.api_key on first boot only
 #   APPSECWATCH_CONFIG_STORE    path to the writable runtime store (optional override)
@@ -22,8 +27,9 @@
 output_root: ./runs
 
 # NOTE: there is no scan-target allowlist — the per-scan `roots` is the only
-# scope. With auth (APPSECWATCH_API_KEYS) unset the API is OPEN and can be pointed
-# at any host, so set API keys before exposing this server.
+# scope. With auth unset the server is OPEN and can be pointed at any host, so set
+# APPSECWATCH_API_KEYS before exposing it — and APPSECWATCH_BASIC_AUTH too if a
+# browser can reach it, since the API key does not cover the static UI.
 
 bind:
   host: 0.0.0.0
