@@ -148,6 +148,21 @@ export interface NucleiCategory {
   count: number;
 }
 
+/** Freshness/provenance of the updatable js-lib signature pack (retire.js).
+ *  `origin`: "bundled" = the seed shipped in the image, "store" = a fetched
+ *  update on the persisted volume. `fetched_at` is null for bundled. */
+export interface SignatureStatus {
+  name: string;
+  origin: "bundled" | "store";
+  path: string;
+  store_dir: string;
+  entry_count: number;
+  vuln_count: number;
+  fetched_at?: string | null;
+  source_url?: string | null;
+  auto_update: boolean;
+}
+
 export interface CustomTemplate {
   id: string;
   name?: string | null;

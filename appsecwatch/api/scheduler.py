@@ -58,10 +58,15 @@ def compute_next(cadence: str, at_time: str | None, weekday: int | None,
 
 
 class ScheduleManager:
-    def __init__(self, db: Database, assets: AssetManager, jobs) -> None:
+    def __init__(self, db: Database, assets: AssetManager, jobs,
+                 signatures_cfg: Any = None) -> None:
         self.db = db
         self.assets = assets
         self.jobs = jobs
+        # Optional signature-pack auto-refresh (SignaturesConfig; ships disabled).
+        # It rides this loop rather than owning a second background task.
+        self.signatures_cfg = signatures_cfg
+        self._last_signature_refresh: datetime | None = None
         self._task: asyncio.Task | None = None
 
     # ----- lifecycle ------------------------------------------------------- #
@@ -185,10 +190,36 @@ class ScheduleManager:
                 self.db.execute("UPDATE schedules SET next_run_at=? WHERE id=?", (nxt, s["id"]))
         return fired
 
+    # ----- optional signature-pack refresh -------------------------------- #
+    def _signature_refresh_due(self) -> bool:
+        cfg = self.signatures_cfg
+        if not cfg or not getattr(cfg, "auto_update", False):
+            return False
+        if self._last_signature_refresh is None:
+            return True                      # refresh once on the first tick
+        hours = max(1, int(getattr(cfg, "interval_hours", 24) or 24))
+        return _now() - self._last_signature_refresh >= timedelta(hours=hours)
+
+    async def refresh_signatures(self) -> None:
+        """Best-effort pack refresh. Never raises — a failed fetch just leaves the
+        current pack in place (the bundled seed is always a working floor)."""
+        from appsecwatch.audit import signatures as sig
+
+        self._last_signature_refresh = _now()
+        url = (getattr(self.signatures_cfg, "js_libs_url", "") or "").strip() or None
+        try:
+            meta = await sig.update_js_libs(url)
+            log.info("signatures refreshed: %s libs / %s vulns",
+                     meta.entry_count, meta.vuln_count)
+        except Exception as e:  # noqa: BLE001
+            log.warning("signature refresh failed (keeping current pack): %r", e)
+
     async def _loop(self) -> None:
         while True:
             try:
                 await asyncio.to_thread(self.tick)
             except Exception as e:  # noqa: BLE001
                 log.warning("scheduler tick error: %r", e)
+            if self._signature_refresh_due():
+                await self.refresh_signatures()
             await asyncio.sleep(_TICK_SECONDS)

@@ -49,18 +49,51 @@ class LivenessGateStage(Stage):
                 f"{blocked} not-assessed host(s)"
             )
 
-        # Degraded: httpx probed nothing live despite resolvable live assets.
+        # Degraded: httpx probed nothing live despite resolvable live assets, OR it
+        # was cut short mid-pass by an edge that stopped answering (a partial pass
+        # still yields servers, but most of the estate went unprobed — reporting it
+        # as a complete scan would understate coverage).
         live_assets = len(state.live())
+        cov = state.probe_progress
+        reason: str | None = None
         if not state.live_servers and live_assets >= 1 and self._httpx_ran(state):
+            reason = self._zero_server_reason(live_assets, cov)
+        elif cov is not None and cov.stalled and not cov.complete:
             reason = (
-                f"httpx returned 0 live web servers for {live_assets} live asset(s) — "
-                "the target edge likely blocked the probe; nothing was audited"
+                f"the target edge stopped answering after {cov.responded} host(s) "
+                f"(last good: {cov.last_responding_host}); "
+                f"{cov.total - cov.probed} of {cov.total} host(s) were never probed — "
+                "results are partial"
             )
+        if reason:
             state.degraded = True
             state.degraded_reason = reason
             state.errors.append(asset_error("recon.httpx", None, reason))
             log.warn(reason, event="scan_degraded")
         return None
+
+    @staticmethod
+    def _zero_server_reason(live_assets: int, cov) -> str:
+        """Attribute a zero-server pass. The stall/coverage signal separates 'we were
+        blocked' from 'this estate genuinely serves no HTTP' — previously both
+        collapsed into the same guess."""
+        base = f"httpx returned 0 live web servers for {live_assets} live asset(s)"
+        if cov is None:
+            return f"{base} — the target edge likely blocked the probe; nothing was audited"
+        if cov.stalled:
+            return (
+                f"{base} — the edge stopped answering {cov.probed - (cov.stalled_after or 0)} "
+                f"host(s) into the pass and never recovered; nothing was audited"
+            )
+        if not cov.complete:
+            return (
+                f"{base} — the probe budget expired after only {cov.probed}/{cov.total} "
+                f"host(s), all of which timed out; nothing was audited"
+            )
+        return (
+            f"{base} — all {cov.total} host(s) were probed and none answered, so either "
+            "the edge blocked us for the whole pass or these names serve no HTTP"
+        )
 
     @staticmethod
     def _httpx_ran(state) -> bool:

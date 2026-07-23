@@ -11,6 +11,7 @@ import { toast } from "@/components/ui/sonner";
 import { api, getApiBase, getApiKey, setApiConfig, ApiError } from "@/lib/api";
 import { useMounted } from "@/lib/hooks";
 import { ScanConfigCard } from "@/components/settings/scan-config";
+import { SignaturesCard } from "@/components/settings/signatures";
 
 export default function SettingsPage() {
   const mounted = useMounted();
@@ -105,6 +106,8 @@ export default function SettingsPage() {
       </Card>
 
       <ScanConfigCard />
+
+      <SignaturesCard />
     </div>
   );
 }

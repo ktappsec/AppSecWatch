@@ -40,6 +40,16 @@ webhook:
 
 docs_enabled: true   # expose /docs + /openapi.json
 
+# Vulnerable-JS-library signature pack (retire.js repository, vendored as a
+# bundled seed). Auto-refresh ships DISABLED: the seed always works offline, so
+# an air-gapped / egress-restricted deployment never reaches out on its own.
+# A manual refresh always works: POST /signatures/js-libs/update, or
+# `appsecwatch update-signatures`.
+signatures:
+  auto_update: false     # true → refresh on the scheduler loop
+  interval_hours: 24
+  js_libs_url: ""        # blank = upstream; set to an internal mirror if egress is closed
+
 # The base AppSecWatchConfig used for every scan. May instead be a path:
 #   base_config: /etc/appsecwatch/scan.yaml
 # `roots` is supplied per-request, so it is omitted here.

@@ -1121,3 +1121,39 @@ def test_notifications_list_and_mark_read(tmp_path, monkeypatch):
         n = client.post("/notifications/read", headers=H).json()
         assert n["marked"] == 1
         assert client.get("/notifications?unread_only=true", headers=H).json() == []
+
+
+# --------------------------------------------------------------------------- #
+# Signature packs (updatable retire.js js-lib DB)
+# --------------------------------------------------------------------------- #
+def test_signatures_status_reports_bundled_seed(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        st = client.get("/signatures", headers=H).json()
+        assert st["name"] == "js_libs"
+        assert st["origin"] == "bundled"          # nothing fetched yet
+        assert st["entry_count"] > 50             # the vendored retire.js repo
+        assert st["vuln_count"] > 100
+        assert st["fetched_at"] is None
+        assert st["auto_update"] is False         # ships disabled
+
+
+def test_signature_store_defaults_under_output_root(tmp_path, monkeypatch):
+    """Fetched packs must land on the persisted volume, not inside the image."""
+    with _client(tmp_path, monkeypatch) as client:
+        paths = client.get("/capabilities", headers=H).json()["paths"]
+        assert paths["signatures"].endswith(".signatures")
+        assert str(tmp_path) in paths["signatures"]
+
+
+def test_signature_update_failure_is_502_and_keeps_pack(tmp_path, monkeypatch):
+    """An unreachable/invalid upstream must not break the active pack."""
+    async def _boom(url=None, **kw):
+        raise RuntimeError("connection refused")
+
+    monkeypatch.setattr("appsecwatch.audit.signatures.update_js_libs", _boom)
+    with _client(tmp_path, monkeypatch) as client:
+        r = client.post("/signatures/js-libs/update", headers=H)
+        assert r.status_code == 502
+        assert r.json()["error"]["code"] == "signature_update_failed"
+        # still serving the bundled seed
+        assert client.get("/signatures", headers=H).json()["origin"] == "bundled"

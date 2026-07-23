@@ -368,7 +368,10 @@
             <td title="{{ hs | join(', ') }}">{{ hs | length }} host{{ '' if hs|length == 1 else 's' }}</td>
             <td>{{ items[0].evidence.library }}</td>
             <td>{{ items[0].evidence.version }}</td>
-            <td class="evidence">{{ items[0].evidence.cve }}</td>
+            {% set cc = items[0].evidence.cve_count or 0 %}
+            <td class="evidence" title="{{ items[0].evidence.cve }}">
+              {%- if cc > 3 -%}{{ cc }} CVEs{%- else -%}{{ items[0].evidence.cve }}{%- endif -%}
+            </td>
           </tr>
         {% endfor %}
         </tbody>

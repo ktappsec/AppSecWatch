@@ -63,6 +63,20 @@ class NotifierConfig(BaseModel):
     email_enabled: bool = False
 
 
+class SignaturesConfig(BaseModel):
+    """Refresh policy for the updatable signature packs (the retire.js js-lib DB).
+
+    Ships DISABLED: the bundled seed always works offline, and an air-gapped or
+    egress-restricted deployment must never reach out to GitHub on its own. Turning
+    `auto_update` on rides the existing scheduler loop; a manual refresh
+    (`POST /signatures/js-libs/update`, `appsecwatch update-signatures`) works
+    either way.
+    """
+    auto_update: bool = False
+    interval_hours: int = 24
+    js_libs_url: str = ""            # blank = the upstream default in audit/signatures.py
+
+
 class ServerConfig(BaseModel):
     """Server configuration + resolved secrets and base scan config.
 
@@ -78,6 +92,7 @@ class ServerConfig(BaseModel):
     limits: LimitsConfig = Field(default_factory=LimitsConfig)
     webhook: WebhookConfig = Field(default_factory=WebhookConfig)
     notifier: NotifierConfig = Field(default_factory=NotifierConfig)
+    signatures: SignaturesConfig = Field(default_factory=SignaturesConfig)
     docs_enabled: bool = True
     output_root: str = "/data/runs"
 

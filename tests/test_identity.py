@@ -82,11 +82,13 @@ def test_nuclei_cmd_identity_headers():
 async def test_httpx_cmd_includes_identity(tmp_path, monkeypatch):
     captured = {}
 
-    async def fake_run_tool(cmd, **k):
+    async def fake_stream_tool(cmd, outcome, **k):
         captured["cmd"] = cmd
-        return types.SimpleNamespace(stdout=b"", stderr=b"", ok=True, returncode=0)
+        outcome.returncode = 0
+        return
+        yield  # pragma: no cover — makes this an async generator
 
-    monkeypatch.setattr(wp, "run_tool", fake_run_tool)
+    monkeypatch.setattr(wp, "stream_tool", fake_stream_tool)
     await run_httpx(["example.com"], tmp_path / "h.jsonl", HttpxConfig(), _Log(),
                     user_agent="UA/7",
                     extra_headers={"Accept-Language": "tr-TR", "X-Forwarded-For": "9.9.9.9"})

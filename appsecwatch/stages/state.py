@@ -14,6 +14,7 @@ from appsecwatch.models import (
     Finding,
     LiveWebServer,
     PageSignals,
+    ProbeCoverage,
     RunSummary,
     StageError,
     TLSHostReport,
@@ -29,6 +30,7 @@ class ScanState(BaseModel):
     tls_certs: list[CertInfo] = Field(default_factory=list)  # recon cert inventory (tlsx)
     live_servers: list[LiveWebServer] = Field(default_factory=list)
     page_signals: dict[str, PageSignals] = Field(default_factory=dict)  # host -> signals
+    probe_progress: ProbeCoverage | None = None  # how far recon.httpx got + stall signal
 
     # AI context
     app_profiles: dict[str, AppProfile] = Field(default_factory=dict)   # host -> profile

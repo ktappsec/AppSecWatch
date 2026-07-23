@@ -53,6 +53,27 @@ class TriagedAsset(BaseModel):
     reason: str
 
 
+class ProbeCoverage(BaseModel):
+    """How far the httpx pass actually got, and whether the edge stopped answering
+    part-way through. Recorded even when the pass is cut short, so "0 live servers"
+    can be attributed instead of guessed at."""
+
+    total: int = 0                 # hosts fed to httpx
+    probed: int = 0                # hosts that produced a record before the pass ended
+    responded: int = 0             # of those, hosts that actually answered
+    failed: int = 0                # of those, hosts that never answered
+    stalled_after: int | None = None       # host index where an unbroken failure run began
+    last_responding_host: str | None = None
+
+    @property
+    def complete(self) -> bool:
+        return self.probed >= self.total
+
+    @property
+    def stalled(self) -> bool:
+        return self.stalled_after is not None
+
+
 class LiveWebServer(BaseModel):
     url: str
     host: str

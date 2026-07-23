@@ -147,6 +147,30 @@ appsecwatch verify-deps -c /etc/appsecwatch/config.yaml   # adds MMDB + LLM prob
 
 This is safe to run *before* installing the heavy deps — the CLI lazy-imports the scan path, so missing modules show as `✗` entries rather than crashing the command.
 
+#### `appsecwatch update-signatures`
+
+Refresh the vulnerable-JS-library signature pack (the [retire.js](https://github.com/RetireJS/retire.js) repository, Apache-2.0) from upstream. Server-free, so a CLI-only deployment can update too.
+
+```
+appsecwatch update-signatures [--url URL] [--status]
+```
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--url` | string | upstream `jsrepository.json` | Override the source URL (e.g. an internal mirror). |
+| `--status` | flag | — | Print the active pack's origin/size/freshness and exit. Makes **no** network request. |
+
+The fetched pack is written to `$APPSECWATCH_SIGNATURES_DIR` (default `~/.appsecwatch/signatures`; the server points this at `<output_root>/.signatures` so it lands on the persisted volume). The bundled seed shipped in the image is never modified and remains the fallback, so an air-gapped install always has working signatures.
+
+Installs are validated before replacing anything — a captive-portal page or truncated download is rejected and the current pack is left in place. The superseded copy is kept as `js_libs.json.bak`.
+
+**Exit:** `0` on success (or for `--status`), `1` if the fetch/validation failed.
+
+```sh
+appsecwatch update-signatures --status     # what am I running?
+appsecwatch update-signatures              # refresh from upstream
+```
+
 #### `appsecwatch init-config`
 
 Print or write a fully-commented example YAML config.

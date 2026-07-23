@@ -6,12 +6,12 @@ from pathlib import Path
 
 from appsecwatch.config import AppSecWatchConfig
 from appsecwatch.logging import RunLogger
-from appsecwatch.models import TriagedAsset
+from appsecwatch.models import ProbeCoverage, TriagedAsset
 from appsecwatch.recon.resolve import run_dnsx
 from appsecwatch.recon.subdomains import run_subfinder
 from appsecwatch.recon.tls_san import tlsx_refeed_loop
 from appsecwatch.recon.triage import triage_records
-from appsecwatch.recon.web_probe import run_httpx
+from appsecwatch.recon.web_probe import ProbeProgress, run_httpx
 from appsecwatch.stages.base import Stage
 from appsecwatch.util.ipinfo import IPInfoLookup
 
@@ -100,7 +100,12 @@ class HttpxStage(Stage):
         # Outer subprocess timeout scaled to work ÷ concurrency, so slow profiles
         # (paranoid = 1 thread) aren't killed mid-pass. Floor 600s. Without this,
         # a low-thread profile on a large host set hits the 600s kill → 0 live.
+        # NB a host that never answers costs 2x `timeout` (https + http fallback),
+        # so the 1.5 multiplier is only ~75% of a fully-unreachable list — the pass
+        # is EXPECTED to be cut short on a badly-blocked estate, which is why the
+        # streaming path below keeps whatever it collected.
         budget = max(600.0, len(fqdns) / max(1, hx.threads) * hx.timeout * 1.5)
+        progress = ProbeProgress(len(fqdns))
         servers, signals = await run_httpx(
             fqdns,
             self._path(run_dir),
@@ -109,6 +114,15 @@ class HttpxStage(Stage):
             timeout=budget,
             user_agent=cfg.identity.effective_user_agent(),
             extra_headers=cfg.identity.effective_headers(),
+            progress=progress,
         )
         state.live_servers = servers
         state.page_signals = signals
+        state.probe_progress = ProbeCoverage(
+            total=progress.total,
+            probed=progress.seen,
+            responded=progress.responded,
+            failed=progress.failed,
+            stalled_after=progress.stalled_after,
+            last_responding_host=progress.last_responding_host,
+        )

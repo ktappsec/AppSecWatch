@@ -65,6 +65,7 @@ from appsecwatch.api.models import (
     GenerateResponse,
     NucleiCategory,
     NucleiTemplate,
+    SignatureStatus,
     PromptPreview,
     PromptPreviewRequest,
     PromptSlot,
@@ -661,6 +662,29 @@ def _install(app: FastAPI, config: ServerConfig) -> None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, error_response("not_found", "no such template"))
         return {"deleted": tid}
 
+    # ----- signature packs (updatable retire.js js-lib DB) ----------------- #
+    @app.get("/signatures", dependencies=[Depends(require_api_key)])
+    async def signatures_status() -> SignatureStatus:
+        from appsecwatch.audit import signatures as sig
+        data = await asyncio.to_thread(sig.status, sig.JS_LIBS)
+        return SignatureStatus(**data, auto_update=config.signatures.auto_update)
+
+    @app.post("/signatures/js-libs/update", dependencies=[Depends(require_api_key)])
+    async def signatures_update() -> SignatureStatus:
+        """Fetch + install the upstream retire.js repository. Explicit action:
+        a scan NEVER triggers this, so an offline deployment stays offline."""
+        from appsecwatch.audit import signatures as sig
+        url = (config.signatures.js_libs_url or "").strip() or None
+        try:
+            await sig.update_js_libs(url)
+        except Exception as e:  # noqa: BLE001 — network/validation both → 502
+            raise HTTPException(
+                status.HTTP_502_BAD_GATEWAY,
+                error_response("signature_update_failed", f"{type(e).__name__}: {e}"),
+            )
+        data = await asyncio.to_thread(sig.status, sig.JS_LIBS)
+        return SignatureStatus(**data, auto_update=config.signatures.auto_update)
+
     @app.get("/capabilities", dependencies=[Depends(require_api_key)])
     async def capabilities(request: Request):
         from appsecwatch.config import THROTTLE_PROFILE_NAMES, throttle_profile_details
@@ -681,6 +705,7 @@ def _install(app: FastAPI, config: ServerConfig) -> None:
                 "output_root": str(config.output_root),
                 "config_store": str(config_manager(request).store_path),
                 "db": str(default_db_path(config.output_root)),
+                "signatures": _signature_store_dir(),
             },
         }
 
@@ -878,6 +903,23 @@ def _warn_if_open(config: ServerConfig) -> None:
         )
 
 
+def _signature_store_dir() -> str:
+    from appsecwatch.audit import signatures
+    return str(signatures.store_dir())
+
+
+def _init_signature_store(config: ServerConfig) -> None:
+    """Point the signature store at `<output_root>/.signatures`.
+
+    Unlike nuclei-templates (which live in the image and are re-fetched on
+    rebuild), this puts fetched packs on the persisted `appsecwatch-data` volume
+    so an update survives a docker rebuild — same precedent as the config store
+    and the DB. An explicit APPSECWATCH_SIGNATURES_DIR still wins.
+    """
+    from appsecwatch.audit import signatures
+    signatures.set_default_store_dir(Path(config.output_root) / ".signatures")
+
+
 async def _reconcile_analytics(config: ServerConfig, db: Database) -> None:
     """Boot-time reconcile: replay any completed run under `output_root` not yet
     reflected in finding_state (pre-feature scans, or a rebuilt DB over a surviving
@@ -899,6 +941,7 @@ def create_app(config: ServerConfig) -> FastAPI:
     # Apply the persisted runtime store onto `config` in place BEFORE the
     # JobManager reads it (the store is the primary source of truth).
     cfg_manager = ConfigManager(config)
+    _init_signature_store(config)
     db = Database(default_db_path(config.output_root))
     assets = AssetManager(db)
     history = ScanHistory(db)
@@ -921,7 +964,7 @@ def create_app(config: ServerConfig) -> FastAPI:
             search=search, notifier=notifier,
         )
         await app.state.manager.start()
-        app.state.scheduler = ScheduleManager(db, assets, app.state.manager)
+        app.state.scheduler = ScheduleManager(db, assets, app.state.manager, signatures_cfg=config.signatures)
         await app.state.scheduler.start()
         _warn_if_open(config)
         yield
@@ -977,6 +1020,7 @@ class _SPAStaticFiles(StaticFiles):
 def create_combined_app(config: ServerConfig, ui_dir: str | Path) -> FastAPI:
     """Single-image app: API under /api, built UI served at /."""
     cfg_manager = ConfigManager(config)  # apply runtime store before serving
+    _init_signature_store(config)
     db = Database(default_db_path(config.output_root))
     assets = AssetManager(db)
     history = ScanHistory(db)
@@ -1020,7 +1064,7 @@ def create_combined_app(config: ServerConfig, ui_dir: str | Path) -> FastAPI:
             search=search, notifier=notifier,
         )
         await api_app.state.manager.start()
-        api_app.state.scheduler = ScheduleManager(db, assets, api_app.state.manager)
+        api_app.state.scheduler = ScheduleManager(db, assets, api_app.state.manager, signatures_cfg=config.signatures)
         await api_app.state.scheduler.start()
         _warn_if_open(config)
         yield

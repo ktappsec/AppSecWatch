@@ -83,6 +83,16 @@ def _build_parser() -> argparse.ArgumentParser:
         help="If supplied, also probe the MMDB at the config's mmdb_path and the LLM endpoint",
     )
 
+    # ---- update-signatures ----
+    upd = sub.add_parser(
+        "update-signatures",
+        help="Refresh the vulnerable-JS-library signature pack (retire.js) from upstream",
+    )
+    upd.add_argument("--url", default=None,
+                     help="Override the upstream signature URL")
+    upd.add_argument("--status", action="store_true",
+                     help="Show the active pack's origin/freshness and exit (no network)")
+
     return p
 
 
@@ -195,6 +205,34 @@ def _cmd_verify_deps(args: argparse.Namespace) -> int:
     return 0 if report.ok else 1
 
 
+def _cmd_update_signatures(args: argparse.Namespace) -> int:
+    """Refresh the js-lib signature pack. Server-free, so a CLI-only deployment
+    can still update; writes to APPSECWATCH_SIGNATURES_DIR (default
+    ~/.appsecwatch/signatures) and leaves the bundled seed untouched."""
+    import asyncio as _asyncio
+
+    from appsecwatch.audit import signatures as sig
+
+    def _show(tag: str) -> None:
+        st = sig.status(sig.JS_LIBS)
+        fetched = st["fetched_at"] or "n/a (bundled seed)"
+        print(f"{tag}: {st['entry_count']} libraries / {st['vuln_count']} vulnerability "
+              f"entries\n  origin : {st['origin']}\n  path   : {st['path']}\n"
+              f"  fetched: {fetched}")
+
+    if args.status:
+        _show("js-lib signatures")
+        return 0
+    try:
+        _asyncio.run(sig.update_js_libs(args.url))
+    except Exception as e:  # noqa: BLE001 — report, don't traceback
+        print(f"signature update failed: {type(e).__name__}: {e}", file=sys.stderr)
+        print("the bundled seed is still in place; scans are unaffected", file=sys.stderr)
+        return 1
+    _show("updated")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -207,6 +245,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_init_config(args)
     if args.command == "verify-deps":
         return _cmd_verify_deps(args)
+    if args.command == "update-signatures":
+        return _cmd_update_signatures(args)
     return 2
 
 

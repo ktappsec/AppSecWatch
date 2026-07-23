@@ -21,6 +21,7 @@ import type {
   ScanTemplateUpsert,
   JobStatus,
   NucleiCategory,
+  SignatureStatus,
   NucleiTemplate,
   PromptPreview,
   PromptsView,
@@ -365,6 +366,11 @@ export const api = {
     return request<NucleiTemplate[]>(`/nuclei/templates${q ? `?${q}` : ""}`);
   },
   nucleiCategories: () => request<NucleiCategory[]>("/nuclei/categories"),
+
+  // --- signature packs (retire.js js-lib DB) ---
+  signatureStatus: () => request<SignatureStatus>("/signatures"),
+  updateSignatures: () => request<SignatureStatus>("/signatures/js-libs/update", { method: "POST" }),
+
   nucleiReindex: () => request<{ indexed: number; root: string }>("/nuclei/reindex", { method: "POST" }),
   listCustomTemplates: () => request<CustomTemplate[]>("/nuclei/custom"),
   createCustomTemplate: (t: CustomTemplateUpsert) =>

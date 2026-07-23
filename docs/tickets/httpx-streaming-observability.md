@@ -4,6 +4,9 @@
 **Area:** engine — recon (`recon.httpx`), subprocess plumbing
 **Priority:** high (highest-value robustness fix outstanding)
 **Effort:** medium
+**Status:** IMPLEMENTED 2026-07-21 (`stream_tool` + `-probe` + `ProbeProgress`/
+`ProbeCoverage`; tests in `tests/test_probe_streaming.py`). Remaining follow-ups
+are listed under "Not done" at the end.
 
 ## Problem
 
@@ -121,3 +124,45 @@ arrives, instead of `communicate()`-to-EOF.
   (independent 15s curl to a known-good URL from the scanner's egress IP,
   correlated against `stage_start`) — a silent drop can't be seen from inside the
   scanner otherwise.
+
+---
+
+## Outcome (2026-07-21)
+
+Implemented as specced, with three corrections the investigation forced:
+
+1. **`-probe` is load-bearing, not incidental.** The ticket proposed detecting a
+   block from the stream "going quiet". It cannot: with plain `-json` a host that
+   never answers emits *nothing*, and ~41% of this estate never answers, so quiet
+   is the normal state. `-probe` emits a record per input (`failed:true`), which
+   turns the stream into real progress. Consequence: `parse_httpx_records` must
+   drop `failed:true` records or every scan gains a phantom live server per
+   blackholed host.
+2. **The stall rule needs a "was it ever working" precondition.** A failure run
+   starting at record 1 is an unreachable estate, not a block. `ProbeProgress`
+   only fires when ≥15 consecutive failures follow at least one success.
+3. **`StreamReader.readline()` is unusable here.** Its 64 KiB line ceiling is
+   blown by a single `-include-response` record (the body is inline; 200 KB+ is
+   routine) — it raises `ValueError` and kills the stage. `stream_tool` buffers
+   and splits on `\n` itself. This surfaced only against the real binary; the
+   fake-stream unit tests could not have caught it.
+
+Verified against the live target: a 150s budget that previously yielded 0 servers
+now keeps 5, with 11 records persisted; and an induced block produced
+`probe_stalled` mid-pass naming the last-good host.
+
+## Not done (follow-ups)
+
+- **The real cost lever: don't probe hosts that will never answer.** ~41% of this
+  estate is internal-only, burning ~55% of the httpx budget every scan. A cheap
+  bounded TCP-connect pre-filter (80+443) would cut the pass several-fold. NB you
+  cannot reuse tlsx's responder set for this — it is 443-only and IP-keyed, so it
+  would drop http-only hosts.
+- `ProbeCoverage` is engine-side only; it is not surfaced on `ScanResult` /
+  `JobStatus` / the UI (only the sharpened `degraded_reason` string is). Wiring it
+  through would let the UI show "probed 62/440" instead of a bare "Blocked" badge.
+- nuclei/dnsx/tlsx still use the buffered `run_tool` path, per the original scope.
+  tlsx is the next best candidate: its budget is a FLAT 600s that does not scale
+  with `-c`, so the `607a1ed` concurrency cut (20→2) pushed it from ~77s to ~475s
+  against an unchanged ceiling — it now runs at ~80% of budget and tips over on
+  variance.

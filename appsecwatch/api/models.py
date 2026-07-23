@@ -382,6 +382,21 @@ class NucleiCategory(BaseModel):
     count: int = 0
 
 
+class SignatureStatus(BaseModel):
+    """Freshness/provenance of an updatable signature pack (the retire.js js-lib
+    DB). `origin` is 'bundled' (the vendored seed shipped in the image) or 'store'
+    (a fetched update on the persisted volume); `fetched_at` is null for bundled."""
+    name: str
+    origin: Literal["bundled", "store"]
+    path: str
+    store_dir: str
+    entry_count: int = 0
+    vuln_count: int = 0
+    fetched_at: str | None = None
+    source_url: str | None = None
+    auto_update: bool = False
+
+
 class CustomTemplate(BaseModel):
     id: str
     name: str | None = None

@@ -248,6 +248,22 @@ bundled into the server image.
 | `PUT` | `/nuclei/custom/{id}` | (same) | `200 CustomTemplate` | 401, 404 |
 | `DELETE` | `/nuclei/custom/{id}` | — | `200 {deleted}` | 401, 404 |
 | `POST` | `/nuclei/custom/generate` | `{description}` | `200 {yaml,valid,error}` | 401, 409 (LLM not configured) |
+| `GET` | `/signatures` | — | `200 SignatureStatus` | 401 |
+| `POST` | `/signatures/js-libs/update` | — | `200 SignatureStatus` | 401, 502 (`signature_update_failed`) |
+
+**Signature packs.** The vulnerable-JS-library signatures are the
+[retire.js](https://github.com/RetireJS/retire.js) repository (Apache-2.0), vendored as a
+bundled seed in the image and refreshable at runtime — the nuclei-templates pattern
+(seed at build → locate at runtime → refresh on an explicit action), except that
+retire.js ships no updater so the server fetches it directly.
+
+A refresh is **never** triggered by a scan, so an air-gapped deployment runs on the
+seed indefinitely. Fetched packs are validated before replacing anything (a captive-portal
+page or truncated body is rejected with `502` and the active pack is left untouched) and are
+written to `<output_root>/.signatures` — the persisted volume, so updates survive a docker
+rebuild. `origin` distinguishes `bundled` from `store`; `paths.signatures` in `/capabilities`
+reports the directory to mount. Optional scheduled refresh is `signatures.auto_update`
+in `server.yaml` (**default false**) and rides the existing scheduler loop.
 | `GET` | `/finding-state` | `?status=&group=&finding_class=&host=&sort=&limit=` | `200 [FindingStateRow]` (cross-scan lifecycle + tags) | 401 |
 | `PATCH` | `/finding-state/{fingerprint}` | `{tags?, status?}` (freeform tags / open\|resolved\|suppressed\|accepted) | `200 FindingStateRow` | 401, 404 |
 | `GET` | `/analytics` | `?group=` | `200 {by_status,by_category,by_severity,open_total,resolved_total,widespread,longest_open,by_priority}` | 401 |

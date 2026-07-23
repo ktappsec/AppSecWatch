@@ -357,9 +357,42 @@ docker run --rm -p 8080:8080 -e APPSECWATCH_API_KEYS=key \
   signature of a **prior** stage having already blocked the source IP: tlsx is
   unaffected by the L7 block it caused and reports full success, while httpx then
   probes a dead network, hangs every host to its timeout, hits the `recon.py`
-  `budget` deadline, and loses **all** results (`run_tool` buffers to EOF). That
-  misreading is what produced runs showing "0 live servers / 0 findings" with an
-  empty `errors.json`.
+  `budget` deadline, and loses **all** results. That misreading is what produced
+  runs showing "0 live servers / 0 findings" with an empty `errors.json`.
+  **Do NOT diagnose a block from a zero alone** — the same zero has a second,
+  entirely benign cause, and telling them apart needs the numbers below.
+- **Cost model — measured, not assumed** (2026-07-21, against the kuveytturk
+  estate; re-measure before trusting these on another target):
+  - A host that never answers costs **exactly 2 × `httpx -timeout`** (the https
+    attempt plus the http fallback — 20.0s at `timeout=10`). It is NOT the kernel
+    SYN-retransmission timeout: httpx's `-timeout` does bound the dial.
+  - A host that answers costs ~0.2–2s (occasionally up to `timeout` on a slow
+    redirect chain).
+  - **~41% of this estate's DNS-published names are internal-only** — public DNS,
+    silently dropped SYNs from outside. That is a permanent property of the target,
+    not a reaction to us, and it burns ~55% of the httpx budget on every scan.
+  - Therefore `budget = len(fqdns)/threads * timeout * 1.5` covers only ~75% of a
+    fully-unreachable list. Solve `20F + 2(N-F) > 2*budget` to see how many hosts
+    must hang before the pass is cut short; on a 440-host run that is **F > 318
+    (72%)**, well above the ~35% structural baseline — so a budget overrun IS
+    real evidence of a block, but only once you have subtracted the baseline.
+- **httpx streams; a killed pass keeps its results** (`util/subproc.py::stream_tool`,
+  `recon/web_probe.py`). `run_tool` buffers to EOF, so a timeout kill used to discard
+  every host already probed — that is what made a 14%-complete pass indistinguishable
+  from a total block. httpx now runs with **`-probe`** (a record per input, including
+  `failed:true` — without it a non-answering host emits nothing and 20s of dead air
+  looks identical to a block) and is consumed line-by-line: records are appended to
+  `01_recon/httpx.jsonl` as they arrive, and a timeout **returns what was collected**
+  instead of raising. `ProbeProgress` watches the stream and emits `probe_stalled`
+  **while the stage is still running** when ≥15 consecutive hosts time out *after*
+  the edge was demonstrably answering (a failure run from record 1 is an unreachable
+  estate, not a block — it must not fire). `ProbeCoverage` lands on
+  `state.probe_progress` and `LivenessGateStage` uses it to say *which* of the four
+  cases produced a zero. NB `parse_httpx_records` **drops `failed:true` records** —
+  admitting them would mint a phantom live server per blackholed host.
+  `stream_tool` splits stdout into lines itself rather than using
+  `StreamReader.readline()`, whose 64 KiB ceiling a single `-include-response`
+  record (full response body) blows past.
 - **The block is a silent packet drop, not an HTTP 403** (`curl` → `code=000
   rc=28`). Nothing in a response can reveal it, and the tool that causes it
   reports success — so it only ever surfaces in a LATER stage. To attribute a
@@ -574,10 +607,60 @@ docker run --rm -p 8080:8080 -e APPSECWATCH_API_KEYS=key \
   prior row (new `assets.first_seen_scan`).
 - **JS-lib content scan** (`audit/js_libs.py` + `audit/crawler._scan_script_bodies`):
   in addition to URL-version matching, the crawler reads each script BODY in memory,
-  runs retire.js-style `filecontent` signatures, and records only
+  runs `filecontent` signatures, and records only
   `{library,version,url}` onto `CrawlerArtifact.detected_libs` — **never the body**
   (shareable-artifact invariant). `library_inventory()` feeds detected libs into
   asset tech at `_sync_assets`.
+- **The js-lib signatures ARE the retire.js repository** (Apache-2.0), not a
+  lookalike. We do NOT run the retire.js CLI — it needs a Node runtime the image
+  doesn't carry, and it scans files on DISK, which would mean spilling the script
+  bodies we deliberately keep in memory. Instead the upstream `jsrepository.json`
+  is vendored verbatim as the bundled seed (`data/js_libs.json`, provenance in
+  `data/js_libs.SOURCE.md`) and `load_db()` normalizes it. **Do not hand-edit the
+  data file** — it is replaced wholesale by an update.
+  `normalize_db` maps upstream→internal: `extractors.uri` + `extractors.filename`
+  → `uri`; `identifiers.CVE`/`.summary` → `cve`/`summary`; ranges (`below`/
+  `atOrAbove`, plus `excludes`) already match `_affected`. Three upstream-fidelity
+  details that are load-bearing, each from a real defect:
+  (a) the `§§version§§` placeholder is expanded **per parsed pattern**, not by a
+  raw-text replace — upstream ships it as literal UTF-8, but any pack
+  round-tripped through an ASCII-escaping serializer carries `§` and a text
+  replace leaves regexes that compile and match nothing;
+  (b) a trailing `.min`/`-min` is stripped from the **capture** (upstream's
+  version charclass is greedy and swallows it — `retire.js:30` does the same),
+  else every `.min.js` asset reports `3.3.7.min`;
+  (c) pre-release suffixes sort BELOW their release (`1.0.0-rc.1` < `1.0.0`), as
+  135 upstream bounds carry them and a digits-only compare flags released
+  versions. Patterns that Python's `re` rejects (JS-only syntax, e.g. lodash's
+  variable-width look-behind) are skipped **per pattern**, never per library.
+  One addition upstream doesn't need: captures are sanity-checked against
+  `_PLAUSIBLE_VERSION`, because upstream `uri` patterns can capture a whole path
+  segment — retire.js scans local files where that can't happen, we match
+  arbitrary URLs (a real JSF asset yielded `3_3_3.Finaljavascript`).
+  **Why this replaced the hand-written 7-library file:** that file's jQuery
+  `filecontent` pattern was upstream's with the banner-comment anchor stripped, so
+  bootstrap 4's *requirement* string (`"requires at least jQuery v1.9.1"`) read as
+  a version declaration and reported jQuery 1.9.1 on 14 hosts that actually ship
+  3.7.1. Upstream's patterns are anchored; `tests/test_js_libs.py` pins the
+  bootstrap-4 guard string as a negative case. Keep it.
+- **Signature packs are updatable** (`audit/signatures.py`), modelled on
+  nuclei-templates: bundled seed in the image → located at runtime → refreshed by
+  an **explicit** action. Resolution is `APPSECWATCH_SIGNATURES_DIR` env >
+  `set_default_store_dir()` (the server points it at `<output_root>/.signatures`,
+  i.e. the persisted volume, so an update survives a docker rebuild — unlike
+  nuclei-templates, which live in the image) > `~/.appsecwatch/signatures`, then
+  the bundled seed as the floor. A fetch NEVER happens during a scan, so an
+  air-gapped deploy just runs on the seed forever. Installs are atomic and
+  validated first (`validate_js_libs` — a captive-portal HTML page or truncated
+  body must not clobber a working DB), the superseded copy is kept as `.bak`, and
+  `apply_js_libs` calls `reload_db()` so an update takes effect without a restart.
+  Surfaces: `GET /signatures`, `POST /signatures/js-libs/update`,
+  `appsecwatch update-signatures [--status]`, `paths.signatures` in
+  `/capabilities`. **Opt-in auto-refresh** is `ServerConfig.signatures`
+  (`auto_update` default **false**, `interval_hours`) riding the existing
+  `ScheduleManager` loop — no second background task. NB the server must NOT set
+  the store dir via `os.environ.setdefault`: that lets the first `create_app` in a
+  process pin the directory for every later one.
 - **Client-side secret scan** (`audit/secrets.py` + the SAME
   `crawler._scan_script_bodies` loop, `source='secret'`): a deterministic,
   fully-passive scan for exposed credentials in **external JS bundles** — it reads
@@ -675,7 +758,15 @@ docker run --rm -p 8080:8080 -e APPSECWATCH_API_KEYS=key \
   (`source='manual'`) — cross-run, hidden+uncounted+kept. CLI passes no set.
 - **JS-lib vulns** (`audit/js_libs.py`, `source='js_lib'`): retire.js-style URL
   match over crawler scripts, run inside `CrawlerStage`; bundled DB in
-  `audit/data/js_libs.json`.
+  `audit/data/js_libs.json`. **ONE finding per (host, library, version)**, not per
+  CVE: `scan_scripts` folds every affected vuln entry for a version into a single
+  `Finding` (`check_id=js_lib.<lib>.<ver>`) — `severity` = the WORST of them,
+  `evidence.cve` lists them all + `evidence.cve_count`. A badly-outdated library
+  can carry 20+ upstream CVE entries (axios 1.7.7 → 25); emitting one finding each
+  inflated the severity histogram / posture / finding_state with rows that are the
+  same real problem, and the report already collapsed them by `group_key` (so it
+  could only ever show one arbitrary CVE + severity). The report CVE cell shows
+  `N CVEs` (full list on hover) once `cve_count > 3`.
 - **AI tech** (`audit/tech.py`): `ai.profile` emits `detected_tech`; merged with
   httpx (`[{name,source}]`) onto assets at recon→assets sync.
 - **Nuclei catalog/custom** (`api/nuclei_catalog.py`, `api/nuclei_custom.py`):
